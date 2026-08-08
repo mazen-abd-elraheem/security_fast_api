@@ -1,382 +1,217 @@
 """
-Sanaie Platform — User Routes
-Profile management, location updates, and nearby worker search.
+SecureTrack Platform — User Routes
+Profile management, location updates, and user listing.
 """
-import os
-import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from app.core.database import get_db
-from app.api.deps import get_current_user, handle_service_exception
+from app.api.deps import get_current_user, require_role, handle_service_exception
 from app.models.user import User
+from app.enums import UserRole
 from app.schemas.user import (
-    UserResponse,
-    UserUpdate,
-    UserLocationUpdate,
-    UserPublicResponse,
-    WorkerNearbyResponse,
+    UserResponse, UserUpdate, UserLocationUpdate, UserListResponse,
+    AdminUserCreate, AdminUserUpdate,
 )
 from app.services.user_service import UserService
-from app.core.exceptions import SanaieException
-from app.core.security import verify_password, hash_password
-from pydantic import BaseModel, Field
+from app.core.exceptions import SecureTrackException
 
 router = APIRouter()
 
 
-@router.get(
-    "/me",
-    response_model=UserResponse,
-    summary="Get my profile",
-)
+# ==========================================
+# Self-service endpoints
+# ==========================================
+
+@router.get("/me", response_model=UserResponse, summary="Get my profile")
 def get_my_profile(current_user: User = Depends(get_current_user)):
-    """Returns the authenticated user's full profile."""
+    """Get the authenticated user's profile."""
     return current_user
 
 
-@router.put(
-    "/me",
-    response_model=UserResponse,
-    summary="Update my profile",
-)
+@router.put("/me", response_model=UserResponse, summary="Update my profile")
 def update_my_profile(
     update_data: UserUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Update name, phone, skills, availability, or profile image."""
+    """Update the authenticated user's profile."""
     try:
         return UserService.update_profile(db, current_user.user_id, update_data)
-    except SanaieException as e:
+    except SecureTrackException as e:
         handle_service_exception(e)
 
 
-@router.put(
-    "/me/photo",
-    summary="Upload profile photo",
-)
-async def upload_profile_photo(
-    photo: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Upload a profile photo. Accepts JPEG/PNG images up to 5MB."""
-    allowed_types = {"image/jpeg", "image/png", "image/webp"}
-    if photo.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Only JPEG, PNG, and WebP images are allowed")
-
-    contents = await photo.read()
-    if len(contents) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image must be under 5MB")
-
-    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
-    ext = ext_map.get(photo.content_type, ".jpg")
-
-    from app.core.config import get_settings
-    _settings = get_settings()
-    profiles_dir = os.path.join(_settings.UPLOAD_DIR, "profiles")
-    os.makedirs(profiles_dir, exist_ok=True)
-
-    filename = f"{current_user.user_id}_{uuid.uuid4().hex[:8]}{ext}"
-    filepath = os.path.join(profiles_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(contents)
-
-    image_url = f"/static/uploads/profiles/{filename}"
-    current_user.profile_image_url = image_url
-    db.commit()
-
-    return {"message": "Photo uploaded", "profile_image_url": image_url}
-
-
-@router.put(
-    "/me/location",
-    response_model=UserResponse,
-    summary="Update my geolocation",
-)
+@router.put("/me/location", response_model=UserResponse, summary="Update my GPS location")
 def update_my_location(
     location: UserLocationUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(
+        UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR,
+    )),
     db: Session = Depends(get_db),
 ):
-    """Update latitude and longitude for proximity features."""
+    """Update GPS location and auto-check-in for guards/outdoor if within geofence."""
     try:
-        return UserService.update_location(db, current_user.user_id, location)
-    except SanaieException as e:
+        result = UserService.update_location(db, current_user.user_id, location)
+
+        # Auto-check-in for guard/outdoor roles
+        user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
+        if user_role in ('guard', 'outdoor'):
+            _try_auto_checkin(db, current_user, location.latitude, location.longitude)
+
+        return result
+    except SecureTrackException as e:
         handle_service_exception(e)
 
 
-@router.get(
-    "/workers/nearby",
-    response_model=list[WorkerNearbyResponse],
-    summary="Find nearby workers",
-)
-def get_nearby_workers(
-    latitude: float = Query(..., ge=-90, le=90),
-    longitude: float = Query(..., ge=-180, le=180),
-    radius_km: float = Query(50.0, gt=0, le=500),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Find workers within a specified radius using Haversine distance.
+def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
+    """Silently attempt auto-checkin when guard/outdoor location is updated."""
+    import uuid
+    import logging
+    from datetime import date, datetime, timezone
+    from math import radians, cos, sin, asin, sqrt
+    from app.models.guard_roster import GuardRoster
+    from app.models.shift import Shift
+    from app.models.site import Site
+    from app.models.attendance_log import AttendanceLog
 
-    - **latitude/longitude**: Center point for the search
-    - **radius_km**: Maximum distance in km (default 50)
-    """
-    return UserService.get_nearby_workers(db, latitude, longitude, radius_km)
+    logger = logging.getLogger("securetrack.auto_checkin")
 
+    try:
+        today = date.today()
 
-@router.get(
-    "/{user_id}",
-    response_model=UserPublicResponse,
-    summary="Get user public profile",
-)
-def get_user_profile(
-    user_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Get a user's public profile (no sensitive info)."""
-    user = UserService.get_by_id(db, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    rating_info = UserService.get_worker_rating(db, user_id)
-
-    return UserPublicResponse(
-        user_id=user.user_id,
-        name=user.name,
-        role=user.role,
-        skills=user.skills,
-        profile_image_url=user.profile_image_url,
-        is_available=user.is_available,
-        avg_rating=rating_info["avg_rating"],
-        total_reviews=rating_info["total_reviews"],
-    )
-
-
-@router.get(
-    "/{user_id}/client-summary",
-    summary="Get client summary for technician view",
-)
-def get_client_summary(
-    user_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Returns a client's public profile enriched with:
-    - Number of jobs they've posted
-    - Reviews they've written about technicians (with comments)
-    Useful for technicians to assess a client before bidding.
-    """
-    from app.models.job import Job as JobModel
-    from app.models.review import Review as ReviewModel
-    from sqlalchemy import func as sqla_func
-
-    user = UserService.get_by_id(db, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Count jobs posted by this client
-    jobs_posted = (
-        db.query(sqla_func.count(JobModel.job_id))
-        .filter(JobModel.client_id == user_id)
-        .scalar() or 0
-    )
-
-    # Count completed jobs
-    jobs_completed = (
-        db.query(sqla_func.count(JobModel.job_id))
-        .filter(JobModel.client_id == user_id, JobModel.status == "completed")
-        .scalar() or 0
-    )
-
-    # Get reviews this client has written (their comments about technicians)
-    reviews_written = (
-        db.query(ReviewModel)
-        .filter(ReviewModel.client_id == user_id)
-        .order_by(ReviewModel.created_at.desc())
-        .limit(10)
-        .all()
-    )
-
-    reviews_data = []
-    for r in reviews_written:
-        # Get the worker name for context
-        worker = db.query(User.name).filter(User.user_id == r.worker_id).first()
-        reviews_data.append({
-            "review_id": r.review_id,
-            "worker_id": r.worker_id,
-            "worker_name": worker.name if worker else "Unknown",
-            "rating_score": r.rating_score,
-            "comment": r.comment,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        })
-
-    # Average rating this client gives
-    avg_given = (
-        db.query(sqla_func.avg(ReviewModel.rating_score))
-        .filter(ReviewModel.client_id == user_id)
-        .scalar()
-    )
-
-    # Member since
-    member_since = user.created_at.isoformat() if user.created_at else None
-
-    return {
-        "user_id": user.user_id,
-        "name": user.name,
-        "role": user.role,
-        "profile_image_url": user.profile_image_url,
-        "member_since": member_since,
-        "jobs_posted": jobs_posted,
-        "jobs_completed": jobs_completed,
-        "avg_rating_given": round(float(avg_given), 1) if avg_given else None,
-        "reviews_written": reviews_data,
-        "total_reviews_written": len(reviews_data),
-    }
-
-
-# ── Password Change Schema ──
-class PasswordChangeBody(BaseModel):
-    current_password: str
-    new_password: str = Field(..., min_length=8, max_length=128)
-
-
-@router.put(
-    "/me/change-password",
-    summary="Change my password",
-)
-def change_my_password(
-    data: PasswordChangeBody,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Change the authenticated user's password.
-    Requires the current password for verification.
-    """
-    if not verify_password(data.current_password, current_user.password_hash):
-        raise HTTPException(
-            status_code=400,
-            detail="Current password is incorrect",
+        # Find today's roster
+        roster = (
+            db.query(GuardRoster)
+            .filter(GuardRoster.guard_id == user.user_id)
+            .filter(GuardRoster.assigned_date == today)
+            .first()
         )
+        if not roster:
+            return
 
-    current_user.password_hash = hash_password(data.new_password)
-    db.commit()
+        # Get site
+        shift = db.query(Shift).filter(Shift.shift_id == roster.shift_id).first()
+        if not shift:
+            return
+        site = db.query(Site).filter(Site.site_id == shift.site_id).first()
+        if not site:
+            return
 
-    return {"message": "Password changed successfully"}
+        # Haversine distance
+        lat1, lon1, lat2, lon2 = map(radians, [lat, lng, site.latitude, site.longitude])
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        distance = 2 * asin(sqrt(a)) * 6371000
+
+        # If outside geofence, don't check in or update time
+        if distance > site.radius_meters:
+            return
+
+        # They are inside the geofence. Check if already checked in
+        existing = db.query(AttendanceLog).filter(
+            AttendanceLog.roster_id == roster.roster_id
+        ).first()
+
+        now_utc = datetime.now(timezone.utc)
+        
+        if existing:
+            # Continuously update checkout_at to track hours while inside geofence
+            existing.checkout_at = now_utc
+            db.commit()
+            # Avoid logging every 30s to keep logs clean
+        else:
+            # First time checking in today
+            log = AttendanceLog(
+                log_id=str(uuid.uuid4()),
+                roster_id=roster.roster_id,
+                visit_id=None,
+                supervisor_id=user.user_id,
+                status="present",
+                notes=f"Auto check-in at {int(distance)}m from site center",
+                recorded_at=now_utc,
+            )
+            db.add(log)
+            db.commit()
+            logger.info(f"[AUTO-CHECKIN] {user.name} checked in to {site.name} ({int(distance)}m)")
+            
+    except Exception as e:
+        logger.error(f"[AUTO-CHECKIN] Failed for {user.user_id}: {e}")
+        db.rollback()
 
 
-# ── ID Verification Endpoints ──
+# ==========================================
+# Admin endpoints
+# ==========================================
 
-@router.post(
-    "/me/id-verification",
-    summary="Upload ID for verification",
-)
-async def upload_id_verification(
-    front: UploadFile = File(...),
-    back: UploadFile = File(None),
-    current_user: User = Depends(get_current_user),
+@router.get("", response_model=UserListResponse, summary="List users")
+def list_users(
+    role: Optional[str] = Query(None, description="Filter by role"),
+    region: Optional[str] = Query(None, description="Filter by region"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=50),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
-    """
-    Upload front (required) and back (optional) of government ID for verification.
-    Creates a pending verification request for admin review.
-    """
-    from app.models.id_verification import IDVerification
-
-    allowed_types = {"image/jpeg", "image/png", "image/webp"}
-    if front.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Only JPEG, PNG, and WebP images are allowed")
-
-    front_data = await front.read()
-    if len(front_data) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image must be under 10MB")
-
-    # Save front image
-    from app.core.config import get_settings
-    _settings = get_settings()
-    verify_dir = os.path.join(_settings.UPLOAD_DIR, "verifications")
-    os.makedirs(verify_dir, exist_ok=True)
-
-    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
-
-    front_ext = ext_map.get(front.content_type, ".jpg")
-    front_filename = f"{current_user.user_id}_front_{uuid.uuid4().hex[:8]}{front_ext}"
-    front_path = os.path.join(verify_dir, front_filename)
-    with open(front_path, "wb") as f:
-        f.write(front_data)
-    front_url = f"/static/uploads/verifications/{front_filename}"
-
-    # Save back image if provided
-    back_url = None
-    if back and back.filename:
-        if back.content_type not in allowed_types:
-            raise HTTPException(status_code=400, detail="Back image: Only JPEG, PNG, and WebP allowed")
-        back_data = await back.read()
-        if len(back_data) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Back image must be under 10MB")
-        back_ext = ext_map.get(back.content_type, ".jpg")
-        back_filename = f"{current_user.user_id}_back_{uuid.uuid4().hex[:8]}{back_ext}"
-        back_path = os.path.join(verify_dir, back_filename)
-        with open(back_path, "wb") as f:
-            f.write(back_data)
-        back_url = f"/static/uploads/verifications/{back_filename}"
-
-    # Create verification record
-    verification = IDVerification(
-        verification_id=str(uuid.uuid4()),
-        user_id=current_user.user_id,
-        front_image_url=front_url,
-        back_image_url=back_url,
-        status="pending",
-    )
-    db.add(verification)
-
-    # Update user status
-    current_user.is_verified = "pending"
-    db.commit()
-
-    return {
-        "message": "ID submitted for verification",
-        "verification_id": verification.verification_id,
-        "status": "pending",
-    }
+    """List users with optional filtering. Admin only."""
+    return UserService.list_users(db, role=role, region=region, is_active=is_active, skip=skip, limit=limit)
 
 
-@router.get(
-    "/me/id-verification",
-    summary="Get my ID verification status",
-)
-def get_my_verification_status(
-    current_user: User = Depends(get_current_user),
+@router.post("", response_model=UserResponse, status_code=201, summary="Admin creates a user")
+def admin_create_user(
+    user_data: AdminUserCreate,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
-    """Get the current user's ID verification status and any rejection reason."""
-    from app.models.id_verification import IDVerification
+    """Admin creates any type of user account."""
+    try:
+        return UserService.admin_create_user(db, user_data)
+    except SecureTrackException as e:
+        handle_service_exception(e)
 
-    # Get latest verification request
-    verification = (
-        db.query(IDVerification)
-        .filter(IDVerification.user_id == current_user.user_id)
-        .order_by(IDVerification.created_at.desc())
-        .first()
-    )
 
-    if not verification:
-        return {
-            "status": current_user.is_verified or "unverified",
-            "rejection_reason": None,
-            "submitted_at": None,
-        }
+@router.get("/{user_id}", response_model=UserResponse, summary="Get user by ID")
+def get_user(
+    user_id: str,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get a user's profile by ID. Admin only."""
+    try:
+        user = UserService.get_by_id(db, user_id)
+        if not user:
+            from app.core.exceptions import NotFoundException
+            raise NotFoundException("User", user_id)
+        return user
+    except SecureTrackException as e:
+        handle_service_exception(e)
 
-    return {
-        "status": current_user.is_verified or verification.status,
-        "rejection_reason": verification.rejection_reason,
-        "submitted_at": verification.created_at.isoformat() if verification.created_at else None,
-        "verification_id": verification.verification_id,
-    }
+
+@router.put("/{user_id}", response_model=UserResponse, summary="Admin updates a user")
+def admin_update_user(
+    user_id: str,
+    update_data: AdminUserUpdate,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Admin-level user update — can change any field."""
+    try:
+        return UserService.admin_update_user(db, user_id, update_data)
+    except SecureTrackException as e:
+        handle_service_exception(e)
+
+
+@router.delete("/{user_id}", response_model=UserResponse, summary="Deactivate a user")
+def deactivate_user(
+    user_id: str,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Soft-delete: deactivate a user account."""
+    try:
+        return UserService.deactivate_user(db, user_id)
+    except SecureTrackException as e:
+        handle_service_exception(e)

@@ -1,5 +1,5 @@
 """
-Sanaie Platform — Shared API Dependencies
+SecureTrack Platform — Shared API Dependencies
 Authentication dependencies and role checkers used across all routers.
 """
 from fastapi import Depends, HTTPException, status
@@ -14,7 +14,10 @@ from app.core.exceptions import (
     ForbiddenException,
     BadRequestException,
     UnauthorizedException,
-    SanaieException,
+    GeofenceViolationException,
+    DeviceNotTrustedException,
+    OfflineSyncExpiredException,
+    SecureTrackException,
 )
 from app.models.user import User
 from app.enums import UserRole
@@ -43,6 +46,9 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+
     return user
 
 
@@ -60,9 +66,15 @@ def require_role(*roles: UserRole):
     return role_checker
 
 
-def handle_service_exception(e: SanaieException):
+def handle_service_exception(e: SecureTrackException):
     """Convert domain exceptions to HTTP responses."""
-    if isinstance(e, NotFoundException):
+    if isinstance(e, GeofenceViolationException):
+        raise HTTPException(status_code=403, detail=e.message)
+    elif isinstance(e, DeviceNotTrustedException):
+        raise HTTPException(status_code=403, detail=e.message)
+    elif isinstance(e, OfflineSyncExpiredException):
+        raise HTTPException(status_code=410, detail=e.message)
+    elif isinstance(e, NotFoundException):
         raise HTTPException(status_code=404, detail=e.message)
     elif isinstance(e, DuplicateException):
         raise HTTPException(status_code=409, detail=e.message)

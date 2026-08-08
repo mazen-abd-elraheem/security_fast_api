@@ -1,5 +1,6 @@
 """
-Sanaie Platform — Config with new settings for refresh tokens, rate limiting, etc.
+SecureTrack Platform — Configuration
+Settings for the Security Field Force Management System.
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
@@ -12,13 +13,13 @@ logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     """Application settings loaded from .env file"""
 
-    APP_NAME: str = "Sanaie Platform"
+    APP_NAME: str = "SecureTrack"
     API_VERSION: str = "v1"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
-    # MySQL Database
-    DATABASE_URL: str = "mysql+pymysql://root:password@127.0.0.1:3306/sanaie_db"
+    # SQLite Database for local dev
+    DATABASE_URL: str = "sqlite:///./securetrack.db"
 
     # Security
     SECRET_KEY: str = "change-this-to-a-secure-random-string"
@@ -26,12 +27,26 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # File Uploads
+    # File Uploads (photos, incident evidence)
     UPLOAD_DIR: str = "./uploaded_images"
     MAX_UPLOAD_SIZE_MB: int = 10
+    MAX_CHECKIN_PHOTO_SIZE_MB: int = 5
+
+    # Geofencing
+    DEFAULT_GEOFENCE_RADIUS_METERS: int = 100
+
+    # Offline Sync
+    OFFLINE_SYNC_MAX_AGE_HOURS: int = 24
+
+    # Device Fingerprinting
+    MAX_TRUSTED_DEVICES_PER_USER: int = 3
+
+    # Database Connection Pooling (production tuning for 10K+ users)
+    DATABASE_POOL_SIZE: int = 20
+    DATABASE_MAX_OVERFLOW: int = 40
+    DATABASE_POOL_RECYCLE: int = 1800  # seconds
 
     # CORS — stored as a plain str so pydantic-settings never tries to JSON-parse it.
-    # Set in Railway as a comma-separated string: https://a.com,https://b.com
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
 
     @property

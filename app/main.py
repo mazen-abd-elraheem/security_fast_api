@@ -1,5 +1,5 @@
 """
-Sanaie Platform — Application Entry Point
+SecureTrack Platform — Application Entry Point
 FastAPI app with lifespan, middleware, global exception handler, and router registration.
 """
 import os
@@ -17,17 +17,27 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import get_settings
-from app.core.database import engine, test_connection
+from app.core.database import engine, SessionLocal, test_connection
+from app.core.views import create_views
 from app.core.exceptions import (
-    SanaieException,
+    SecureTrackException,
     NotFoundException,
     DuplicateException,
     ForbiddenException,
     BadRequestException,
     UnauthorizedException,
+    GeofenceViolationException,
+    DeviceNotTrustedException,
+    OfflineSyncExpiredException,
 )
 from app.models import Base
-from app.api.v1 import auth, users, jobs, bids, reviews, messages, notifications, admin, password_reset, contractor
+from app.api.v1 import (
+    auth, users, sites, shifts, roster, routes,
+    visits, attendance, incidents, dashboard,
+    notifications, admin, password_reset, sync, devices,
+    guard_photos, outdoor, workforce, tracking, payroll,
+    deduction_rules, fake_attendance,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -45,22 +55,31 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    logger.info(f" Starting {settings.APP_NAME}")
+    logger.info(f"🛡️ Starting {settings.APP_NAME}")
 
     try:
         Base.metadata.create_all(bind=engine)
-        logger.info(" Database tables created/verified")
+        logger.info("✓ Database tables created/verified")
+
+        # Create SQL views for optimized dashboard queries
+        db = SessionLocal()
+        try:
+            create_views(db)
+            logger.info("✓ SQL views created/updated")
+        finally:
+            db.close()
+
         test_connection()
     except Exception as e:
-        logger.warning(f" MySQL not available on startup: {e}")
+        logger.warning(f"⚠ MySQL not available on startup: {e}")
         logger.warning("  → Start MySQL and the app will connect on first request.")
 
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    logger.info(f" Upload directory ready: {settings.UPLOAD_DIR}")
+    logger.info(f"✓ Upload directory ready: {settings.UPLOAD_DIR}")
 
     yield
 
-    logger.info(" Shutting down...")
+    logger.info("🛑 Shutting down...")
     engine.dispose()
 
 
@@ -69,11 +88,11 @@ async def lifespan(app: FastAPI):
 # ==========================================
 app = FastAPI(
     title=settings.APP_NAME,
-    description="A decentralized marketplace for home and professional services. "
-                "Connects clients with verified technicians through competitive bidding.",
-    version="2.0.0",
+    description="Security Field Force Management System. "
+                "GPS-verified supervisor visits, guard attendance tracking, "
+                "geofenced check-ins, and real-time compliance monitoring.",
+    version="1.0.0",
     lifespan=lifespan,
-    # Show API docs even in production for testing
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -83,10 +102,13 @@ app = FastAPI(
 # ==========================================
 # Global Exception Handlers
 # ==========================================
-@app.exception_handler(SanaieException)
-async def sanaie_exception_handler(request: Request, exc: SanaieException):
+@app.exception_handler(SecureTrackException)
+async def securetrack_exception_handler(request: Request, exc: SecureTrackException):
     """Convert domain exceptions to proper HTTP responses."""
     status_map = {
+        GeofenceViolationException: 403,
+        DeviceNotTrustedException: 403,
+        OfflineSyncExpiredException: 410,
         NotFoundException: 404,
         DuplicateException: 409,
         ForbiddenException: 403,
@@ -136,7 +158,6 @@ async def log_requests(request: Request, call_next):
             duration,
         )
     else:
-        # Add cache headers for static files (uploads)
         response.headers["Cache-Control"] = "public, max-age=2592000, immutable"
     return response
 
@@ -163,7 +184,7 @@ async def health_check():
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
-        "version": "2.0.0",
+        "version": "1.0.0",
         "database": db_status,
     }
 
@@ -173,14 +194,26 @@ async def health_check():
 # ==========================================
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
-app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["Jobs"])
-app.include_router(bids.router, prefix="/api/v1/bids", tags=["Bids"])
-app.include_router(reviews.router, prefix="/api/v1/reviews", tags=["Reviews"])
-app.include_router(messages.router, prefix="/api/v1/messages", tags=["Messages"])
+app.include_router(sites.router, prefix="/api/v1/sites", tags=["Sites"])
+app.include_router(shifts.router, prefix="/api/v1/sites", tags=["Shifts"])
+app.include_router(roster.router, prefix="/api/v1/roster", tags=["Guard Roster"])
+app.include_router(routes.router, prefix="/api/v1/routes", tags=["Supervisor Routes"])
+app.include_router(visits.router, prefix="/api/v1/visits", tags=["Visits (Geofence)"])
+app.include_router(attendance.router, prefix="/api/v1/attendance", tags=["Attendance"])
+app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incidents"])
+app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(password_reset.router, prefix="/api/v1/auth/password", tags=["Password Reset"])
-app.include_router(contractor.router, prefix="/api/v1/contractor", tags=["Contractor"])
+app.include_router(sync.router, prefix="/api/v1/sync", tags=["Offline Sync"])
+app.include_router(devices.router, prefix="/api/v1/devices", tags=["Devices"])
+app.include_router(guard_photos.router, prefix="/api/v1/guard-photos", tags=["Guard Photos"])
+app.include_router(outdoor.router, prefix="/api/v1/outdoor", tags=["Outdoor"])
+app.include_router(workforce.router, prefix="/api/v1/workforce", tags=["Workforce Log"])
+app.include_router(tracking.router, prefix="/api/v1/tracking", tags=["GPS Tracking"])
+app.include_router(payroll.router, prefix="/api/v1/payroll", tags=["Payroll"])
+app.include_router(deduction_rules.router, prefix="/api/v1/deductions", tags=["Deduction Rules"])
+app.include_router(fake_attendance.router, prefix="/api/v1/fake-attendance", tags=["Fake Attendance"])
 
 
 # ==========================================
@@ -193,4 +226,4 @@ app.mount(
     name="uploads",
 )
 
-logger.info(f" {settings.APP_NAME} v2.0.0 — all routers registered")
+logger.info(f"🛡️ {settings.APP_NAME} v1.0.0 — all routers registered")

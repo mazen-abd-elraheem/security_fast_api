@@ -1,31 +1,20 @@
 """
-Sanaie Platform — Notifications API Router
-Real alerts for bid updates, job status changes, system messages.
+SecureTrack Platform — Notification Routes
 """
 import uuid
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
-
 from app.core.database import get_db
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_role
 from app.models.user import User
 from app.models.notification import Notification
-from app.schemas.notification import (
-    NotificationCreate,
-    NotificationResponse,
-    NotificationListResponse,
-    SendNotification,
-)
+from app.enums import UserRole
+from app.schemas.notification import NotificationResponse, NotificationListResponse, SendNotification
 
 router = APIRouter()
 
-
-# ═══════════════════════════════════════════
-# Helper — create notification (used internally)
-# ═══════════════════════════════════════════
 
 def create_notification(
     db: Session,
@@ -35,8 +24,8 @@ def create_notification(
     message: str = None,
     reference_id: str = None,
     reference_type: str = None,
-) -> Notification:
-    """Create and persist a notification. Can be called from any service."""
+):
+    """Helper function to create a notification."""
     notif = Notification(
         notification_id=str(uuid.uuid4()),
         user_id=user_id,
@@ -45,194 +34,82 @@ def create_notification(
         message=message,
         reference_id=reference_id,
         reference_type=reference_type,
-        is_read=False,
-        created_at=datetime.now(timezone.utc),
     )
     db.add(notif)
+    db.flush()
     return notif
 
 
-# ═══════════════════════════════════════════
-# List Notifications
-# ═══════════════════════════════════════════
-
-@router.get(
-    "/",
-    response_model=NotificationListResponse,
-    summary="List my notifications",
-)
-def list_notifications(
+@router.get("", response_model=NotificationListResponse, summary="Get my notifications")
+def get_notifications(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
-    unread_only: bool = Query(False),
+    limit: int = Query(20, ge=1, le=50),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return all notifications for the current user, newest first."""
-    query = db.query(Notification).filter(
-        Notification.user_id == current_user.user_id,
-    )
-
-    if unread_only:
-        query = query.filter(Notification.is_read == False)
-
+    """Get the authenticated user's notifications."""
+    query = db.query(Notification).filter(Notification.user_id == current_user.user_id)
     total = query.count()
-    unread_count = db.query(func.count(Notification.notification_id)).filter(
-        Notification.user_id == current_user.user_id,
-        Notification.is_read == False,
-    ).scalar() or 0
-
-    notifs = query.order_by(desc(Notification.created_at)).offset(skip).limit(limit).all()
+    unread = query.filter(Notification.is_read == False).count()
+    notifs = query.order_by(Notification.created_at.desc()).offset(skip).limit(limit).all()
 
     return NotificationListResponse(
-        notifications=[
-            NotificationResponse(
-                notification_id=n.notification_id,
-                user_id=n.user_id,
-                notif_type=n.notif_type,
-                title=n.title,
-                message=n.message,
-                is_read=n.is_read,
-                reference_id=n.reference_id,
-                reference_type=n.reference_type,
-                created_at=n.created_at,
-            )
-            for n in notifs
-        ],
+        notifications=[NotificationResponse.model_validate(n) for n in notifs],
         total=total,
-        unread_count=unread_count,
+        unread_count=unread,
     )
 
 
-# ═══════════════════════════════════════════
-# Mark as Read
-# ═══════════════════════════════════════════
-
-@router.put(
-    "/{notification_id}/read",
-    summary="Mark a notification as read",
-)
-def mark_notification_read(
+@router.put("/{notification_id}/read", summary="Mark as read")
+def mark_as_read(
     notification_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Mark a single notification as read."""
+    """Mark a notification as read."""
     notif = db.query(Notification).filter(
         Notification.notification_id == notification_id,
         Notification.user_id == current_user.user_id,
     ).first()
-
     if not notif:
-        raise HTTPException(404, "Notification not found")
-
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Notification not found")
     notif.is_read = True
     db.commit()
-    return {"status": "ok"}
+    return {"detail": "Marked as read"}
 
 
-@router.put(
-    "/read-all",
-    summary="Mark all notifications as read",
-)
-def mark_all_read(
+@router.put("/read-all", summary="Mark all as read")
+def mark_all_as_read(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Mark all notifications for the current user as read."""
-    count = db.query(Notification).filter(
+    """Mark all notifications as read."""
+    db.query(Notification).filter(
         Notification.user_id == current_user.user_id,
         Notification.is_read == False,
     ).update({"is_read": True})
     db.commit()
-    return {"marked_read": count}
+    return {"detail": "All notifications marked as read"}
 
 
-# ═══════════════════════════════════════════
-# Send Notification (admin / internal)
-# ═══════════════════════════════════════════
-
-@router.post(
-    "/",
-    response_model=NotificationResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a notification (for testing)",
-)
+@router.post("/send", status_code=201, summary="Admin sends notification")
 def send_notification(
-    data: NotificationCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Create a notification for the current user (useful for testing)."""
-    notif = create_notification(
-        db,
-        user_id=current_user.user_id,
-        notif_type=data.notif_type,
-        title=data.title,
-        message=data.message,
-        reference_id=data.reference_id,
-        reference_type=data.reference_type,
-    )
-    db.commit()
-    db.refresh(notif)
-
-    return NotificationResponse(
-        notification_id=notif.notification_id,
-        user_id=notif.user_id,
-        notif_type=notif.notif_type,
-        title=notif.title,
-        message=notif.message,
-        is_read=notif.is_read,
-        reference_id=notif.reference_id,
-        reference_type=notif.reference_type,
-        created_at=notif.created_at,
-    )
-
-
-# ═══════════════════════════════════════════
-# Send Notification to Another User
-# ═══════════════════════════════════════════
-
-@router.post(
-    "/send",
-    response_model=NotificationResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Send a notification to another user",
-)
-def send_notification_to_user(
     data: SendNotification,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
-    """
-    Send a notification to a specific user (e.g. technician notifies client
-    of job status updates). The target user must exist.
-    """
-    # Verify target user exists
+    """Admin sends a notification to a specific user."""
     target = db.query(User).filter(User.user_id == data.target_user_id).first()
     if not target:
+        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Target user not found")
 
     notif = create_notification(
-        db,
-        user_id=data.target_user_id,
-        notif_type=data.notification_type,
-        title=data.title,
-        message=data.message,
-        reference_id=data.reference_id,
-        reference_type="job",
+        db, user_id=data.target_user_id,
+        notif_type=data.notification_type, title=data.title,
+        message=data.message, reference_id=data.reference_id,
+        reference_type=data.reference_type,
     )
     db.commit()
-    db.refresh(notif)
-
-    return NotificationResponse(
-        notification_id=notif.notification_id,
-        user_id=notif.user_id,
-        notif_type=notif.notif_type,
-        title=notif.title,
-        message=notif.message,
-        is_read=notif.is_read,
-        reference_id=notif.reference_id,
-        reference_type=notif.reference_type,
-        created_at=notif.created_at,
-    )
+    return {"detail": "Notification sent", "notification_id": notif.notification_id}

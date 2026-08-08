@@ -1,5 +1,5 @@
 """
-Sanaie Platform — Auth Routes
+SecureTrack Platform — Auth Routes
 Registration, login, and token refresh.
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -16,35 +16,38 @@ from app.enums import UserRole
 from app.schemas.user import UserCreate, UserResponse
 from app.services.user_service import UserService
 from app.api.deps import get_current_user, handle_service_exception
-from app.core.exceptions import SanaieException
+from app.core.exceptions import SecureTrackException
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
 
-# ==========================================
-# Endpoints
-# ==========================================
-
 @router.post(
     "/register",
-    response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register a new user (Client or Worker)",
+    summary="Register a new user (pending admin approval)",
 )
 @limiter.limit("10/minute")
 def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
     """
-    Register a new user with the Sanaie platform.
+    Register a new user with SecureTrack.
 
-    - **role**: `client`, `worker`, or `admin`
-    - Workers can optionally include `skills` and `latitude`/`longitude`
+    - **role**: `guard`, `supervisor`, `client`, or `admin`
     - Password must contain uppercase, lowercase, digit, and special character
+    - Account starts as **inactive** and requires admin approval before login
     """
     try:
         user = UserService.create_user(db, user_data)
-        return user
-    except SanaieException as e:
+        return {
+            "message": "Registration successful. Your account is pending admin approval.",
+            "user_id": user.user_id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "is_active": user.is_active,
+            "status": user.status if isinstance(user.status, str) else user.status.value,
+        }
+    except SecureTrackException as e:
         handle_service_exception(e)
 
 
@@ -65,6 +68,20 @@ def login(
     - **password**: User password
     - Returns: `access_token`, `refresh_token`, and `token_type`
     """
+    # First check if user exists but has a non-active status
+    pending_user = UserService.get_by_email(db, form_data.username)
+    if pending_user and not pending_user.is_active:
+        user_status = getattr(pending_user, 'status', None)
+        if user_status == 'rejected':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account registration has been rejected. Please contact your administrator.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is pending admin approval. Please wait for activation.",
+        )
+
     user = UserService.authenticate(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -102,9 +119,7 @@ def refresh_token(
     refresh_token: str,
     db: Session = Depends(get_db),
 ):
-    """
-    Exchange a valid refresh token for a new access token.
-    """
+    """Exchange a valid refresh token for a new access token."""
     payload = verify_token(refresh_token, expected_type="refresh")
     if payload is None:
         raise HTTPException(
@@ -127,3 +142,25 @@ def refresh_token(
         "access_token": new_access_token,
         "token_type": "bearer",
     }
+
+
+@router.get(
+    "/activation-status",
+    summary="Check account activation status",
+)
+@limiter.limit("20/minute")
+def check_activation_status(
+    request: Request,
+    email: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Check whether a registered account has been activated by an admin.
+
+    - Returns `pending` if the account is still awaiting admin approval.
+    - Returns `active` if the admin has activated the account.
+    """
+    try:
+        return UserService.get_activation_status(db, email)
+    except SecureTrackException as e:
+        handle_service_exception(e)

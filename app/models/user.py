@@ -1,45 +1,58 @@
-from sqlalchemy import Column, String, DateTime, Float, Text, Enum as SAEnum, JSON
+"""
+SecureTrack Platform — User Model
+Centralized identity for Admins, Supervisors, Guards, Outdoor personnel, and Clients.
+"""
+from sqlalchemy import Column, String, Float, DateTime, Boolean, Numeric, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
+from app.enums import UserStatus
 from app.core.database import Base
-from app.enums import UserRole
 
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        Index('ix_users_role_active', 'role', 'is_active'),
+    )
 
     user_id = Column(String(36), primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), nullable=False, unique=True, index=True)
     phone_number = Column(String(20), nullable=True)
     password_hash = Column(String(255), nullable=False)
-    role = Column(String(20), nullable=False, default="client")
+    role = Column(String(30), nullable=False, default="guard")
 
-    # Geolocation
+    # Badge / employee number (unique within company)
+    badge_number = Column(String(50), nullable=True, unique=True, index=True)
+
+    # Region assignment (for regional managers and filtered queries)
+    region = Column(String(100), nullable=True, index=True)
+
+    # Real-time GPS (updated by mobile app)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
 
-    # Worker-specific fields
-    skills = Column(JSON, nullable=True)  # Stored as JSON array: ["plumbing", "electrical"]
+    # Profile
     profile_image_url = Column(String(500), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=False)  # Pending admin approval by default
+    status = Column(String(30), nullable=False, default=UserStatus.PENDING)  # pending status
+    requested_role = Column(String(30), nullable=True)  # role requested during registration
 
-    # Worker availability
-    is_available = Column(String(20), nullable=False, default="available")  # available, busy, offline
-
-    # ID verification status
-    is_verified = Column(String(20), nullable=False, default="unverified")  # unverified, pending, verified, rejected
+    # Payroll
+    base_salary = Column(Float, nullable=True, default=0.0)  # Monthly base salary in EGP
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    jobs_as_client = relationship("Job", foreign_keys="Job.client_id", back_populates="client")
-    jobs_as_worker = relationship("Job", foreign_keys="Job.assigned_worker_id", back_populates="assigned_worker")
-    bids = relationship("Bid", back_populates="worker")
-    reviews_given = relationship("Review", foreign_keys="Review.client_id", back_populates="client")
-    reviews_received = relationship("Review", foreign_keys="Review.worker_id", back_populates="worker")
+    supervisor_routes = relationship("SupervisorRoute", back_populates="supervisor", foreign_keys="SupervisorRoute.supervisor_id")
+    supervisor_visits = relationship("SupervisorVisit", back_populates="supervisor", foreign_keys="SupervisorVisit.supervisor_id")
+    guard_rosters = relationship("GuardRoster", back_populates="guard", foreign_keys="GuardRoster.guard_id")
+    devices = relationship("DeviceRegistry", back_populates="user", foreign_keys="DeviceRegistry.user_id")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User(user_id={self.user_id}, name={self.name}, role={self.role})>"

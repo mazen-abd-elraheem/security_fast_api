@@ -1,0 +1,481 @@
+"""
+SecureTrack Platform — Attendance Routes
+"""
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+from datetime import date
+from typing import Optional
+
+from app.core.database import get_db
+from app.api.deps import get_current_user, require_role, handle_service_exception
+from app.models.user import User
+from app.enums import UserRole
+from app.schemas.attendance import (
+    AttendanceRecord, BulkAttendanceRequest,
+    AttendanceLogResponse, AttendanceListResponse, AttendanceReportResponse,
+)
+from app.services.attendance_service import AttendanceService
+from app.core.exceptions import SecureTrackException
+
+router = APIRouter()
+
+
+def _build_log_response(r) -> AttendanceLogResponse:
+    guard = r.roster.guard if r.roster else None
+    shift = r.roster.shift if r.roster else None
+    site = shift.site if shift else None
+    return AttendanceLogResponse(
+        log_id=r.log_id,
+        roster_id=r.roster_id,
+        visit_id=r.visit_id,
+        supervisor_id=r.supervisor_id,
+        status=r.status,
+        replacement_guard_id=r.replacement_guard_id,
+        notes=r.notes,
+        recorded_at=r.recorded_at,
+        guard_id=guard.user_id if guard else None,
+        guard_name=guard.name if guard else None,
+        site_name=site.name if site else None,
+    )
+
+@router.post("", response_model=AttendanceLogResponse, status_code=201, summary="Record attendance")
+def record_attendance(
+    visit_id: str = Query(..., description="Visit ID this attendance is for"),
+    record: AttendanceRecord = ...,
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    db: Session = Depends(get_db),
+):
+    """Record attendance for a single guard during a visit."""
+    try:
+        att = AttendanceService.record_attendance(db, current_user.user_id, visit_id, record)
+        # Fetch the full object to populate relationships
+        att = db.query(att.__class__).filter_by(log_id=att.log_id).first()
+        return _build_log_response(att)
+    except SecureTrackException as e:
+        handle_service_exception(e)
+
+
+@router.post("/bulk", status_code=201, summary="Bulk record attendance")
+def bulk_record_attendance(
+    bulk_data: BulkAttendanceRequest,
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    db: Session = Depends(get_db),
+):
+    """Record attendance for all guards during a visit."""
+    try:
+        results = AttendanceService.bulk_record(db, current_user.user_id, bulk_data)
+        return {"detail": f"{len(results)} attendance records created", "count": len(results)}
+    except SecureTrackException as e:
+        handle_service_exception(e)
+
+
+@router.get("/site/{site_id}", response_model=AttendanceListResponse, summary="Attendance for site")
+def get_attendance_for_site(
+    site_id: str,
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    current_user: User = Depends(require_role(
+        UserRole.ADMIN, UserRole.SUPERVISOR,
+    )),
+    db: Session = Depends(get_db),
+):
+    """Get attendance records for a site within a date range."""
+    records = AttendanceService.get_attendance_for_site(db, site_id, date_from, date_to)
+    items = [_build_log_response(r) for r in records]
+    return AttendanceListResponse(records=items, total=len(items))
+
+
+@router.get("/guard/{guard_id}", response_model=AttendanceListResponse, summary="Guard attendance")
+def get_guard_attendance(
+    guard_id: str,
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get attendance history for a guard. Guards can view their own."""
+    user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
+    if user_role == "guard" and current_user.user_id != guard_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Guards can only view their own attendance")
+
+    records = AttendanceService.get_guard_attendance(db, guard_id, date_from, date_to)
+    items = [_build_log_response(r) for r in records]
+    return AttendanceListResponse(records=items, total=len(items))
+
+@router.get("/my", response_model=AttendanceListResponse, summary="Get supervisor's recorded attendance today")
+def get_my_attendance(
+    target_date: Optional[date] = Query(None),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    db: Session = Depends(get_db)
+):
+    """Get attendance logs recorded by the supervisor today."""
+    records = AttendanceService.get_supervisor_attendance_today(db, current_user.user_id, target_date)
+    items = [_build_log_response(r) for r in records]
+    return AttendanceListResponse(records=items, total=len(items))
+
+
+@router.get("/report", response_model=AttendanceReportResponse, summary="Attendance report")
+def get_attendance_report(
+    site_id: Optional[str] = Query(None),
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Generate attendance summary report for a date range."""
+    summary = AttendanceService.get_attendance_summary(db, site_id, date_from, date_to)
+    return AttendanceReportResponse(
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+        **summary,
+    )
+
+
+# ── Guard Auto Check-in ──
+
+from app.models.guard_roster import GuardRoster
+from app.models.shift import Shift
+from app.models.site import Site
+from app.models.attendance_log import AttendanceLog
+from app.services.geo_service import GeoService
+import uuid
+
+
+@router.post("/checkin", status_code=200, summary="Guard auto check-in via GPS")
+def guard_checkin(
+    latitude: float = Query(..., ge=-90, le=90),
+    longitude: float = Query(..., ge=-180, le=180),
+    current_user: User = Depends(require_role(UserRole.GUARD, UserRole.OUTDOOR)),
+    db: Session = Depends(get_db),
+):
+    """
+    Auto check-in: find the guard's assigned roster for today,
+    verify they are within the site's geofence, and create an attendance log.
+    """
+    from datetime import datetime, timezone
+    import logging
+    logger = logging.getLogger("securetrack.checkin")
+
+    today = date.today()
+    logger.info(f"[CHECKIN] User={current_user.user_id} ({current_user.name}), "
+                f"role={current_user.role}, lat={latitude}, lng={longitude}, today={today}")
+
+    # Find today's roster assignment for this guard
+    roster = (
+        db.query(GuardRoster)
+        .filter(GuardRoster.guard_id == current_user.user_id)
+        .filter(GuardRoster.assigned_date == today)
+        .first()
+    )
+    if not roster:
+        # Debug: check what rosters exist for this guard
+        all_rosters = db.query(GuardRoster).filter(
+            GuardRoster.guard_id == current_user.user_id
+        ).all()
+        logger.warning(f"[CHECKIN] No roster for today={today}. "
+                       f"Guard has {len(all_rosters)} total rosters: "
+                       f"{[(r.roster_id, str(r.assigned_date)) for r in all_rosters]}")
+        return {"status": "no_assignment", "detail": f"No shift assigned for today ({today})"}
+
+    logger.info(f"[CHECKIN] Found roster={roster.roster_id}, shift={roster.shift_id}, "
+                f"assigned_date={roster.assigned_date}")
+
+    # Check if already checked in today
+    existing = (
+        db.query(AttendanceLog)
+        .filter(AttendanceLog.roster_id == roster.roster_id)
+        .first()
+    )
+    if existing:
+        return {"status": "already_checked_in", "detail": "Already checked in for this shift"}
+
+    # Get the site via shift → site
+    shift = db.query(Shift).filter(Shift.shift_id == roster.shift_id).first()
+    if not shift:
+        return {"status": "error", "detail": "Shift not found"}
+
+    site = db.query(Site).filter(Site.site_id == shift.site_id).first()
+    if not site:
+        return {"status": "error", "detail": "Site not found"}
+
+    # Calculate distance
+    distance = GeoService.haversine_distance_meters(latitude, longitude, site.latitude, site.longitude)
+    logger.info(f"[CHECKIN] Site={site.name}, site_lat={site.latitude}, site_lng={site.longitude}, "
+                f"radius={site.radius_meters}m, distance={int(distance)}m")
+
+    if distance > site.radius_meters:
+        return {
+            "status": "out_of_range",
+            "detail": f"You are {int(distance)}m away. Must be within {site.radius_meters}m.",
+            "distance_meters": int(distance),
+        }
+
+    # Create attendance log (no visit/supervisor required for auto check-in)
+    log_id = str(uuid.uuid4())
+    recorded_at = datetime.now(timezone.utc)
+    log = AttendanceLog(
+        log_id=log_id,
+        roster_id=roster.roster_id,
+        visit_id=None,
+        supervisor_id=current_user.user_id,
+        status="present",
+        notes=f"Auto check-in at {int(distance)}m from site center",
+        recorded_at=recorded_at,
+    )
+    db.add(log)
+    db.commit()
+
+    logger.info(f"[CHECKIN] SUCCESS — log_id={log_id}, distance={int(distance)}m")
+
+    return {
+        "status": "checked_in",
+        "detail": f"Checked in to {site.name}",
+        "site_name": site.name,
+        "distance_meters": int(distance),
+        "recorded_at": recorded_at.isoformat(),
+    }
+
+
+@router.get("/checkin/debug", status_code=200, summary="Debug guard check-in status")
+def debug_checkin(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Debug endpoint: shows what the checkin logic would see for this user."""
+    today = date.today()
+    rosters = db.query(GuardRoster).filter(
+        GuardRoster.guard_id == current_user.user_id
+    ).all()
+
+    roster_today = [r for r in rosters if r.assigned_date == today]
+    
+    result = {
+        "user_id": current_user.user_id,
+        "name": current_user.name,
+        "role": current_user.role.value if hasattr(current_user.role, 'value') else current_user.role,
+        "server_today": str(today),
+        "total_rosters": len(rosters),
+        "rosters_today": len(roster_today),
+        "all_roster_dates": [str(r.assigned_date) for r in rosters],
+    }
+
+    if roster_today:
+        r = roster_today[0]
+        shift = db.query(Shift).filter(Shift.shift_id == r.shift_id).first()
+        site = db.query(Site).filter(Site.site_id == shift.site_id).first() if shift else None
+        existing_log = db.query(AttendanceLog).filter(AttendanceLog.roster_id == r.roster_id).first()
+
+        result["roster_id"] = r.roster_id
+        result["shift_id"] = r.shift_id
+        result["shift_label"] = shift.label if shift else None
+        result["site_name"] = site.name if site else None
+        result["site_lat"] = site.latitude if site else None
+        result["site_lng"] = site.longitude if site else None
+        result["site_radius"] = site.radius_meters if site else None
+        result["already_checked_in"] = existing_log is not None
+        if existing_log:
+            result["existing_log_id"] = existing_log.log_id
+            result["existing_log_status"] = existing_log.status
+
+        # Calculate distance from guard's stored location
+        if site and current_user.latitude and current_user.longitude:
+            dist = GeoService.haversine_distance_meters(current_user.latitude, current_user.longitude, site.latitude, site.longitude)
+            result["stored_location_distance_m"] = int(dist)
+            result["within_geofence"] = dist <= site.radius_meters
+
+    return result
+
+
+# ── CSV Export ──
+
+from fastapi.responses import StreamingResponse
+import csv
+import io
+
+@router.get("/export", summary="Export attendance as CSV")
+def export_attendance_csv(
+    target_date: date = Query(..., description="Date to export"),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Export attendance records for a date as CSV."""
+    from sqlalchemy.orm import joinedload
+
+    logs = (
+        db.query(AttendanceLog)
+        .options(
+            joinedload(AttendanceLog.roster).joinedload(GuardRoster.guard),
+            joinedload(AttendanceLog.roster).joinedload(GuardRoster.shift).joinedload(Shift.site),
+        )
+        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
+        .filter(GuardRoster.assigned_date == target_date)
+        .all()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Guard Name", "Badge", "Site", "Shift", "Status", "Check-in Time", "Notes"])
+
+    for log in logs:
+        guard = log.roster.guard if log.roster else None
+        shift = log.roster.shift if log.roster else None
+        site = shift.site if shift else None
+        writer.writerow([
+            guard.name if guard else "Unknown",
+            guard.badge_number if guard else "",
+            site.name if site else "Unknown",
+            shift.label if shift else "",
+            log.status,
+            log.recorded_at.strftime("%Y-%m-%d %H:%M:%S") if log.recorded_at else "",
+            log.notes or "",
+        ])
+
+    output.seek(0)
+    filename = f"attendance_{target_date.isoformat()}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+# ── Supervisor Attendance Daily Summary (for Admin) ──
+
+@router.get("/daily-summary", summary="Supervisor attendance daily summary")
+def get_daily_summary(
+    date_from: date = Query(..., description="Start date"),
+    date_to: date = Query(..., description="End date"),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """
+    Get all supervisor-recorded attendance for a date, grouped by site.
+    This is the manual roll-call data taken by supervisors during visits.
+    """
+    from sqlalchemy.orm import joinedload
+
+    logs = (
+        db.query(AttendanceLog)
+        .options(
+            joinedload(AttendanceLog.roster).joinedload(GuardRoster.guard),
+            joinedload(AttendanceLog.roster).joinedload(GuardRoster.shift).joinedload(Shift.site),
+            joinedload(AttendanceLog.supervisor),
+            joinedload(AttendanceLog.visit),
+        )
+        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
+        .filter(GuardRoster.assigned_date >= date_from)
+        .filter(GuardRoster.assigned_date <= date_to)
+        # Only include logs that have a visit_id (supervisor-recorded, not auto-checkin)
+        .filter(AttendanceLog.visit_id.isnot(None))
+        .all()
+    )
+
+    # Group by site and date
+    sites_map = {}
+    for log in logs:
+        guard = log.roster.guard if log.roster else None
+        shift = log.roster.shift if log.roster else None
+        site = shift.site if shift else None
+        site_name = site.name if site else "Unknown"
+        supervisor = log.supervisor
+        date_str = log.roster.assigned_date.isoformat() if log.roster else "Unknown"
+        key = f"{date_str}_{site_name}"
+
+        if key not in sites_map:
+            sites_map[key] = {
+                "date": date_str,
+                "site_name": site_name,
+                "supervisor_name": supervisor.name if supervisor else "Unknown",
+                "visit_time": log.recorded_at.strftime("%H:%M") if log.recorded_at else "",
+                "guards": [],
+                "total_present": 0,
+                "total_absent": 0,
+                "total_late": 0,
+            }
+
+        guard_entry = {
+            "name": guard.name if guard else "Unknown",
+            "badge_number": guard.badge_number if guard else "",
+            "status": log.status,
+            "notes": log.notes or "",
+            "recorded_at": log.recorded_at.isoformat() if log.recorded_at else "",
+        }
+        sites_map[key]["guards"].append(guard_entry)
+
+        if log.status == "present":
+            sites_map[key]["total_present"] += 1
+        elif log.status == "absent":
+            sites_map[key]["total_absent"] += 1
+        elif log.status == "late":
+            sites_map[key]["total_late"] += 1
+
+    sites_list = list(sites_map.values())
+
+    summary = {
+        "total_present": sum(s["total_present"] for s in sites_list),
+        "total_absent": sum(s["total_absent"] for s in sites_list),
+        "total_late": sum(s["total_late"] for s in sites_list),
+    }
+
+    return {
+        "date": f"{date_from.isoformat()} to {date_to.isoformat()}",
+        "sites": sites_list,
+        "summary": summary,
+    }
+
+
+@router.get("/daily-summary/export", summary="Export supervisor attendance as CSV")
+def export_daily_summary_csv(
+    date_from: date = Query(..., description="Start date"),
+    date_to: date = Query(..., description="End date"),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Export supervisor-recorded attendance for a date as CSV."""
+    from sqlalchemy.orm import joinedload
+
+    logs = (
+        db.query(AttendanceLog)
+        .options(
+            joinedload(AttendanceLog.roster).joinedload(GuardRoster.guard),
+            joinedload(AttendanceLog.roster).joinedload(GuardRoster.shift).joinedload(Shift.site),
+            joinedload(AttendanceLog.supervisor),
+        )
+        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
+        .filter(GuardRoster.assigned_date >= date_from)
+        .filter(GuardRoster.assigned_date <= date_to)
+        .filter(AttendanceLog.visit_id.isnot(None))
+        .all()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Site", "Supervisor", "Guard Name", "Badge", "Status", "Notes", "Recorded At"])
+
+    for log in logs:
+        guard = log.roster.guard if log.roster else None
+        shift = log.roster.shift if log.roster else None
+        site = shift.site if shift else None
+        supervisor = log.supervisor
+
+        writer.writerow([
+            log.roster.assigned_date.isoformat() if log.roster else "Unknown",
+            site.name if site else "Unknown",
+            supervisor.name if supervisor else "Unknown",
+            guard.name if guard else "Unknown",
+            guard.badge_number if guard else "",
+            log.status,
+            log.notes or "",
+            log.recorded_at.strftime("%Y-%m-%d %H:%M:%S") if log.recorded_at else "",
+        ])
+
+    output.seek(0)
+    filename = f"attendance_summary_{date_from.isoformat()}_to_{date_to.isoformat()}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+

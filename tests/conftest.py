@@ -1,144 +1,218 @@
 """
-Sanaie Platform — Test Configuration
-Uses a separate test database with per-test rollback isolation.
-Credentials loaded from environment or defaults.
+SecureTrack Platform — Test Configuration
+Fixtures for all test modules: in-memory DB, test client, user factories.
 """
-import os
+import uuid
 import pytest
-from typing import Generator
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.core.database import Base, get_db
+from app.core.security import hash_password, create_access_token
 from app.main import app
-from app.core.database import get_db, Base
-from app.core.security import create_access_token
 from app.models.user import User
-from app.enums import UserRole
-from app.services.user_service import UserService
-from app.schemas.user import UserCreate
+from app.models.site import Site
+from app.models.shift import Shift
+from app.models.guard_roster import GuardRoster
+from app.models.supervisor_route import SupervisorRoute
+
 
 # ==========================================
-# Test Database Configuration
+# In-Memory SQLite for Testing
 # ==========================================
-TEST_DB_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "mysql+pymysql://root:MyNewStrongPassword123!@127.0.0.1:3306/sanaie_test_db",
+TEST_DATABASE_URL = "sqlite://"
+
+engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
-
-test_engine = create_engine(TEST_DB_URL, echo=False, pool_pre_ping=True)
-TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def create_test_db():
-    """Create test database and tables once per test session."""
-    root_url = TEST_DB_URL.rsplit("/", 1)[0] + "/"
-    root_engine = create_engine(root_url, echo=False)
-    with root_engine.connect() as conn:
-        conn.execute(text("CREATE DATABASE IF NOT EXISTS sanaie_test_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
-        conn.commit()
-    root_engine.dispose()
+def override_get_db():
+    db = TestSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-    Base.metadata.create_all(bind=test_engine)
+
+app.dependency_overrides[get_db] = override_get_db
+
+
+@pytest.fixture(autouse=True)
+def setup_database():
+    """Create all tables before each test, drop after."""
+    Base.metadata.create_all(bind=engine)
     yield
-    Base.metadata.drop_all(bind=test_engine)
+    Base.metadata.drop_all(bind=engine)
 
 
-@pytest.fixture(scope="function")
-def db_session() -> Generator[Session, None, None]:
-    """Create a fresh DB session per test, rolled back at the end."""
-    connection = test_engine.connect()
-    transaction = connection.begin()
-    session = TestSessionLocal(bind=connection)
-
+@pytest.fixture
+def db():
+    """Provide a database session for tests."""
+    session = TestSessionLocal()
     try:
         yield session
     finally:
         session.close()
-        transaction.rollback()
-        connection.close()
 
 
-@pytest.fixture(scope="function")
-def client(db_session: Session) -> Generator[TestClient, None, None]:
-    """TestClient with database override."""
-
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            pass
-
-    app.dependency_overrides[get_db] = override_get_db
-
-    with TestClient(app) as test_client:
-        yield test_client
-
-    app.dependency_overrides.clear()
+@pytest.fixture
+def client():
+    """Provide a test HTTP client."""
+    return TestClient(app)
 
 
 # ==========================================
-# Auth Helper Fixtures
+# User Factory Helpers
 # ==========================================
+def _create_user(db, role: str, name: str = None, email: str = None, badge: str = None):
+    """Create a test user with the given role."""
+    user_id = str(uuid.uuid4())
+    user = User(
+        user_id=user_id,
+        name=name or f"Test {role.title()}",
+        email=email or f"{role}_{user_id[:8]}@test.com",
+        password_hash=hash_password("Test@1234"),
+        role=role,
+        badge_number=badge,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
-@pytest.fixture(scope="function")
-def test_client_user(db_session: Session) -> User:
-    """Create a test CLIENT user."""
-    user_data = UserCreate(
-        name="Test Client",
-        email="client@test.com",
-        password="TestPass123!",
-        role=UserRole.CLIENT,
-        latitude=30.0444,
+
+def _get_token(user: User) -> str:
+    """Generate a JWT token for a user."""
+    token_data = {"sub": user.user_id, "role": user.role}
+    return create_access_token(data=token_data)
+
+
+def _auth_header(user: User) -> dict:
+    """Generate auth header for a user."""
+    return {"Authorization": f"Bearer {_get_token(user)}"}
+
+
+@pytest.fixture
+def admin_user(db):
+    return _create_user(db, "admin", "Admin User", "admin@test.com")
+
+
+@pytest.fixture
+def supervisor_user(db):
+    return _create_user(db, "supervisor", "Supervisor User", "supervisor@test.com")
+
+
+@pytest.fixture
+def guard_user(db):
+    return _create_user(db, "guard", "Guard User", "guard@test.com", badge="G-001")
+
+
+@pytest.fixture
+def ops_manager_user(db):
+    return _create_user(db, "operations_manager", "Ops Manager", "ops@test.com")
+
+
+@pytest.fixture
+def client_user(db):
+    return _create_user(db, "client", "Client User", "client@test.com")
+
+
+@pytest.fixture
+def admin_headers(admin_user):
+    return _auth_header(admin_user)
+
+
+@pytest.fixture
+def supervisor_headers(supervisor_user):
+    return _auth_header(supervisor_user)
+
+
+@pytest.fixture
+def guard_headers(guard_user):
+    return _auth_header(guard_user)
+
+
+@pytest.fixture
+def ops_headers(ops_manager_user):
+    return _auth_header(ops_manager_user)
+
+
+# ==========================================
+# Domain Object Factories
+# ==========================================
+@pytest.fixture
+def test_site(db):
+    """Create a test site with geofence."""
+    site = Site(
+        site_id=str(uuid.uuid4()),
+        name="Test Site Alpha",
+        address="123 Security St",
+        latitude=30.0444,   # Cairo coordinates
         longitude=31.2357,
+        radius_meters=100,
+        region="Cairo",
+        status="active",
     )
-    return UserService.create_user(db_session, user_data)
+    db.add(site)
+    db.commit()
+    db.refresh(site)
+    return site
 
 
-@pytest.fixture(scope="function")
-def test_worker_user(db_session: Session) -> User:
-    """Create a test WORKER user."""
-    user_data = UserCreate(
-        name="Test Worker",
-        email="worker@test.com",
-        password="TestPass123!",
-        role=UserRole.WORKER,
-        latitude=30.0500,
-        longitude=31.2400,
-        skills=["plumbing", "electrical"],
+@pytest.fixture
+def test_shift(db, test_site):
+    """Create a test shift at the test site."""
+    from datetime import time
+    shift = Shift(
+        shift_id=str(uuid.uuid4()),
+        site_id=test_site.site_id,
+        start_time=time(8, 0),
+        end_time=time(16, 0),
+        days_of_week="mon,tue,wed,thu,fri",
+        required_headcount=2,
+        label="Morning Shift",
     )
-    return UserService.create_user(db_session, user_data)
+    db.add(shift)
+    db.commit()
+    db.refresh(shift)
+    return shift
 
 
-@pytest.fixture(scope="function")
-def test_admin_user(db_session: Session) -> User:
-    """Create a test ADMIN user."""
-    user_data = UserCreate(
-        name="Test Admin",
-        email="admin@test.com",
-        password="AdminPass123!",
-        role=UserRole.ADMIN,
+@pytest.fixture
+def test_roster(db, guard_user, test_shift):
+    """Create a test roster assignment."""
+    from datetime import date
+    roster = GuardRoster(
+        roster_id=str(uuid.uuid4()),
+        guard_id=guard_user.user_id,
+        shift_id=test_shift.shift_id,
+        assigned_date=date.today(),
     )
-    return UserService.create_user(db_session, user_data)
+    db.add(roster)
+    db.commit()
+    db.refresh(roster)
+    return roster
 
 
-@pytest.fixture(scope="function")
-def client_auth_headers(test_client_user: User) -> dict:
-    """JWT auth headers for the test client user."""
-    token = create_access_token(data={"sub": test_client_user.user_id, "role": "client"})
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture(scope="function")
-def worker_auth_headers(test_worker_user: User) -> dict:
-    """JWT auth headers for the test worker user."""
-    token = create_access_token(data={"sub": test_worker_user.user_id, "role": "worker"})
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture(scope="function")
-def admin_auth_headers(test_admin_user: User) -> dict:
-    """JWT auth headers for the test admin user."""
-    token = create_access_token(data={"sub": test_admin_user.user_id, "role": "admin"})
-    return {"Authorization": f"Bearer {token}"}
+@pytest.fixture
+def test_route(db, supervisor_user, test_site):
+    """Create a test route assignment."""
+    from datetime import date
+    route = SupervisorRoute(
+        route_id=str(uuid.uuid4()),
+        supervisor_id=supervisor_user.user_id,
+        site_id=test_site.site_id,
+        assigned_date=date.today(),
+        visit_order=1,
+    )
+    db.add(route)
+    db.commit()
+    db.refresh(route)
+    return route

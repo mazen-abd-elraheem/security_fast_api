@@ -1,105 +1,61 @@
-"""Tests for Users API (/api/v1/users)"""
-import pytest
-from fastapi.testclient import TestClient
-from app.models.user import User
+"""
+SecureTrack — User Management Tests
+"""
+from tests.conftest import _auth_header
 
 
-def test_get_my_profile(client: TestClient, client_auth_headers: dict):
-    """Test getting authenticated user's profile."""
-    response = client.get("/api/v1/users/me", headers=client_auth_headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Test Client"
-    assert data["email"] == "client@test.com"
-    assert data["role"] == "client"
+class TestUserProfile:
+    def test_get_my_profile(self, client, supervisor_user, supervisor_headers):
+        resp = client.get("/api/v1/users/me", headers=supervisor_headers)
+        assert resp.status_code == 200
+        assert resp.json()["email"] == "supervisor@test.com"
+
+    def test_update_my_profile(self, client, guard_user, guard_headers):
+        resp = client.put("/api/v1/users/me", headers=guard_headers, json={
+            "name": "Updated Guard",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Updated Guard"
+
+    def test_update_location_supervisor_only(self, client, supervisor_user, supervisor_headers):
+        resp = client.put("/api/v1/users/me/location", headers=supervisor_headers, json={
+            "latitude": 30.0444, "longitude": 31.2357,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["latitude"] == 30.0444
+
+    def test_update_location_guard_forbidden(self, client, guard_user, guard_headers):
+        resp = client.put("/api/v1/users/me/location", headers=guard_headers, json={
+            "latitude": 30.0, "longitude": 31.0,
+        })
+        assert resp.status_code == 403
 
 
-def test_get_profile_unauthorized(client: TestClient):
-    """Test that unauthenticated requests are rejected."""
-    response = client.get("/api/v1/users/me")
-    assert response.status_code == 401
+class TestAdminUserManagement:
+    def test_list_users(self, client, admin_user, admin_headers, guard_user):
+        resp = client.get("/api/v1/users", headers=admin_headers)
+        assert resp.status_code == 200
+        assert resp.json()["total"] >= 2
 
+    def test_list_users_filter_by_role(self, client, admin_user, admin_headers, guard_user):
+        resp = client.get("/api/v1/users?role=guard", headers=admin_headers)
+        assert resp.status_code == 200
+        for u in resp.json()["users"]:
+            assert u["role"] == "guard"
 
-def test_update_profile(client: TestClient, client_auth_headers: dict):
-    """Test updating user profile."""
-    response = client.put(
-        "/api/v1/users/me",
-        json={"name": "Updated Name", "phone_number": "+201234567890"},
-        headers=client_auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Updated Name"
-    assert data["phone_number"] == "+201234567890"
+    def test_admin_create_user(self, client, admin_user, admin_headers):
+        resp = client.post("/api/v1/users", headers=admin_headers, json={
+            "name": "New Sup", "email": "newsup2@test.com",
+            "password": "Super@1234", "role": "supervisor",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["role"] == "supervisor"
 
+    def test_admin_deactivate_user(self, client, admin_user, admin_headers, guard_user):
+        resp = client.delete(f"/api/v1/users/{guard_user.user_id}", headers=admin_headers)
+        assert resp.status_code == 200
+        assert resp.json()["is_active"] is False
 
-def test_update_availability(client: TestClient, worker_auth_headers: dict):
-    """Test updating worker availability status."""
-    response = client.put(
-        "/api/v1/users/me",
-        json={"is_available": "busy"},
-        headers=worker_auth_headers,
-    )
-    assert response.status_code == 200
-    assert response.json()["is_available"] == "busy"
-
-
-def test_update_skills_as_list(client: TestClient, worker_auth_headers: dict):
-    """Test updating skills as JSON array."""
-    response = client.put(
-        "/api/v1/users/me",
-        json={"skills": ["plumbing", "electrical", "painting"]},
-        headers=worker_auth_headers,
-    )
-    assert response.status_code == 200
-    assert response.json()["skills"] == ["plumbing", "electrical", "painting"]
-
-
-def test_update_location(client: TestClient, client_auth_headers: dict):
-    """Test updating user geolocation."""
-    response = client.put(
-        "/api/v1/users/me/location",
-        json={"latitude": 29.9792, "longitude": 31.1342},
-        headers=client_auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["latitude"] == 29.9792
-    assert data["longitude"] == 31.1342
-
-
-def test_get_user_public_profile(
-    client: TestClient,
-    client_auth_headers: dict,
-    test_worker_user: User,
-):
-    """Test getting another user's public profile."""
-    response = client.get(
-        f"/api/v1/users/{test_worker_user.user_id}",
-        headers=client_auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Test Worker"
-    assert data["role"] == "worker"
-    assert "email" not in data  # Public profile should not expose email
-    assert "is_available" in data
-
-
-def test_get_nearby_workers(
-    client: TestClient,
-    client_auth_headers: dict,
-    test_worker_user: User,
-):
-    """Test finding nearby workers within a radius."""
-    response = client.get(
-        "/api/v1/users/workers/nearby",
-        params={"latitude": 30.0444, "longitude": 31.2357, "radius_km": 50},
-        headers=client_auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, list)
-    if len(data) > 0:
-        assert "distance_km" in data[0]
-        assert "name" in data[0]
+    def test_guard_cannot_list_users(self, client, guard_user, guard_headers):
+        resp = client.get("/api/v1/users", headers=guard_headers)
+        assert resp.status_code == 403

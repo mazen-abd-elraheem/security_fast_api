@@ -1,5 +1,5 @@
 """
-Sanaie Platform — Notification Schemas
+SecureTrack Platform — Notification Schemas
 """
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -19,8 +19,9 @@ class SendNotification(BaseModel):
     target_user_id: str = Field(..., description="User ID to send the notification to")
     title: str = Field(..., max_length=255)
     message: Optional[str] = None
-    notification_type: str = "job_update"
+    notification_type: str = "system"
     reference_id: Optional[str] = None
+    reference_type: Optional[str] = None
 
 
 class NotificationResponse(BaseModel):

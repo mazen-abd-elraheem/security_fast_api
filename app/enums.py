@@ -1,48 +1,68 @@
 """
-Sanaie Platform — Shared Enums
+SecureTrack Platform — Shared Enums
 Single source of truth for all enum types used across models, schemas, and services.
 """
 from enum import Enum
 
 
 class UserRole(str, Enum):
-    CLIENT = "client"
-    WORKER = "worker"
-    CONTRACTOR = "contractor"
-    MODERATOR = "moderator"
-    EDITOR = "editor"
     ADMIN = "admin"
+    SUPERVISOR = "supervisor"
+    GUARD = "guard"
+    OUTDOOR = "outdoor"
 
 
-class JobCategory(str, Enum):
-    PLUMBING = "plumbing"
-    ELECTRICAL = "electrical"
-    PAINTING = "painting"
-    CARPENTRY = "carpentry"
-    CLEANING = "cleaning"
-    GENERAL = "general"
-    OTHER = "other"
+class SiteStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    MAINTENANCE = "maintenance"
 
 
-class JobStatus(str, Enum):
-    OPEN = "open"
-    IN_PROGRESS = "in_progress"
-    ON_THE_WAY = "on_the_way"
-    WORK_STARTED = "work_started"
-    COMPLETED = "completed"
+class UserStatus(str, Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    REJECTED = "rejected"
+
+
+class RosterStatus(str, Enum):
+    SCHEDULED = "scheduled"
+    ACTIVE = "active"
     CANCELED = "canceled"
 
 
-class BidStatus(str, Enum):
+class RouteStatus(str, Enum):
     PENDING = "pending"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
-    WITHDRAWN = "withdrawn"
-    COUNTER_OFFERED = "counter_offered"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
 
 
-class VerificationStatus(str, Enum):
-    UNVERIFIED = "unverified"
-    PENDING = "pending"
-    VERIFIED = "verified"
-    REJECTED = "rejected"
+class AttendanceStatus(str, Enum):
+    PRESENT = "present"
+    ABSENT = "absent"
+    LATE = "late"
+    REPLACEMENT = "replacement"
+
+
+class IncidentCategory(str, Enum):
+    EQUIPMENT_DAMAGE = "equipment_damage"
+    SECURITY_BREACH = "security_breach"
+    UNAUTHORIZED_ACCESS = "unauthorized_access"
+    MISSING_GUARD = "missing_guard"
+    PROPERTY_DAMAGE = "property_damage"
+    SUSPICIOUS_ACTIVITY = "suspicious_activity"
+    OTHER = "other"
+
+
+class IncidentSeverity(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class IncidentStatus(str, Enum):
+    OPEN = "open"
+    INVESTIGATING = "investigating"
+    RESOLVED = "resolved"
+    CLOSED = "closed"

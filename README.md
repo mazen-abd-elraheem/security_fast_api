@@ -1,131 +1,113 @@
-# Sanaie Platform — Home & Professional Services Marketplace
+# 🛡️ SecureTrack — Security Field Force Management System
 
-A local-first FastAPI marketplace connecting clients with verified technicians through competitive bidding.
+A centralized compliance and workforce management API built with **FastAPI** for security companies. Eliminates **ghost guards** and enforces **GPS-verified supervisor site visits**.
 
-## Tech Stack
+## 🎯 Core Features
 
-| Layer | Technology |
-|---|---|
-| Runtime | Python 3.11+ |
-| Framework | FastAPI + Uvicorn |
-| ORM | SQLAlchemy 2.0 |
-| Validation | Pydantic v2 |
-| Database | MySQL 8.0 (via pymysql) |
-| Auth | JWT (python-jose) + Bcrypt (passlib) |
-| Tokens | Access + Refresh tokens |
-| Geo | Haversine distance with bounding-box pre-filter |
-| File Storage | Local filesystem |
-| Rate Limiting | slowapi |
-| Migrations | Alembic |
-| Tests | pytest + httpx |
-| Containers | Docker + Docker Compose |
+- **GPS Geofenced Check-in**: Supervisors must be physically within a site's radius to check in
+- **Guard Attendance Tracking**: Real-time presence verification by supervisors
+- **Anti-Spoofing**: Device fingerprinting and location validation
+- **Incident Reporting**: On-site security incident management with photo evidence
+- **Live Dashboard**: Real-time site coverage status (green/yellow/red)
+- **Offline Sync**: Cached data push for network dead zones
+- **Role-Based Access**: 7 roles from Super Admin to Guard
 
-## Quick Start
+## 🏗️ Tech Stack
 
-### Option A: Docker (recommended)
+| Component | Technology |
+|-----------|-----------|
+| **Backend** | FastAPI (Python 3.11+) |
+| **Database** | MySQL 8.0 |
+| **ORM** | SQLAlchemy 2.0 |
+| **Auth** | JWT (python-jose) |
+| **Validation** | Pydantic v2 |
+| **Container** | Docker + docker-compose |
+| **Testing** | pytest + httpx |
+
+## 🚀 Quick Start
+
+### 1. Docker (Recommended)
 ```bash
 docker-compose up --build
 ```
-API available at http://localhost:8000/docs
+API available at: `http://localhost:8000/docs`
 
-### Option B: Local Development
-
-#### 1. Create the MySQL Database
-```sql
-CREATE DATABASE sanaie_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
-Or use the full schema: `database/schema.sql`
-
-#### 2. Install Dependencies
+### 2. Local Development
 ```bash
-cd Sanaie-Platform
+# Create virtual environment
+python -m venv venv
+venv\Scripts\activate  # Windows
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Set environment variables
+copy .env.example .env
+
+# Start MySQL and run
+uvicorn app.main:app --reload
 ```
 
-#### 3. Configure Environment
+### 3. Run Tests
 ```bash
-cp .env.example .env
-# Edit .env with your MySQL credentials and a random SECRET_KEY
+pytest tests/ -v --tb=short
 ```
 
-#### 4. Run the Server
-```bash
-uvicorn app.main:app --reload --port 8000
-$env:PYTHONPATH = (Get-Location).Path
-flet run frontend/main.py --verbose
-net start MySQL80
-```
+## 📡 API Overview
 
-#### 5. Open API Docs
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+| Module | Prefix | Description |
+|--------|--------|-------------|
+| Auth | `/api/v1/auth` | Register, login, token refresh |
+| Users | `/api/v1/users` | Profile management, admin CRUD |
+| Sites | `/api/v1/sites` | Geofenced site management |
+| Shifts | `/api/v1/sites/{id}/shifts` | Guard shift definitions |
+| Roster | `/api/v1/roster` | Guard-to-shift scheduling |
+| Routes | `/api/v1/routes` | Supervisor daily itineraries |
+| **Visits** | `/api/v1/visits` | **GPS-verified check-in/out** |
+| Attendance | `/api/v1/attendance` | Guard presence recording |
+| Incidents | `/api/v1/incidents` | Security incident reports |
+| Dashboard | `/api/v1/dashboard` | Live status & analytics |
+| Notifications | `/api/v1/notifications` | Push notifications |
+| Devices | `/api/v1/devices` | Device fingerprinting |
+| Sync | `/api/v1/sync` | Offline data push |
 
-#### 6. Run Tests
-```bash
-pytest tests/ -v
-```
+## 👥 Roles
 
-## Architecture
+| Role | Access Level |
+|------|-------------|
+| `super_admin` | Full system access |
+| `admin` | Manage sites, users, shifts, reports |
+| `operations_manager` | Oversee supervisors, approve schedules |
+| `regional_manager` | Manage within a region |
+| `supervisor` | Field visits, attendance, incidents |
+| `guard` | View own schedule and attendance |
+| `client` | View contracted site reports |
+
+## 📁 Project Structure
 
 ```
 app/
-├── api/
-│   ├── deps.py          # Shared deps: auth, role guards, exception handlers
-│   └── v1/              # Versioned API routes
-├── core/
-│   ├── config.py        # Pydantic Settings from .env
-│   ├── database.py      # SQLAlchemy engine + session
-│   ├── exceptions.py    # Domain exceptions (HTTP-agnostic)
-│   └── security.py      # JWT + password hashing
-├── enums.py             # Single source of truth for all enums
-├── models/              # SQLAlchemy ORM models
-├── schemas/             # Pydantic request/response schemas
-└── services/            # Business logic (HTTP-agnostic)
+├── api/v1/          # Route handlers (15 modules)
+├── core/            # Config, DB, security, exceptions
+├── models/          # SQLAlchemy models (12 tables)
+├── schemas/         # Pydantic validation schemas
+├── services/        # Business logic layer
+database/
+├── schema.sql       # Full MySQL schema
+tests/               # pytest test suite (14 test files)
+docker-compose.yml   # Docker orchestration
 ```
 
-## API Endpoints
+## 🔐 Environment Variables
 
-### Auth (`/api/v1/auth`)
-- `POST /register` — Register client, worker, or admin
-- `POST /login` — OAuth2 login → JWT access + refresh tokens
-- `POST /refresh` — Exchange refresh token for new access token
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `mysql+pymysql://...` | MySQL connection string |
+| `SECRET_KEY` | `change-this` | JWT signing key |
+| `DEFAULT_GEOFENCE_RADIUS_METERS` | `100` | Default site geofence |
+| `OFFLINE_SYNC_MAX_AGE_HOURS` | `24` | Max offline data age |
+| `MAX_TRUSTED_DEVICES_PER_USER` | `3` | Device fingerprint limit |
 
-### Users (`/api/v1/users`)
-- `GET /me` — My profile
-- `PUT /me` — Update profile (name, phone, skills, availability)
-- `PUT /me/location` — Update geolocation
-- `GET /workers/nearby` — Find nearby workers (bounding-box + Haversine)
-- `GET /{user_id}` — Public profile
+## 📄 License
 
-### Jobs (`/api/v1/jobs`)
-- `POST /` — Create job with photo + location (client/admin)
-- `GET /` — List jobs (filterable by status, category, full-text search)
-- `GET /{id}` — Job details
-- `PUT /{id}` — Update job (owner, if open)
-- `DELETE /{id}` — Delete job
-- `PUT /{id}/complete` — Mark completed
-- `PUT /{id}/cancel` — Cancel job
-- `GET /my/client` — My client jobs
-- `GET /my/worker` — My assigned jobs
-
-### Bids (`/api/v1/bids`)
-- `POST /` — Submit bid with message (worker only)
-- `GET /job/{id}` — Bids for a job
-- `PUT /{id}/accept` — Accept bid → assigns worker, rejects others
-- `PUT /{id}/reject` — Reject bid
-- `PUT /{id}/withdraw` — Withdraw bid
-- `GET /my` — My bids
-
-### Reviews (`/api/v1/reviews`)
-- `POST /` — Submit review (client/admin, after completion)
-- `GET /worker/{id}` — Worker reviews (paginated)
-- `GET /worker/{id}/rating` — Worker avg rating
-- `GET /job/{id}` — Job review
-
-## Security Features
-
-- **Password Validation**: Requires uppercase, lowercase, digit, and special character
-- **JWT Tokens**: Short-lived access tokens + long-lived refresh tokens
-- **Role-Based Access**: `require_role()` dependency for endpoint protection
-- **CORS**: Configurable origins (no wildcard in production)
-- **Rate Limiting**: Configurable per-minute limits via slowapi
+Proprietary — SecureTrack Platform
