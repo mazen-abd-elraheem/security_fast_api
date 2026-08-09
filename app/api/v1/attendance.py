@@ -115,6 +115,117 @@ def get_my_attendance(
     return AttendanceListResponse(records=items, total=len(items))
 
 
+@router.get("/supervisor/dashboard", summary="Supervisor attendance dashboard for assigned sites")
+def supervisor_attendance_dashboard(
+    target_date: Optional[date] = Query(None),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns all guards rostered at the supervisor's assigned sites today,
+    along with their attendance status (checked_in or not).
+    Powers the supervisor attendance-recording screen.
+    """
+    from app.models.supervisor_route import SupervisorRoute
+    from app.models.guard_roster import GuardRoster
+    from app.models.shift import Shift
+    from app.models.site import Site
+    from app.models.attendance_log import AttendanceLog
+
+    if target_date is None:
+        target_date = date.today()
+
+    # 1. Get all sites assigned to this supervisor today
+    routes = (
+        db.query(SupervisorRoute)
+        .filter(SupervisorRoute.supervisor_id == current_user.user_id)
+        .filter(SupervisorRoute.assigned_date == target_date)
+        .all()
+    )
+    site_ids = [r.site_id for r in routes]
+    if not site_ids:
+        return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
+
+    # 2. For each site, get guards rostered today
+    sites_data = []
+    total_guards = 0
+    total_present = 0
+
+    for site_id in site_ids:
+        site = db.query(Site).filter(Site.site_id == site_id).first()
+        if not site:
+            continue
+
+        # Get shifts for this site
+        shifts = db.query(Shift).filter(Shift.site_id == site_id, Shift.is_active == True).all()
+        shift_ids = [s.shift_id for s in shifts]
+
+        if not shift_ids:
+            sites_data.append({
+                "site_id": site_id,
+                "site_name": site.name,
+                "guards": [],
+                "total": 0,
+                "present": 0,
+            })
+            continue
+
+        # Get guard rosters for today at this site
+        rosters = (
+            db.query(GuardRoster)
+            .filter(GuardRoster.shift_id.in_(shift_ids))
+            .filter(GuardRoster.assigned_date == target_date)
+            .all()
+        )
+
+        guards = []
+        site_present = 0
+        for roster in rosters:
+            guard = roster.guard
+            shift = roster.shift
+
+            # Check if guard has an attendance log for this roster
+            att_log = (
+                db.query(AttendanceLog)
+                .filter(AttendanceLog.roster_id == roster.roster_id)
+                .first()
+            )
+
+            status = att_log.status if att_log else "not_recorded"
+            if att_log and att_log.status in ("present", "late"):
+                site_present += 1
+
+            guards.append({
+                "guard_id": guard.user_id if guard else None,
+                "guard_name": guard.name if guard else "Unknown",
+                "roster_id": roster.roster_id,
+                "shift_label": shift.label if shift else None,
+                "shift_time": f"{shift.start_time.strftime('%H:%M')}-{shift.end_time.strftime('%H:%M')}" if shift else None,
+                "status": status,
+                "recorded_at": att_log.recorded_at.isoformat() if att_log else None,
+                "notes": att_log.notes if att_log else None,
+                "log_id": att_log.log_id if att_log else None,
+            })
+
+        total_guards += len(guards)
+        total_present += site_present
+        sites_data.append({
+            "site_id": site_id,
+            "site_name": site.name,
+            "guards": guards,
+            "total": len(guards),
+            "present": site_present,
+        })
+
+    return {
+        "sites": sites_data,
+        "total_guards": total_guards,
+        "total_present": total_present,
+        "date": target_date.isoformat(),
+    }
+
+
+
 @router.get("/report", response_model=AttendanceReportResponse, summary="Attendance report")
 def get_attendance_report(
     site_id: Optional[str] = Query(None),

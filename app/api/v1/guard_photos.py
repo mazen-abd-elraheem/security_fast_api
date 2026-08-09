@@ -28,7 +28,7 @@ async def upload_guard_photo(
     file: UploadFile = File(...),
     photo_type: str = Query("uniform_check", description="Type: uniform_check, selfie"),
     notes: Optional[str] = Query(None),
-    current_user: User = Depends(require_role(UserRole.GUARD)),
+    current_user: User = Depends(require_role(UserRole.GUARD, UserRole.OUTDOOR)),
     db: Session = Depends(get_db),
 ):
     """Guard uploads a selfie or uniform photo."""
@@ -65,7 +65,7 @@ async def upload_guard_photo(
 
 @router.get("/my", summary="Get my photos")
 def get_my_photos(
-    current_user: User = Depends(require_role(UserRole.GUARD)),
+    current_user: User = Depends(require_role(UserRole.GUARD, UserRole.OUTDOOR)),
     db: Session = Depends(get_db),
 ):
     """Get all photos uploaded by the current guard."""

@@ -47,7 +47,7 @@ def list_incidents(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=50),
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD,
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR,
     )),
     db: Session = Depends(get_db),
 ):
