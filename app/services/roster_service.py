@@ -33,16 +33,14 @@ class RosterService:
         if not shift:
             raise NotFoundException("Shift", roster_data.shift_id)
 
-        # Check for duplicate assignment on the same date
+        # Cancel any existing assignment on the same date (allows re-assignment)
         existing = db.query(GuardRoster).filter(
             GuardRoster.guard_id == roster_data.guard_id,
             GuardRoster.assigned_date == roster_data.assigned_date,
             GuardRoster.status != "canceled",
-        ).first()
-        if existing:
-            raise DuplicateException(
-                f"Guard {guard.name} is already assigned to a shift on {roster_data.assigned_date}"
-            )
+        ).all()
+        for old in existing:
+            old.status = "canceled"
 
         db_roster = GuardRoster(
             roster_id=str(uuid.uuid4()),
