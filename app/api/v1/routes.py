@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.api.deps import get_current_user, require_role, handle_service_exception
 from app.models.user import User
 from app.enums import UserRole
-from app.schemas.route import RouteCreate, RouteResponse, DailyItineraryResponse
+from app.schemas.route import RouteCreate, BulkRouteCreate, RouteResponse, DailyItineraryResponse
 from app.services.route_service import RouteService
 from app.core.exceptions import SecureTrackException
 
@@ -27,6 +27,20 @@ def assign_route(
     try:
         routes = RouteService.assign_route(db, route_data)
         return {"detail": f"{len(routes)} site assignments created", "count": len(routes)}
+    except SecureTrackException as e:
+        handle_service_exception(e)
+
+
+@router.post("/bulk", status_code=201, summary="Bulk assign supervisor to date range")
+def bulk_assign_route(
+    bulk_data: BulkRouteCreate,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Assign a supervisor to the same sites across multiple dates in one call."""
+    try:
+        routes = RouteService.bulk_assign_route(db, bulk_data.supervisor_id, bulk_data.dates, bulk_data.sites)
+        return {"detail": f"{len(routes)} assignments created across {len(bulk_data.dates)} dates", "count": len(routes)}
     except SecureTrackException as e:
         handle_service_exception(e)
 

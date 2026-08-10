@@ -62,6 +62,46 @@ class RouteService:
         return routes
 
     @staticmethod
+    def bulk_assign_route(db: Session, supervisor_id: str, dates: list, sites: list) -> list:
+        """Assign a supervisor to the same sites across multiple dates."""
+        supervisor = db.query(User).filter(User.user_id == supervisor_id).first()
+        if not supervisor:
+            raise NotFoundException("Supervisor", supervisor_id)
+        if supervisor.role != "supervisor":
+            raise BadRequestException(f"User {supervisor.name} is not a supervisor")
+
+        all_routes = []
+        skipped = 0
+        for target_date in dates:
+            for site_assignment in sites:
+                site = db.query(Site).filter(Site.site_id == site_assignment.site_id).first()
+                if not site:
+                    raise NotFoundException("Site", site_assignment.site_id)
+
+                # Skip duplicates silently
+                existing = db.query(SupervisorRoute).filter(
+                    SupervisorRoute.supervisor_id == supervisor_id,
+                    SupervisorRoute.site_id == site_assignment.site_id,
+                    SupervisorRoute.assigned_date == target_date,
+                ).first()
+                if existing:
+                    skipped += 1
+                    continue
+
+                db_route = SupervisorRoute(
+                    route_id=str(uuid.uuid4()),
+                    supervisor_id=supervisor_id,
+                    site_id=site_assignment.site_id,
+                    assigned_date=target_date,
+                    visit_order=site_assignment.visit_order,
+                )
+                db.add(db_route)
+                all_routes.append(db_route)
+
+        db.commit()
+        return all_routes
+
+    @staticmethod
     def get_daily_route(db: Session, supervisor_id: str, target_date: date) -> list:
         """Get a supervisor's daily route."""
         return (

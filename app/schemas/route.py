@@ -21,6 +21,13 @@ class RouteCreate(BaseModel):
     sites: List[RouteAssignment]
 
 
+class BulkRouteCreate(BaseModel):
+    """Assign a supervisor to the same sites across multiple dates."""
+    supervisor_id: str
+    dates: List[date]
+    sites: List[RouteAssignment]
+
+
 # --- Output Schemas ---
 
 class RouteResponse(BaseModel):
