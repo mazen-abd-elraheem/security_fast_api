@@ -24,11 +24,11 @@ class TestUserProfile:
         assert resp.status_code == 200
         assert resp.json()["latitude"] == 30.0444
 
-    def test_update_location_guard_forbidden(self, client, guard_user, guard_headers):
+    def test_update_location_guard_allowed(self, client, guard_user, guard_headers):
         resp = client.put("/api/v1/users/me/location", headers=guard_headers, json={
             "latitude": 30.0, "longitude": 31.0,
         })
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
 
 class TestAdminUserManagement:
