@@ -170,11 +170,12 @@ def supervisor_attendance_dashboard(
             })
             continue
 
-        # Get guard rosters for today at this site
+        # Get guard rosters for today at this site (exclude canceled)
         rosters = (
             db.query(GuardRoster)
             .filter(GuardRoster.shift_id.in_(shift_ids))
             .filter(GuardRoster.assigned_date == target_date)
+            .filter(GuardRoster.status != "canceled")
             .all()
         )
 
@@ -273,11 +274,12 @@ def guard_checkin(
     logger.info(f"[CHECKIN] User={current_user.user_id} ({current_user.name}), "
                 f"role={current_user.role}, lat={latitude}, lng={longitude}, today={today}")
 
-    # Find today's roster assignment for this guard
+    # Find today's roster assignment for this guard (exclude canceled)
     roster = (
         db.query(GuardRoster)
         .filter(GuardRoster.guard_id == current_user.user_id)
         .filter(GuardRoster.assigned_date == today)
+        .filter(GuardRoster.status != "canceled")
         .first()
     )
     if not roster:
@@ -357,7 +359,8 @@ def debug_checkin(
     """Debug endpoint: shows what the checkin logic would see for this user."""
     today = date.today()
     rosters = db.query(GuardRoster).filter(
-        GuardRoster.guard_id == current_user.user_id
+        GuardRoster.guard_id == current_user.user_id,
+        GuardRoster.status != "canceled",
     ).all()
 
     roster_today = [r for r in rosters if r.assigned_date == today]

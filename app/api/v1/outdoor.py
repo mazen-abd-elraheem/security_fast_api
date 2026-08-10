@@ -40,11 +40,12 @@ def outdoor_checkin(
     try:
         today = date.today()
 
-        # Find today's roster assignment
+        # Find today's roster assignment (exclude canceled)
         roster = (
             db.query(GuardRoster)
             .filter(GuardRoster.guard_id == current_user.user_id)
             .filter(GuardRoster.assigned_date == today)
+            .filter(GuardRoster.status != "canceled")
             .first()
         )
         if not roster:
@@ -125,11 +126,12 @@ def outdoor_checkout(
     """
     today = date.today()
 
-    # Find today's roster assignment
+    # Find today's roster assignment (exclude canceled)
     roster = (
         db.query(GuardRoster)
         .filter(GuardRoster.guard_id == current_user.user_id)
         .filter(GuardRoster.assigned_date == today)
+        .filter(GuardRoster.status != "canceled")
         .first()
     )
     if not roster:

@@ -46,6 +46,7 @@ def detect_fake_attendance(
         .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
+        .filter(GuardRoster.status != "canceled")
         .filter(AttendanceLog.status.in_(["present", "late", "replacement"]))
         .filter(AttendanceLog.visit_id.isnot(None))  # Supervisor-recorded only
         .all()

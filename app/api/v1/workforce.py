@@ -238,6 +238,7 @@ def get_workforce_log(
         )
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
+        .filter(GuardRoster.status != "canceled")
     )
 
     rosters = query.all()
@@ -312,6 +313,7 @@ def export_workforce_csv(
         )
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
+        .filter(GuardRoster.status != "canceled")
     )
     rosters = query.all()
 

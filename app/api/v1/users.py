@@ -81,11 +81,12 @@ def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
     try:
         today = date.today()
 
-        # Find today's roster
+        # Find today's roster (exclude canceled assignments)
         roster = (
             db.query(GuardRoster)
             .filter(GuardRoster.guard_id == user.user_id)
             .filter(GuardRoster.assigned_date == today)
+            .filter(GuardRoster.status != "canceled")
             .first()
         )
         if not roster:
