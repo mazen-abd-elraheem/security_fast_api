@@ -107,24 +107,30 @@ def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
         a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
         distance = 2 * asin(sqrt(a)) * 6371000
 
-        # If outside geofence, don't check in or update time
+        # If outside geofence, check them out if they are currently checked in
         if distance > site.radius_meters:
+            existing = db.query(AttendanceLog).filter(
+                AttendanceLog.roster_id == roster.roster_id
+            ).order_by(AttendanceLog.recorded_at.desc()).first()
+            if existing and not existing.checkout_at:
+                existing.checkout_at = datetime.now(timezone.utc)
+                db.commit()
+                logger.info(f"[AUTO-CHECKOUT] {user.name} left {site.name} ({int(distance)}m)")
             return
 
         # They are inside the geofence. Check if already checked in
         existing = db.query(AttendanceLog).filter(
             AttendanceLog.roster_id == roster.roster_id
-        ).first()
+        ).order_by(AttendanceLog.recorded_at.desc()).first()
 
         now_utc = datetime.now(timezone.utc)
         
-        if existing:
-            # Continuously update checkout_at to track hours while inside geofence
-            existing.checkout_at = now_utc
-            db.commit()
-            # Avoid logging every 30s to keep logs clean
+        if existing and not existing.checkout_at:
+            # Already checked in, still inside. Do not update checkout_at!
+            # This keeps the session "open" (live) until they leave the geofence.
+            pass
         else:
-            # First time checking in today
+            # Either first time checking in today, or re-entering after leaving
             log = AttendanceLog(
                 log_id=str(uuid.uuid4()),
                 roster_id=roster.roster_id,
