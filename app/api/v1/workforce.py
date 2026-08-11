@@ -29,6 +29,7 @@ ABSENT_DEDUCTION = 200.0           # Full-day deduction for absent
 LATE_DEDUCTION_PER_MINUTE = 2.0    # Per-minute deduction for late
 EARLY_LEAVE_DEDUCTION = 100.0      # Fixed deduction for leaving early
 NO_CHECKOUT_DEDUCTION = 50.0       # No checkout recorded
+OUTSIDE_GEOFENCE_DEDUCTION_PER_HOUR = 20.0  # Deduction per hour outside geofence during shift
 
 
 def _time_to_minutes(t: dtime) -> float:
@@ -87,6 +88,38 @@ def _compute_actual_hours(sessions: list[dict], shift_end_dt: datetime | None = 
     return round(total, 2)
 
 
+def _compute_outside_hours(sessions: list[dict], shift_start_dt: datetime, shift_end_dt: datetime) -> float:
+    """
+    Calculate the total time a guard spent OUTSIDE the geofence during shift hours.
+    This is the gap time between consecutive sessions, clamped to the shift window.
+    Only counts gaps that fall within the scheduled shift period.
+    """
+    if len(sessions) < 2:
+        return 0.0
+
+    now_utc = datetime.now(timezone.utc)
+    total_outside = 0.0
+
+    for i in range(len(sessions) - 1):
+        prev_session = sessions[i]
+        next_session = sessions[i + 1]
+
+        # Gap = from previous checkout to next checkin
+        if prev_session["checkout"] and next_session["checkin"]:
+            gap_start = datetime.fromisoformat(prev_session["checkout"])
+            gap_end = datetime.fromisoformat(next_session["checkin"])
+
+            # Clamp to shift boundaries — only count time outside during the shift
+            gap_start = max(gap_start, shift_start_dt)
+            gap_end = min(gap_end, shift_end_dt)
+
+            gap_hours = (gap_end - gap_start).total_seconds() / 3600.0
+            if gap_hours > 0:
+                total_outside += gap_hours
+
+    return round(total_outside, 2)
+
+
 def _build_employee_record(
     user: User,
     roster: GuardRoster,
@@ -99,9 +132,10 @@ def _build_employee_record(
     """Build a single employee's workforce record."""
     sessions = _compute_sessions(logs)
 
-    # Compute shift end datetime for fallback checkout
+    # Compute shift start/end datetimes
     scheduled_start = shift.start_time
     scheduled_end = shift.end_time
+    shift_start_dt = datetime.combine(target_date, scheduled_start, tzinfo=timezone.utc)
     scheduled_end_dt = datetime.combine(target_date, scheduled_end, tzinfo=timezone.utc)
     if scheduled_end < scheduled_start:
         scheduled_end_dt += timedelta(days=1)
@@ -114,6 +148,17 @@ def _build_employee_record(
         actual_hours = gps_presence_hours
     else:
         actual_hours = _compute_actual_hours(sessions, shift_end_dt=scheduled_end_dt)
+
+    # Time spent outside geofence during shift hours
+    # Prefer server-tracked total_outside_seconds from the attendance log (accurate),
+    # fall back to gap-based calculation between sessions for backward compatibility.
+    tracked_outside_seconds = sum(
+        (log.total_outside_seconds or 0) for log in logs
+    )
+    if tracked_outside_seconds > 0:
+        outside_hours = round(tracked_outside_seconds / 3600.0, 2)
+    else:
+        outside_hours = _compute_outside_hours(sessions, shift_start_dt, scheduled_end_dt)
 
     # Scheduled hours
     start_mins = _time_to_minutes(scheduled_start)
@@ -183,6 +228,13 @@ def _build_employee_record(
                         salary_deduction += EARLY_LEAVE_DEDUCTION
                         deduction_reasons.append("Early departure")
 
+    # Outside geofence deduction
+    if outside_hours > 0:
+        outside_deduction = round(outside_hours * OUTSIDE_GEOFENCE_DEDUCTION_PER_HOUR, 2)
+        salary_deduction += outside_deduction
+        alerts.append(f"Outside geofence for {outside_hours}h")
+        deduction_reasons.append(f"Outside geofence ({outside_hours}h)")
+
     salary_deduction = round(salary_deduction, 2)
 
     # Is this a live/ongoing session?
@@ -208,6 +260,7 @@ def _build_employee_record(
         "sessions": sessions,
         "sessions_count": len(sessions),
         "actual_hours": actual_hours,
+        "outside_hours": outside_hours,
         "gps_presence_hours": gps_presence_hours,
         "is_live": is_live,
         "status": status,

@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS attendance_logs (
     notes              TEXT         NULL,
     recorded_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     checkout_at        DATETIME     NULL,
+    total_outside_seconds FLOAT    NOT NULL DEFAULT 0,
 
     FOREIGN KEY (roster_id) REFERENCES guard_roster(roster_id) ON DELETE CASCADE,
     FOREIGN KEY (visit_id) REFERENCES supervisor_visits(visit_id) ON DELETE CASCADE,

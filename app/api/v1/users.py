@@ -75,6 +75,7 @@ def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
     from app.models.shift import Shift
     from app.models.site import Site
     from app.models.attendance_log import AttendanceLog
+    from app.models.gps_tracking_ping import GpsTrackingPing
 
     logger = logging.getLogger("securetrack.auto_checkin")
 
@@ -107,30 +108,49 @@ def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
         a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
         distance = 2 * asin(sqrt(a)) * 6371000
 
-        # If outside geofence, check them out if they are currently checked in
-        if distance > site.radius_meters:
-            existing = db.query(AttendanceLog).filter(
-                AttendanceLog.roster_id == roster.roster_id
-            ).order_by(AttendanceLog.recorded_at.desc()).first()
-            if existing and not existing.checkout_at:
-                existing.checkout_at = datetime.now(timezone.utc)
-                db.commit()
-                logger.info(f"[AUTO-CHECKOUT] {user.name} left {site.name} ({int(distance)}m)")
-            return
+        now_utc = datetime.now(timezone.utc)
 
-        # They are inside the geofence. Check if already checked in
+        # Find existing attendance log for this roster
         existing = db.query(AttendanceLog).filter(
             AttendanceLog.roster_id == roster.roster_id
         ).order_by(AttendanceLog.recorded_at.desc()).first()
 
-        now_utc = datetime.now(timezone.utc)
-        
+        if distance > site.radius_meters:
+            # OUTSIDE geofence — only checkout after 5+ consecutive outside pings
+            if existing and not existing.checkout_at:
+                recent_pings = (
+                    db.query(GpsTrackingPing)
+                    .filter(
+                        GpsTrackingPing.user_id == user.user_id,
+                        GpsTrackingPing.roster_id == roster.roster_id,
+                    )
+                    .order_by(GpsTrackingPing.recorded_at.desc())
+                    .limit(5)
+                    .all()
+                )
+                if len(recent_pings) >= 5 and all(not p.is_within_geofence for p in recent_pings):
+                    existing.checkout_at = now_utc
+                    existing.notes = (existing.notes or "") + " | Auto check-out (left geofence 5+ min)"
+                    db.commit()
+                    logger.info(f"[AUTO-CHECKOUT] {user.name} left {site.name} ({int(distance)}m) after 5+ outside pings")
+            return
+
+        # INSIDE geofence
         if existing and not existing.checkout_at:
-            # Already checked in, still inside. Do not update checkout_at!
-            # This keeps the session "open" (live) until they leave the geofence.
+            # Already checked in, still inside. Session stays open.
             pass
+        elif existing and existing.checkout_at:
+            # RE-ENTRY: guard returned to geofence after checkout.
+            # Reopen the SAME session — accumulate outside time.
+            outside_gap = (now_utc - existing.checkout_at).total_seconds()
+            if outside_gap > 0:
+                existing.total_outside_seconds = (existing.total_outside_seconds or 0) + outside_gap
+            existing.checkout_at = None  # reopen the session
+            existing.notes = (existing.notes or "") + f" | Re-entered geofence (was outside {int(outside_gap)}s)"
+            db.commit()
+            logger.info(f"[RE-ENTRY] {user.name} re-entered {site.name} ({int(distance)}m), was outside {int(outside_gap)}s")
         else:
-            # Either first time checking in today, or re-entering after leaving
+            # First time checking in today
             log = AttendanceLog(
                 log_id=str(uuid.uuid4()),
                 roster_id=roster.roster_id,
@@ -139,6 +159,7 @@ def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
                 status="present",
                 notes=f"Auto check-in at {int(distance)}m from site center",
                 recorded_at=now_utc,
+                total_outside_seconds=0.0,
             )
             db.add(log)
             db.commit()

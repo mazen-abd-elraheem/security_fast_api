@@ -136,8 +136,19 @@ def tracking_ping(
                 notes="Auto check-in via GPS ping",
                 recorded_at=now_utc,
                 checkout_at=None,
+                total_outside_seconds=0.0,
             ))
             auto_action = "checked_in"
+
+        elif is_within and existing_log and existing_log.checkout_at is not None:
+            # RE-ENTRY: guard returned to geofence after being checked out.
+            # Reopen the SAME session — accumulate outside time.
+            outside_gap = (now_utc - existing_log.checkout_at).total_seconds()
+            if outside_gap > 0:
+                existing_log.total_outside_seconds = (existing_log.total_outside_seconds or 0) + outside_gap
+            existing_log.checkout_at = None  # reopen the session
+            existing_log.notes = (existing_log.notes or "") + f" | Re-entered geofence (was outside {int(outside_gap)}s)"
+            auto_action = "re_entered"
 
         elif not is_within and existing_log and existing_log.checkout_at is None:
             # Check if guard has been OUTSIDE geofence for 5+ consecutive minutes

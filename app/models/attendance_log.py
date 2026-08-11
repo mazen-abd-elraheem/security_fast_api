@@ -2,7 +2,7 @@
 SecureTrack Platform — Attendance Log Model
 Records the actual presence state of a guard as reported by a supervisor during a visit.
 """
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Index
+from sqlalchemy import Column, String, Float, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -36,6 +36,10 @@ class AttendanceLog(Base):
 
     # When the outdoor user checked out (NULL if still checked in or not applicable)
     checkout_at = Column(DateTime, nullable=True)
+
+    # Accumulated seconds the guard spent OUTSIDE the geofence during their shift.
+    # Each time the guard re-enters the geofence, the gap (now - checkout_at) is added here.
+    total_outside_seconds = Column(Float, nullable=False, default=0.0)
 
     # Relationships
     roster = relationship("GuardRoster", back_populates="attendance_logs")

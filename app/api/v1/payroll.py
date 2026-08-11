@@ -30,6 +30,7 @@ ABSENT_DEDUCTION = 200.0
 LATE_DEDUCTION_PER_MINUTE = 2.0
 EARLY_LEAVE_DEDUCTION = 100.0
 NO_CHECKOUT_DEDUCTION = 50.0
+OUTSIDE_GEOFENCE_DEDUCTION_PER_HOUR = 20.0  # Deduction per hour spent outside geofence during shift
 CURRENCY = "EGP"
 
 
@@ -123,12 +124,23 @@ def _compute_daily_record(
             status = "absent"
             deductions.append({"reason": "Absent (no geofence presence)", "amount": ABSENT_DEDUCTION})
 
+    # Outside geofence deduction: track time spent outside during shift
+    total_outside_seconds = sum((log.total_outside_seconds or 0) for log in logs)
+    outside_hours = round(total_outside_seconds / 3600.0, 2) if total_outside_seconds > 0 else 0.0
+    if outside_hours > 0:
+        outside_deduction = round(outside_hours * OUTSIDE_GEOFENCE_DEDUCTION_PER_HOUR, 2)
+        deductions.append({
+            "reason": f"Outside geofence ({outside_hours}h)",
+            "amount": outside_deduction,
+        })
+
     total_deduction = round(sum(d["amount"] for d in deductions), 2)
 
     return {
         "date": target_date.isoformat(),
         "scheduled_hours": scheduled_hours,
         "actual_hours": actual_hours,
+        "outside_hours": outside_hours,
         "status": status,
         "deductions": deductions,
         "total_deduction": total_deduction,
