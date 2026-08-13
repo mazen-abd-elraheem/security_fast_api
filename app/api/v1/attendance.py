@@ -189,7 +189,7 @@ def supervisor_attendance_dashboard(
             att_log = (
                 db.query(AttendanceLog)
                 .filter(AttendanceLog.roster_id == roster.roster_id)
-                .filter(AttendanceLog.recorded_by == current_user.user_id)
+                .filter(AttendanceLog.supervisor_id == current_user.user_id)
                 .first()
             )
 
