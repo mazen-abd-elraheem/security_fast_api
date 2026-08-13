@@ -52,6 +52,37 @@ logging.basicConfig(
 # ==========================================
 # Application Lifespan
 # ==========================================
+def _run_auto_migrations():
+    """
+    Add missing columns that create_all won't handle on existing tables.
+    Each migration is idempotent — safe to run on every startup.
+    """
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+
+    try:
+        insp = sa_inspect(engine)
+
+        # ── attendance_logs.total_outside_seconds ──
+        if insp.has_table("attendance_logs"):
+            existing = {c["name"] for c in insp.get_columns("attendance_logs")}
+            if "total_outside_seconds" not in existing:
+                with engine.begin() as conn:
+                    dialect = engine.dialect.name
+                    if dialect == "sqlite":
+                        conn.execute(sa_text(
+                            "ALTER TABLE attendance_logs ADD COLUMN total_outside_seconds FLOAT NOT NULL DEFAULT 0"
+                        ))
+                    else:
+                        conn.execute(sa_text(
+                            "ALTER TABLE attendance_logs ADD COLUMN total_outside_seconds FLOAT NOT NULL DEFAULT 0"
+                        ))
+                logger.info("✓ Migration: added 'total_outside_seconds' to attendance_logs")
+            else:
+                logger.info("✓ Migration: 'total_outside_seconds' already exists — skipped")
+    except Exception as e:
+        logger.warning(f"⚠ Auto-migration check failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
@@ -60,6 +91,9 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("✓ Database tables created/verified")
+
+        # Add any missing columns to existing tables
+        _run_auto_migrations()
 
         # Create SQL views for optimized dashboard queries
         db = SessionLocal()
