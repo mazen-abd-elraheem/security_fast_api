@@ -32,28 +32,41 @@ class AttendanceService:
         record: AttendanceRecord,
     ) -> AttendanceLog:
         """Record attendance for a single guard during a visit."""
-        # Validate visit
-        visit = db.query(SupervisorVisit).filter(SupervisorVisit.visit_id == visit_id).first()
-        if not visit:
-            raise NotFoundException("Visit", visit_id)
-        if visit.supervisor_id != supervisor_id:
-            raise BadRequestException("This is not your visit")
+        # Validate visit (skip if 'manual' — direct attendance without visit)
+        actual_visit_id = None
+        if visit_id and visit_id != 'manual':
+            visit = db.query(SupervisorVisit).filter(SupervisorVisit.visit_id == visit_id).first()
+            if not visit:
+                raise NotFoundException("Visit", visit_id)
+            if visit.supervisor_id != supervisor_id:
+                raise BadRequestException("This is not your visit")
+            actual_visit_id = visit_id
 
         # Validate roster
         roster = db.query(GuardRoster).filter(GuardRoster.roster_id == record.roster_id).first()
         if not roster:
             raise NotFoundException("Roster assignment", record.roster_id)
 
-        # Check for duplicate
+        # Check for duplicate — match by roster_id and supervisor on same date
         existing = db.query(AttendanceLog).filter(
             AttendanceLog.roster_id == record.roster_id,
-            AttendanceLog.visit_id == visit_id,
-        ).first()
+            AttendanceLog.supervisor_id == supervisor_id,
+        )
+        if actual_visit_id:
+            existing = existing.filter(AttendanceLog.visit_id == actual_visit_id)
+        else:
+            # For manual records, check if supervisor already recorded today
+            today_start = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
+            existing = existing.filter(AttendanceLog.recorded_at >= today_start)
+        existing = existing.first()
+
         if existing:
             # Update existing record
             existing.status = record.status.value
             existing.replacement_guard_id = record.replacement_guard_id
             existing.notes = record.notes
+            if actual_visit_id:
+                existing.visit_id = actual_visit_id
             db.commit()
             db.refresh(existing)
             return existing
@@ -61,7 +74,7 @@ class AttendanceService:
         db_log = AttendanceLog(
             log_id=str(uuid.uuid4()),
             roster_id=record.roster_id,
-            visit_id=visit_id,
+            visit_id=actual_visit_id,
             supervisor_id=supervisor_id,
             status=record.status.value,
             replacement_guard_id=record.replacement_guard_id,
