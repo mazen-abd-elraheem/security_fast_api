@@ -185,10 +185,11 @@ def supervisor_attendance_dashboard(
             guard = roster.guard
             shift = roster.shift
 
-            # Check if guard has an attendance log for this roster
+            # Check if guard has an attendance log for this roster recorded by THIS supervisor
             att_log = (
                 db.query(AttendanceLog)
                 .filter(AttendanceLog.roster_id == roster.roster_id)
+                .filter(AttendanceLog.recorded_by == current_user.user_id)
                 .first()
             )
 
