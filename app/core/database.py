@@ -2,7 +2,9 @@
 SecureTrack Platform — Database Configuration
 MySQL engine, session factory, and connection utilities.
 """
+import os
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from typing import Generator
 import logging
@@ -12,15 +14,29 @@ from app.core.config import get_settings
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# ── Fix Railway's DATABASE_URL ──
-# Railway provides `mysql://...` but SQLAlchemy needs `mysql+pymysql://...`
-_db_url = settings.DATABASE_URL
-if _db_url.startswith("mysql://"):
-    _db_url = _db_url.replace("mysql://", "mysql+pymysql://", 1)
-    logger.info("✓ Converted DATABASE_URL from mysql:// → mysql+pymysql://")
+# ── Build database URL ──
+# Railway sets individual MYSQL* env vars — use those to avoid
+# special-character issues in passwords that break URL string parsing.
+_mysql_host = os.getenv("MYSQLHOST")
+if _mysql_host:
+    _db_url = URL.create(
+        drivername="mysql+pymysql",
+        username=os.getenv("MYSQLUSER", "root"),
+        password=os.getenv("MYSQLPASSWORD", ""),
+        host=_mysql_host,
+        port=int(os.getenv("MYSQLPORT", "3306")),
+        database=os.getenv("MYSQLDATABASE", "railway"),
+    )
+    logger.info(f"✓ Built DATABASE_URL from Railway MYSQL* env vars (host={_mysql_host})")
+else:
+    # Local dev — use DATABASE_URL from config / .env
+    _db_url = settings.DATABASE_URL
+    if isinstance(_db_url, str) and _db_url.startswith("mysql://"):
+        _db_url = _db_url.replace("mysql://", "mysql+pymysql://", 1)
+    logger.info("✓ Using DATABASE_URL from config")
 
 # Build engine kwargs — SQLite doesn't support pooling args
-_is_sqlite = _db_url.startswith("sqlite")
+_is_sqlite = str(_db_url).startswith("sqlite")
 _engine_kwargs = {
     "echo": settings.DEBUG,
 }
