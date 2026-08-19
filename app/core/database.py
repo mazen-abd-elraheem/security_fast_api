@@ -12,8 +12,15 @@ from app.core.config import get_settings
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+# ── Fix Railway's DATABASE_URL ──
+# Railway provides `mysql://...` but SQLAlchemy needs `mysql+pymysql://...`
+_db_url = settings.DATABASE_URL
+if _db_url.startswith("mysql://"):
+    _db_url = _db_url.replace("mysql://", "mysql+pymysql://", 1)
+    logger.info("✓ Converted DATABASE_URL from mysql:// → mysql+pymysql://")
+
 # Build engine kwargs — SQLite doesn't support pooling args
-_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+_is_sqlite = _db_url.startswith("sqlite")
 _engine_kwargs = {
     "echo": settings.DEBUG,
 }
@@ -28,7 +35,7 @@ else:
         "pool_timeout": 10,
     })
 
-engine = create_engine(settings.DATABASE_URL, **_engine_kwargs)
+engine = create_engine(_db_url, **_engine_kwargs)
 
 SessionLocal = sessionmaker(
     autocommit=False,
