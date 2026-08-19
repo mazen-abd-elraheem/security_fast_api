@@ -42,7 +42,7 @@ def _build_log_response(r) -> AttendanceLogResponse:
 def record_attendance(
     visit_id: str = Query(..., description="Visit ID this attendance is for"),
     record: AttendanceRecord = ...,
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """Record attendance for a single guard during a visit."""
@@ -58,7 +58,7 @@ def record_attendance(
 @router.post("/bulk", status_code=201, summary="Bulk record attendance")
 def bulk_record_attendance(
     bulk_data: BulkAttendanceRequest,
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """Record attendance for all guards during a visit."""
@@ -75,7 +75,7 @@ def get_attendance_for_site(
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR,
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER,
     )),
     db: Session = Depends(get_db),
 ):
@@ -106,10 +106,10 @@ def get_guard_attendance(
 @router.get("/my", response_model=AttendanceListResponse, summary="Get supervisor's recorded attendance today")
 def get_my_attendance(
     target_date: Optional[date] = Query(None),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db)
 ):
-    """Get attendance logs recorded by the supervisor today."""
+    """Get attendance logs recorded by the supervisor/leader today."""
     records = AttendanceService.get_supervisor_attendance_today(db, current_user.user_id, target_date)
     items = [_build_log_response(r) for r in records]
     return AttendanceListResponse(records=items, total=len(items))
@@ -118,7 +118,7 @@ def get_my_attendance(
 @router.get("/supervisor/dashboard", summary="Supervisor attendance dashboard for assigned sites")
 def supervisor_attendance_dashboard(
     target_date: Optional[date] = Query(None),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """
