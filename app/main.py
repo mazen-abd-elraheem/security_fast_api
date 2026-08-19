@@ -36,7 +36,8 @@ from app.api.v1 import (
     visits, attendance, incidents, dashboard,
     notifications, admin, password_reset, sync, devices,
     guard_photos, outdoor, workforce, tracking, payroll,
-    deduction_rules, fake_attendance,
+    deduction_rules, fake_attendance, uniforms, cash_advance,
+    inventory, personnel,
 )
 
 settings = get_settings()
@@ -248,6 +249,10 @@ app.include_router(tracking.router, prefix="/api/v1/tracking", tags=["GPS Tracki
 app.include_router(payroll.router, prefix="/api/v1/payroll", tags=["Payroll"])
 app.include_router(deduction_rules.router, prefix="/api/v1/deductions", tags=["Deduction Rules"])
 app.include_router(fake_attendance.router, prefix="/api/v1/fake-attendance", tags=["Fake Attendance"])
+app.include_router(uniforms.router, prefix="/api/v1/uniforms", tags=["Uniforms"])
+app.include_router(cash_advance.router, prefix="/api/v1/cash-advance", tags=["Cash Advance"])
+app.include_router(inventory.router, prefix="/api/v1/inventory", tags=["Inventory"])
+app.include_router(personnel.router, prefix="/api/v1/personnel", tags=["Personnel"])
 
 
 # ==========================================

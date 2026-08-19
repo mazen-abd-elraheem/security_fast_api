@@ -8,8 +8,20 @@ from enum import Enum
 class UserRole(str, Enum):
     ADMIN = "admin"
     SUPERVISOR = "supervisor"
+    LEADER = "leader"
     GUARD = "guard"
     OUTDOOR = "outdoor"
+    PERSONNEL_OFFICER = "personnel_officer"
+    HR = "hr"
+
+
+class CashAdvanceStatus(str, Enum):
+    PENDING = "pending"
+    SUPERVISOR_APPROVED = "supervisor_approved"
+    SUPERVISOR_REJECTED = "supervisor_rejected"
+    ADMIN_APPROVED = "admin_approved"
+    ADMIN_REJECTED = "admin_rejected"
+    ADMIN_MODIFIED = "admin_modified"
 
 
 class SiteStatus(str, Enum):
@@ -66,3 +78,41 @@ class IncidentStatus(str, Enum):
     INVESTIGATING = "investigating"
     RESOLVED = "resolved"
     CLOSED = "closed"
+
+
+class UniformItemType(str, Enum):
+    SHIRT = "shirt"
+    PANTS = "pants"
+    SHOES = "shoes"
+    BELT = "belt"
+    CAP = "cap"
+    JACKET = "jacket"
+    TIE = "tie"
+    OTHER = "other"
+
+
+class UniformStatus(str, Enum):
+    ISSUED = "issued"
+    RETURNED = "returned"
+    LOST = "lost"
+    DAMAGED = "damaged"
+    NEEDS_CLEANING = "needs_cleaning"
+
+
+class UniformCondition(str, Enum):
+    NEW = "new"
+    GOOD = "good"
+    NEEDS_CLEANING = "needs_cleaning"
+    DAMAGED = "damaged"
+    MISSING = "missing"
+    RETURNED_ON_TERMINATION = "returned_on_termination"
+
+
+class DocumentType(str, Enum):
+    MILITARY_SERVICE = "military_service"
+    EDUCATIONAL_QUALIFICATION = "educational_qualification"
+    EMPLOYMENT_CONTRACT = "employment_contract"
+    CRIMINAL_RECORD = "criminal_record"
+    NATIONAL_ID_FRONT = "national_id_front"
+    NATIONAL_ID_BACK = "national_id_back"
+

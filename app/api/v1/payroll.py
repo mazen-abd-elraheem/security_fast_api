@@ -154,7 +154,7 @@ def get_payroll_report(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
     role_filter: Optional[str] = Query(None, description="Filter by role: guard, outdoor, or all"),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
@@ -283,7 +283,7 @@ def export_payroll_csv(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
     role_filter: Optional[str] = Query(None),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """Export payroll report as CSV."""
@@ -408,7 +408,7 @@ def export_payroll_csv(
 def update_salary(
     user_id: str,
     base_salary: float = Query(..., ge=0, description="New base salary in EGP"),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """Update a user's base salary."""

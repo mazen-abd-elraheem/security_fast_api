@@ -14,11 +14,17 @@ from app.models.admin_audit_log import AdminAuditLog
 from app.models.guard_photo import GuardPhoto
 from app.models.gps_tracking_ping import GpsTrackingPing
 from app.models.deduction_rule import DeductionRule
+from app.models.uniform_item import UniformItem
+from app.models.cash_advance import CashAdvance
+from app.models.inventory_item import InventoryItem
+from app.models.guard_document import GuardDocument
 
 __all__ = [
     'Base', 'User', 'Site', 'Shift', 'GuardRoster', 'SupervisorRoute',
     'SupervisorVisit', 'AttendanceLog', 'Incident', 'DeviceRegistry',
     'Notification', 'AdminAuditLog', 'GuardPhoto',
-    'GpsTrackingPing', 'DeductionRule',
+    'GpsTrackingPing', 'DeductionRule', 'UniformItem', 'CashAdvance',
+    'InventoryItem', 'GuardDocument',
 ]
+
 
