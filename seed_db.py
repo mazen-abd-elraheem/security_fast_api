@@ -1,21 +1,58 @@
-import sys
+﻿import sys
 import os
 
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app.core.database import SessionLocal, engine, Base
+from app.models import *  # Import all models so create_all picks them up
 from app.models.user import User
 from app.core.security import hash_password
+from sqlalchemy import inspect as sa_inspect, text as sa_text
 import uuid
 
+
+def _run_seed_migrations():
+    try:
+        insp = sa_inspect(engine)
+        if insp.has_table("users"):
+            existing = {c["name"] for c in insp.get_columns("users")}
+            new_cols = {
+                "employee_code": "VARCHAR(50) NULL",
+                "region": "VARCHAR(100) NULL",
+                "requested_role": "VARCHAR(30) NULL",
+                "base_salary": "FLOAT DEFAULT 0",
+                "daily_rate": "FLOAT DEFAULT 0",
+                "classification": "VARCHAR(50) NULL",
+                "hire_date": "DATETIME NULL",
+                "insurance_status": "VARCHAR(30) DEFAULT 'none'",
+                "bank_account": "VARCHAR(100) NULL",
+                "status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",
+            }
+            with engine.begin() as conn:
+                for col_name, col_def in new_cols.items():
+                    if col_name not in existing:
+                        try:
+                            conn.execute(sa_text(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"))
+                            print(f"Added '{col_name}' to users")
+                        except Exception as col_err:
+                            print(f"Skipped '{col_name}': {col_err}")
+
+        if insp.has_table("attendance_logs"):
+            existing = {c["name"] for c in insp.get_columns("attendance_logs")}
+            if "total_outside_seconds" not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text("ALTER TABLE attendance_logs ADD COLUMN total_outside_seconds FLOAT NOT NULL DEFAULT 0"))
+                    print("Added 'total_outside_seconds' to attendance_logs")
+    except Exception as e:
+        print(f"Seed migration check: {e}")
+
+
 def seed():
-    # Ensure tables exist
     Base.metadata.create_all(bind=engine)
-    
+    _run_seed_migrations()
+
     db = SessionLocal()
-    
-    # Check if we already have users
     if db.query(User).count() > 0:
         print("Users already exist. Skipping seed.")
         db.close()
@@ -58,7 +95,7 @@ def seed():
 
     for u in users_to_create:
         db.add(User(**u))
-    
+
     db.commit()
     print("Successfully seeded 3 test users.")
     db.close()
