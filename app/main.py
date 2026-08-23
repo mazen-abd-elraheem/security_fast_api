@@ -86,6 +86,10 @@ def _run_auto_migrations():
         if insp.has_table("users"):
             existing = {c["name"] for c in insp.get_columns("users")}
             new_cols = {
+                "employee_code": "VARCHAR(50) NULL",
+                "region": "VARCHAR(100) NULL",
+                "requested_role": "VARCHAR(30) NULL",
+                "base_salary": "FLOAT DEFAULT 0",
                 "daily_rate": "FLOAT DEFAULT 0",
                 "classification": "VARCHAR(50) NULL",
                 "hire_date": "DATETIME NULL",
