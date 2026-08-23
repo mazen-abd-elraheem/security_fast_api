@@ -53,9 +53,14 @@ def get_current_user(
 
 
 def require_role(*roles: UserRole):
-    """Dependency factory — restricts endpoint to specific roles."""
+    """Dependency factory — restricts endpoint to specific roles.
+    CEO role automatically passes all role checks (universal override).
+    """
     def role_checker(current_user: User = Depends(get_current_user)) -> User:
         user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
+        # CEO has universal access — passes all role checks
+        if user_role == UserRole.CEO.value:
+            return current_user
         allowed = [r.value for r in roles]
         if user_role not in allowed:
             raise HTTPException(

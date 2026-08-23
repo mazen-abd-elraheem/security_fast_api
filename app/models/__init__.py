@@ -18,6 +18,12 @@ from app.models.uniform_item import UniformItem
 from app.models.cash_advance import CashAdvance
 from app.models.inventory_item import InventoryItem
 from app.models.guard_document import GuardDocument
+from app.models.complaint import Complaint
+from app.models.leave_request import LeaveRequest
+from app.models.daily_logbook import DailyLogbook
+from app.models.separation_request import SeparationRequest
+from app.models.salary_config import SalaryConfig
+from app.models.monthly_payroll import MonthlyPayroll
 
 __all__ = [
     'Base', 'User', 'Site', 'Shift', 'GuardRoster', 'SupervisorRoute',
@@ -25,6 +31,6 @@ __all__ = [
     'Notification', 'AdminAuditLog', 'GuardPhoto',
     'GpsTrackingPing', 'DeductionRule', 'UniformItem', 'CashAdvance',
     'InventoryItem', 'GuardDocument',
+    'Complaint', 'LeaveRequest', 'DailyLogbook', 'SeparationRequest',
+    'SalaryConfig', 'MonthlyPayroll',
 ]
-
-

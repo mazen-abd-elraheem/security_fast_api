@@ -37,7 +37,8 @@ from app.api.v1 import (
     notifications, admin, password_reset, sync, devices,
     guard_photos, outdoor, workforce, tracking, payroll,
     deduction_rules, fake_attendance, uniforms, cash_advance,
-    inventory, personnel,
+    inventory, personnel, complaints, leave_requests,
+    daily_logbook, separations, payroll_engine,
 )
 
 settings = get_settings()
@@ -80,6 +81,23 @@ def _run_auto_migrations():
                 logger.info("✓ Migration: added 'total_outside_seconds' to attendance_logs")
             else:
                 logger.info("✓ Migration: 'total_outside_seconds' already exists — skipped")
+
+        # ── users: payroll + HR columns ──
+        if insp.has_table("users"):
+            existing = {c["name"] for c in insp.get_columns("users")}
+            new_cols = {
+                "daily_rate": "FLOAT DEFAULT 0",
+                "classification": "VARCHAR(50) NULL",
+                "hire_date": "DATETIME NULL",
+                "insurance_status": "VARCHAR(30) DEFAULT 'none'",
+                "bank_account": "VARCHAR(100) NULL",
+            }
+            with engine.begin() as conn:
+                for col_name, col_def in new_cols.items():
+                    if col_name not in existing:
+                        conn.execute(sa_text(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"))
+                        logger.info(f"✓ Migration: added '{col_name}' to users")
+
     except Exception as e:
         logger.warning(f"⚠ Auto-migration check failed: {e}")
 
@@ -253,6 +271,11 @@ app.include_router(uniforms.router, prefix="/api/v1/uniforms", tags=["Uniforms"]
 app.include_router(cash_advance.router, prefix="/api/v1/cash-advance", tags=["Cash Advance"])
 app.include_router(inventory.router, prefix="/api/v1/inventory", tags=["Inventory"])
 app.include_router(personnel.router, prefix="/api/v1/personnel", tags=["Personnel"])
+app.include_router(complaints.router, prefix="/api/v1/complaints", tags=["Complaints"])
+app.include_router(leave_requests.router, prefix="/api/v1/leave-requests", tags=["Leave Requests"])
+app.include_router(daily_logbook.router, prefix="/api/v1/logbook", tags=["Daily Logbook"])
+app.include_router(separations.router, prefix="/api/v1/separations", tags=["Separations"])
+app.include_router(payroll_engine.router, prefix="/api/v1/payroll-engine", tags=["Payroll Engine"])
 
 
 # ==========================================

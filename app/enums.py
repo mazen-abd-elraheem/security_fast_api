@@ -6,6 +6,7 @@ from enum import Enum
 
 
 class UserRole(str, Enum):
+    CEO = "ceo"
     ADMIN = "admin"
     SUPERVISOR = "supervisor"
     LEADER = "leader"
@@ -13,6 +14,8 @@ class UserRole(str, Enum):
     OUTDOOR = "outdoor"
     PERSONNEL_OFFICER = "personnel_officer"
     HR = "hr"
+    ACCOUNTANT = "accountant"
+    OPERATIONS_MANAGER = "operations_manager"
 
 
 class CashAdvanceStatus(str, Enum):
