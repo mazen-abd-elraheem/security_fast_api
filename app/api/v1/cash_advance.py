@@ -279,3 +279,17 @@ def _advance_to_dict(a: CashAdvance) -> dict:
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else None,
     }
+
+
+# ── Guard Self-Service ──
+
+@router.get("/my", summary="Guard views their own cash advances")
+def guard_get_my_advances(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Guard/outdoor views all cash advances associated with them."""
+    advances = db.query(CashAdvance).filter(
+        CashAdvance.guard_id == current_user.user_id
+    ).order_by(CashAdvance.created_at.desc()).all()
+    return [_advance_to_dict(a) for a in advances]

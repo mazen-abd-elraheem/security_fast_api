@@ -1,5 +1,5 @@
-"""
-SecureTrack Platform — Personnel Officer Routes
+﻿"""
+SecureTrack Platform â€” Personnel Officer Routes
 Guard site assignments, document uploads, and uniform distribution with condition tracking.
 """
 import os
@@ -26,9 +26,9 @@ router = APIRouter()
 settings = get_settings()
 
 
-# ═══════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Guard Site Assignment
-# ═══════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class AssignGuardRequest(BaseModel):
     guard_id: str
@@ -163,9 +163,9 @@ def reassign_guard(
     }
 
 
-# ═══════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Document Management
-# ═══════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @router.post("/documents/{guard_id}", summary="Upload guard document")
 async def upload_document(
@@ -186,7 +186,7 @@ async def upload_document(
     if document_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"Invalid document type. Valid: {valid_types}")
 
-    # Check if document of this type already exists — replace it
+    # Check if document of this type already exists â€” replace it
     existing = db.query(GuardDocument).filter(
         GuardDocument.guard_id == guard_id,
         GuardDocument.document_type == document_type,
@@ -321,9 +321,9 @@ def get_documents_status(
     }
 
 
-# ═══════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Uniform Distribution (from inventory)
-# ═══════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class IssueUniformRequest(BaseModel):
     guard_id: str
@@ -507,7 +507,7 @@ def get_uniform_tracker(
     }
 
 
-# ── Helpers ──
+# â”€â”€ Helpers â”€â”€
 
 def _doc_response(doc: GuardDocument) -> dict:
     return {
@@ -518,6 +518,7 @@ def _doc_response(doc: GuardDocument) -> dict:
         "file_name": doc.file_name,
         "notes": doc.notes,
         "uploaded_by": doc.uploaded_by,
+        "expiry_date": doc.expiry_date.isoformat() if doc.expiry_date else None,
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
     }
 
@@ -542,3 +543,71 @@ def _uniform_response(item: UniformItem, db: Session) -> dict:
         "returned_date": item.returned_date.isoformat() if item.returned_date else None,
         "inventory_item_id": item.inventory_item_id,
     }
+
+
+# â”€â”€ Document Expiry Alerts â”€â”€
+
+@router.get("/documents/expiring", summary="Get documents expiring soon")
+def get_expiring_documents(
+    days_ahead: int = Query(30, ge=1, le=90),
+    current_user: User = Depends(require_role(UserRole.PERSONNEL)),
+    db: Session = Depends(get_db),
+):
+    """Get documents expiring within the next N days."""
+    from datetime import date, timedelta
+    today = date.today()
+    cutoff = today + timedelta(days=days_ahead)
+
+    docs = db.query(GuardDocument).filter(
+        GuardDocument.expiry_date != None,
+        GuardDocument.expiry_date <= cutoff,
+    ).order_by(GuardDocument.expiry_date.asc()).all()
+
+    result = []
+    for doc in docs:
+        days_left = (doc.expiry_date - today).days
+        guard = db.query(User).filter(User.user_id == doc.guard_id).first()
+        result.append({
+            **_doc_response(doc),
+            "expiry_date": doc.expiry_date.isoformat() if doc.expiry_date else None,
+            "days_until_expiry": days_left,
+            "is_expired": days_left < 0,
+            "guard_name": guard.name if guard else "Unknown",
+        })
+    return {"total": len(result), "documents": result}
+
+
+# â”€â”€ Guard File Completion % â”€â”€
+
+REQUIRED_DOCUMENTS = [
+    "national_id", "military_service", "educational_qualification",
+    "criminal_record", "contract", "photo",
+]
+
+@router.get("/guards/file-completion", summary="Guard file completion percentage")
+def get_file_completion(
+    current_user: User = Depends(require_role(UserRole.PERSONNEL)),
+    db: Session = Depends(get_db),
+):
+    """Calculate document completion % for each guard."""
+    guards = db.query(User).filter(User.role.in_(["guard", "outdoor"])).all()
+    result = []
+    for guard in guards:
+        docs = db.query(GuardDocument).filter(GuardDocument.guard_id == guard.user_id).all()
+        doc_types = {d.document_type for d in docs}
+        completed = len(doc_types.intersection(set(REQUIRED_DOCUMENTS)))
+        total = len(REQUIRED_DOCUMENTS)
+        pct = round((completed / total) * 100) if total > 0 else 0
+        missing = [d for d in REQUIRED_DOCUMENTS if d not in doc_types]
+        result.append({
+            "guard_id": guard.user_id,
+            "guard_name": guard.name,
+            "employee_code": getattr(guard, "employee_code", None) or getattr(guard, "badge_number", None),
+            "completed": completed,
+            "total_required": total,
+            "completion_pct": pct,
+            "missing_documents": missing,
+        })
+    result.sort(key=lambda x: x["completion_pct"])
+    return result
+

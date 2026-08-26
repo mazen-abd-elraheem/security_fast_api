@@ -1,6 +1,6 @@
-"""
-SecureTrack — Leave Requests API
-Guard tells Leader manually → Leader submits via app → Supervisor (normal) or → Ops Manager → HR (exceptional).
+﻿"""
+SecureTrack â€” Leave Requests API
+Guard tells Leader manually â†’ Leader submits via app â†’ Supervisor (normal) or â†’ Ops Manager â†’ HR (exceptional).
 Guard can also submit directly.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,7 +18,7 @@ from app.models.user import User
 router = APIRouter()
 
 
-# ── Schemas ──
+# â”€â”€ Schemas â”€â”€
 class LeaveRequestCreate(BaseModel):
     guard_id: str
     guard_name: str
@@ -67,7 +67,7 @@ class LeaveRequestResponse(BaseModel):
         from_attributes = True
 
 
-# ── Endpoints ──
+# â”€â”€ Endpoints â”€â”€
 
 @router.post("/", response_model=LeaveRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_leave_request(
@@ -196,7 +196,7 @@ def action_leave_request(
 
         elif current_user.role == "supervisor" and leave.status == "approved_by_leader":
             if leave.leave_type == "normal":
-                leave.status = "approved_by_supervisor"  # Final for normal leave
+                leave.status = "approved"  # FINAL for normal/short leave (2-step)
             else:
                 leave.status = "approved_by_supervisor"  # Continues to ops_mgr for exceptional
             leave.supervisor_id = current_user.user_id
@@ -226,3 +226,4 @@ def action_leave_request(
     db.commit()
     db.refresh(leave)
     return leave
+

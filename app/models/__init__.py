@@ -24,6 +24,8 @@ from app.models.daily_logbook import DailyLogbook
 from app.models.separation_request import SeparationRequest
 from app.models.salary_config import SalaryConfig
 from app.models.monthly_payroll import MonthlyPayroll
+from app.models.disciplinary_action import DisciplinaryAction
+from app.models.guard_evaluation import GuardEvaluation
 
 __all__ = [
     'Base', 'User', 'Site', 'Shift', 'GuardRoster', 'SupervisorRoute',

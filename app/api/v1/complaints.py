@@ -157,3 +157,17 @@ def update_complaint(
     db.commit()
     db.refresh(complaint)
     return complaint
+
+
+# ── Guard Self-Service ──
+
+@router.get("/my", response_model=List[ComplaintResponse])
+def guard_get_my_complaints(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Guard views complaints they submitted or that are about them."""
+    complaints = db.query(Complaint).filter(
+        (Complaint.submitted_by == current_user.user_id) | (Complaint.guard_id == current_user.user_id)
+    ).order_by(Complaint.created_at.desc()).all()
+    return complaints

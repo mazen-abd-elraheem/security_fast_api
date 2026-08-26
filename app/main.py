@@ -39,6 +39,9 @@ from app.api.v1 import (
     deduction_rules, fake_attendance, uniforms, cash_advance,
     inventory, personnel, complaints, leave_requests,
     daily_logbook, separations, payroll_engine,
+    operations_room,
+    disciplinary,
+    evaluations,
 )
 
 settings = get_settings()
@@ -280,6 +283,9 @@ app.include_router(leave_requests.router, prefix="/api/v1/leave-requests", tags=
 app.include_router(daily_logbook.router, prefix="/api/v1/logbook", tags=["Daily Logbook"])
 app.include_router(separations.router, prefix="/api/v1/separations", tags=["Separations"])
 app.include_router(payroll_engine.router, prefix="/api/v1/payroll-engine", tags=["Payroll Engine"])
+app.include_router(operations_room.router, prefix="/api/v1/operations-room", tags=["Operations Room"])
+app.include_router(disciplinary.router, prefix="/api/v1/disciplinary", tags=["Disciplinary Actions"])
+app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Guard Evaluations"])
 
 
 # ==========================================

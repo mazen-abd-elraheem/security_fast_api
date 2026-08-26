@@ -582,3 +582,40 @@ def export_payroll_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ── Guard Self-Service ──
+
+@router.get("/my-slip/{year}/{month}", summary="Guard views their own pay slip")
+def get_my_slip(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Guard views their own salary slip for a given month."""
+    from app.models.payroll import PayrollEntry
+    entry = db.query(PayrollEntry).filter(
+        PayrollEntry.user_id == current_user.user_id,
+        PayrollEntry.year == year,
+        PayrollEntry.month == month,
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="No payroll data found for this month")
+    return {
+        "user_id": entry.user_id,
+        "year": entry.year,
+        "month": entry.month,
+        "month_name": ["", "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][entry.month],
+        "base_salary": entry.base_salary,
+        "allowances": getattr(entry, 'allowances', 0) or 0,
+        "overtime_pay": getattr(entry, 'overtime_pay', 0) or 0,
+        "gross_salary": entry.gross_salary,
+        "tax": entry.tax,
+        "insurance": entry.insurance,
+        "absence_deductions": entry.absence_deductions,
+        "late_deductions": entry.late_deductions,
+        "advance_deductions": getattr(entry, 'advance_deductions', 0) or 0,
+        "total_deductions": entry.total_deductions,
+        "net_salary": entry.net_salary,
+    }

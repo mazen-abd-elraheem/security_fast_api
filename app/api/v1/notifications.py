@@ -113,3 +113,49 @@ def send_notification(
     )
     db.commit()
     return {"detail": "Notification sent", "notification_id": notif.notification_id}
+
+
+# ── FCM Push Token Registration ──
+
+@router.put("/register-token", summary="Register FCM push token")
+def register_push_token(
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Register or update the user's FCM push token for push notifications."""
+    token = data.get("fcm_token")
+    if not token:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="fcm_token is required")
+    current_user.fcm_token = token
+    db.commit()
+    return {"detail": "Token registered"}
+
+
+# ── Broadcast Notification to Role ──
+
+@router.post("/broadcast", status_code=201, summary="Broadcast notification to a role")
+def broadcast_notification(
+    data: dict,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Admin broadcasts a notification to all users of a specific role."""
+    target_role = data.get("target_role")
+    title = data.get("title", "Notification")
+    message = data.get("message", "")
+    notif_type = data.get("notification_type", "system")
+
+    if not target_role:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="target_role is required")
+
+    users = db.query(User).filter(User.role == target_role, User.is_active == True).all()
+    count = 0
+    for user in users:
+        create_notification(db, user_id=user.user_id, notif_type=notif_type,
+                            title=title, message=message)
+        count += 1
+    db.commit()
+    return {"detail": f"Notification sent to {count} {target_role}(s)"}

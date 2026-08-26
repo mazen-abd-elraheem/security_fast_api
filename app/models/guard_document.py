@@ -1,9 +1,9 @@
-"""
-SecureTrack Platform — Guard Document Model
+﻿"""
+SecureTrack Platform â€” Guard Document Model
 Stores document photos uploaded by Personnel Officer for each guard.
 Documents are stored permanently.
 """
-from sqlalchemy import Column, String, DateTime, ForeignKey
+from sqlalchemy import Column, String, DateTime, Date, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -23,6 +23,7 @@ class GuardDocument(Base):
     file_url = Column(String(500), nullable=False)       # Path to uploaded image
     file_name = Column(String(255), nullable=True)       # Original filename
     notes = Column(String(500), nullable=True)
+    expiry_date = Column(Date, nullable=True)  # Document expiry date for auto-alerts
 
     # Who uploaded this document
     uploaded_by = Column(String(36), ForeignKey("users.user_id"), nullable=True)
@@ -38,3 +39,4 @@ class GuardDocument(Base):
 
     def __repr__(self):
         return f"<GuardDocument(id={self.document_id}, guard={self.guard_id}, type={self.document_type})>"
+
