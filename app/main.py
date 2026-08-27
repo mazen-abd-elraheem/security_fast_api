@@ -1,5 +1,5 @@
 """
-SecureTrack Platform — Application Entry Point
+SecureTrack Platform â€” Application Entry Point
 FastAPI app with lifespan, middleware, global exception handler, and router registration.
 """
 import os
@@ -60,14 +60,14 @@ logging.basicConfig(
 def _run_auto_migrations():
     """
     Add missing columns that create_all won't handle on existing tables.
-    Each migration is idempotent — safe to run on every startup.
+    Each migration is idempotent â€” safe to run on every startup.
     """
     from sqlalchemy import inspect as sa_inspect, text as sa_text
 
     try:
         insp = sa_inspect(engine)
 
-        # ── attendance_logs.total_outside_seconds ──
+        # â”€â”€ attendance_logs.total_outside_seconds â”€â”€
         if insp.has_table("attendance_logs"):
             existing = {c["name"] for c in insp.get_columns("attendance_logs")}
             if "total_outside_seconds" not in existing:
@@ -81,11 +81,11 @@ def _run_auto_migrations():
                         conn.execute(sa_text(
                             "ALTER TABLE attendance_logs ADD COLUMN total_outside_seconds FLOAT NOT NULL DEFAULT 0"
                         ))
-                logger.info("✓ Migration: added 'total_outside_seconds' to attendance_logs")
+                logger.info("âœ“ Migration: added 'total_outside_seconds' to attendance_logs")
             else:
-                logger.info("✓ Migration: 'total_outside_seconds' already exists — skipped")
+                logger.info("âœ“ Migration: 'total_outside_seconds' already exists â€” skipped")
 
-        # ── users: payroll + HR columns ──
+        # â”€â”€ users: payroll + HR columns â”€â”€
         if insp.has_table("users"):
             existing = {c["name"] for c in insp.get_columns("users")}
             new_cols = {
@@ -98,25 +98,38 @@ def _run_auto_migrations():
                 "hire_date": "DATETIME NULL",
                 "insurance_status": "VARCHAR(30) DEFAULT 'none'",
                 "bank_account": "VARCHAR(100) NULL",
+                "fcm_token": "VARCHAR(500) NULL",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():
                     if col_name not in existing:
                         conn.execute(sa_text(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"))
-                        logger.info(f"✓ Migration: added '{col_name}' to users")
+                        logger.info(f"âœ“ Migration: added '{col_name}' to users")
+
+
+        # guard_documents.expiry_date
+        if insp.has_table("guard_documents"):
+            existing = {c["name"] for c in insp.get_columns("guard_documents")}
+            if "expiry_date" not in existing:
+                with engine.begin() as conn:
+                    try:
+                        conn.execute(sa_text("ALTER TABLE guard_documents ADD COLUMN expiry_date DATE NULL"))
+                        logger.info("Added expiry_date to guard_documents")
+                    except Exception:
+                        pass
 
     except Exception as e:
-        logger.warning(f"⚠ Auto-migration check failed: {e}")
+        logger.warning(f"âš  Auto-migration check failed: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    logger.info(f"🛡️ Starting {settings.APP_NAME}")
+    logger.info(f"ðŸ›¡ï¸ Starting {settings.APP_NAME}")
 
     try:
         Base.metadata.create_all(bind=engine)
-        logger.info("✓ Database tables created/verified")
+        logger.info("âœ“ Database tables created/verified")
 
         # Add any missing columns to existing tables
         _run_auto_migrations()
@@ -125,21 +138,21 @@ async def lifespan(app: FastAPI):
         db = SessionLocal()
         try:
             create_views(db)
-            logger.info("✓ SQL views created/updated")
+            logger.info("âœ“ SQL views created/updated")
         finally:
             db.close()
 
         test_connection()
     except Exception as e:
-        logger.warning(f"⚠ MySQL not available on startup: {e}")
-        logger.warning("  → Start MySQL and the app will connect on first request.")
+        logger.warning(f"âš  MySQL not available on startup: {e}")
+        logger.warning("  â†’ Start MySQL and the app will connect on first request.")
 
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    logger.info(f"✓ Upload directory ready: {settings.UPLOAD_DIR}")
+    logger.info(f"âœ“ Upload directory ready: {settings.UPLOAD_DIR}")
 
     yield
 
-    logger.info("🛑 Shutting down...")
+    logger.info("ðŸ›‘ Shutting down...")
     engine.dispose()
 
 
@@ -211,7 +224,7 @@ async def log_requests(request: Request, call_next):
 
     if not request.url.path.startswith("/static"):
         logger.info(
-            "%s %s → %s (%.2fs)",
+            "%s %s â†’ %s (%.2fs)",
             request.method,
             request.url.path,
             response.status_code,
@@ -240,7 +253,7 @@ async def health_check():
         test_connection()
         db_status = "connected"
     except Exception:
-        db_status = "disconnected — start MySQL with: net start MySQL80"
+        db_status = "disconnected â€” start MySQL with: net start MySQL80"
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
@@ -289,7 +302,7 @@ app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Guar
 
 
 # ==========================================
-# Static Files (uploaded images) — must be AFTER routers
+# Static Files (uploaded images) â€” must be AFTER routers
 # ==========================================
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount(
@@ -298,4 +311,4 @@ app.mount(
     name="uploads",
 )
 
-logger.info(f"🛡️ {settings.APP_NAME} v1.0.0 — all routers registered")
+logger.info(f"ðŸ›¡ï¸ {settings.APP_NAME} v1.0.0 â€” all routers registered")

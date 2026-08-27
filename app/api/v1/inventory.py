@@ -1,5 +1,5 @@
-"""
-SecureTrack Platform — Inventory Routes
+﻿"""
+SecureTrack Platform â€” Inventory Routes
 Admin manages clothing/uniform stock. Personnel Officer + Admin can view.
 """
 import uuid
@@ -19,7 +19,7 @@ from app.enums import UserRole
 router = APIRouter()
 
 
-# ── Schemas ──
+# â”€â”€ Schemas â”€â”€
 
 class InventoryCreate(BaseModel):
     item_type: str = Field(..., max_length=30)
@@ -38,7 +38,7 @@ class InventoryUpdate(BaseModel):
     size: Optional[str] = None
 
 
-# ── Add new stock ──
+# â”€â”€ Add new stock â”€â”€
 @router.post("", status_code=201, summary="Add inventory stock")
 def add_inventory(
     data: InventoryCreate,
@@ -79,7 +79,7 @@ def add_inventory(
     return _to_response(item)
 
 
-# ── List all inventory ──
+# â”€â”€ List all inventory â”€â”€
 @router.get("", summary="List inventory items")
 def list_inventory(
     item_type: Optional[str] = Query(None),
@@ -100,7 +100,7 @@ def list_inventory(
     }
 
 
-# ── Get low stock alerts ──
+# â”€â”€ Get low stock alerts â”€â”€
 @router.get("/low-stock", summary="Low stock alerts")
 def get_low_stock(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER)),
@@ -116,7 +116,7 @@ def get_low_stock(
     }
 
 
-# ── Summary dashboard ──
+# â”€â”€ Summary dashboard â”€â”€
 @router.get("/summary", summary="Inventory summary")
 def get_inventory_summary(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER)),
@@ -129,21 +129,35 @@ def get_inventory_summary(
     low_stock = sum(1 for i in all_items if i.quantity_available <= i.min_stock_level)
 
     by_type = {}
+    size_breakdown = {}
     for item in all_items:
         if item.item_type not in by_type:
             by_type[item.item_type] = {"total_available": 0, "variants": 0}
         by_type[item.item_type]["total_available"] += item.quantity_available
         by_type[item.item_type]["variants"] += 1
 
+        if item.item_type not in size_breakdown:
+            size_breakdown[item.item_type] = []
+        size_breakdown[item.item_type].append({
+            "item_id": item.item_id,
+            "size": item.size,
+            "color": item.color,
+            "quantity_available": item.quantity_available,
+            "quantity_total": item.quantity_total,
+            "min_stock_level": item.min_stock_level,
+            "is_low_stock": item.quantity_available <= item.min_stock_level,
+        })
+
     return {
         "total_item_types": total_types,
         "total_available_stock": total_stock,
         "low_stock_count": low_stock,
         "by_type": by_type,
+        "size_breakdown": size_breakdown,
     }
 
 
-# ── Update inventory ──
+# â”€â”€ Update inventory â”€â”€
 @router.put("/{item_id}", summary="Update inventory item")
 def update_inventory(
     item_id: str,
@@ -173,7 +187,7 @@ def update_inventory(
     return _to_response(item)
 
 
-# ── Delete inventory item ──
+# â”€â”€ Delete inventory item â”€â”€
 @router.delete("/{item_id}", summary="Delete inventory item")
 def delete_inventory(
     item_id: str,

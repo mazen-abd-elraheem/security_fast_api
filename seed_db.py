@@ -28,6 +28,7 @@ def _run_seed_migrations():
                 "insurance_status": "VARCHAR(30) DEFAULT 'none'",
                 "bank_account": "VARCHAR(100) NULL",
                 "status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",
+                "fcm_token": "VARCHAR(500) NULL",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():
@@ -37,6 +38,16 @@ def _run_seed_migrations():
                             print(f"Added '{col_name}' to users")
                         except Exception as col_err:
                             print(f"Skipped '{col_name}': {col_err}")
+
+        if insp.has_table("guard_documents"):
+            existing = {c["name"] for c in insp.get_columns("guard_documents")}
+            if "expiry_date" not in existing:
+                with engine.begin() as conn:
+                    try:
+                        conn.execute(sa_text("ALTER TABLE guard_documents ADD COLUMN expiry_date DATE NULL"))
+                        print("Added 'expiry_date' to guard_documents")
+                    except Exception as col_err:
+                        print(f"Skipped 'expiry_date': {col_err}")
 
         if insp.has_table("attendance_logs"):
             existing = {c["name"] for c in insp.get_columns("attendance_logs")}
