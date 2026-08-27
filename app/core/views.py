@@ -1,5 +1,5 @@
-"""
-SecureTrack Platform — Database Views
+﻿"""
+SecureTrack Platform â€” Database Views
 Pre-aggregated SQL views for fast role-based dashboard queries.
 Created/replaced on every startup so they always reflect current schema.
 """
@@ -9,12 +9,12 @@ from sqlalchemy.orm import Session
 
 log = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # View definitions (SQLite-compatible)
-# ─────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 VIEWS = {
-    # ── Admin: platform-wide counts ──
+    # â”€â”€ Admin: platform-wide counts â”€â”€
     "v_admin_dashboard_summary": """
         CREATE VIEW IF NOT EXISTS v_admin_dashboard_summary AS
         SELECT
@@ -27,7 +27,7 @@ VIEWS = {
             (SELECT COUNT(*) FROM shifts WHERE is_active = 1)                        AS active_shifts
     """,
 
-    # ── Per-site coverage: required vs present guards ──
+    # â”€â”€ Per-site coverage: required vs present guards â”€â”€
     "v_site_coverage": """
         CREATE VIEW IF NOT EXISTS v_site_coverage AS
         SELECT
@@ -51,13 +51,13 @@ VIEWS = {
             FROM attendance_logs al
             JOIN supervisor_visits sv ON al.visit_id = sv.visit_id
             WHERE al.status IN ('present', 'late', 'replacement')
-              AND al.recorded_at >= date('now', 'start of day')
+              AND al.recorded_at >= CURDATE()
             GROUP BY sv.site_id
         ) att_agg ON att_agg.site_id = s.site_id
         WHERE s.status = 'active'
     """,
 
-    # ── Guard's current shift for today ──
+    # â”€â”€ Guard's current shift for today â”€â”€
     "v_guard_shift_today": """
         CREATE VIEW IF NOT EXISTS v_guard_shift_today AS
         SELECT
@@ -80,7 +80,7 @@ VIEWS = {
         WHERE gr.assigned_date = date('now')
     """,
 
-    # ── Supervisor route progress ──
+    # â”€â”€ Supervisor route progress â”€â”€
     "v_supervisor_progress": """
         CREATE VIEW IF NOT EXISTS v_supervisor_progress AS
         SELECT
@@ -97,7 +97,7 @@ VIEWS = {
         GROUP BY sr.supervisor_id, sr.assigned_date
     """,
 
-    # ── Attendance summary per site per day ──
+    # â”€â”€ Attendance summary per site per day â”€â”€
     "v_attendance_summary": """
         CREATE VIEW IF NOT EXISTS v_attendance_summary AS
         SELECT
@@ -122,7 +122,7 @@ def create_views(db: Session) -> None:
             # Drop first to ensure latest schema
             db.execute(text(f"DROP VIEW IF EXISTS {name}"))
             db.execute(text(ddl))
-            log.info(f"  ✓ View {name} created")
+            log.info(f"  âœ“ View {name} created")
         except Exception as e:
-            log.warning(f"  ⚠ Could not create view {name}: {e}")
+            log.warning(f"  âš  Could not create view {name}: {e}")
     db.commit()
