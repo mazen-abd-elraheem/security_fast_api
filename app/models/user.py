@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack Platform â€” User Model
 Centralized identity for Admins, Supervisors, Guards, Outdoor personnel, and Clients.
 """
@@ -52,6 +52,7 @@ class User(Base):
     hire_date = Column(DateTime, nullable=True)
     insurance_status = Column(String(30), nullable=True, default='none')  # Ù…Ø¤Ù…Ù†/Ø®Ø§Øµ/Ø¨Ø¯ÙˆÙ†
     bank_account = Column(String(100), nullable=True)
+    payroll_amount = Column(Float, nullable=True, default=0.0)  # Fixed PAYROLL value (BY column)
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
