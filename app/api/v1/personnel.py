@@ -550,7 +550,7 @@ def _uniform_response(item: UniformItem, db: Session) -> dict:
 @router.get("/documents/expiring", summary="Get documents expiring soon")
 def get_expiring_documents(
     days_ahead: int = Query(30, ge=1, le=90),
-    current_user: User = Depends(require_role(UserRole.PERSONNEL)),
+    current_user: User = Depends(require_role(UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     """Get documents expiring within the next N days."""
@@ -586,7 +586,7 @@ REQUIRED_DOCUMENTS = [
 
 @router.get("/guards/file-completion", summary="Guard file completion percentage")
 def get_file_completion(
-    current_user: User = Depends(require_role(UserRole.PERSONNEL)),
+    current_user: User = Depends(require_role(UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     """Calculate document completion % for each guard."""
