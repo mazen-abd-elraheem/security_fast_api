@@ -1,5 +1,5 @@
-"""
-SecureTrack Platform — Attendance Routes
+ï»¿"""
+SecureTrack Platform â€” Attendance Routes
 """
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -342,7 +342,7 @@ def guard_checkin(
     db.add(log)
     db.commit()
 
-    logger.info(f"[CHECKIN] SUCCESS — log_id={log_id}, distance={int(distance)}m")
+    logger.info(f"[CHECKIN] SUCCESS â€” log_id={log_id}, distance={int(distance)}m")
 
     return {
         "status": "checked_in",

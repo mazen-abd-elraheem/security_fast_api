@@ -1,5 +1,5 @@
-"""
-SecureTrack Platform — User Schemas (Pydantic v2)
+﻿"""
+SecureTrack Platform â€” User Schemas (Pydantic v2)
 """
 import re
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
@@ -79,7 +79,7 @@ class AdminUserCreate(BaseModel):
 
 
 class AdminUserUpdate(BaseModel):
-    """Admin-level profile update — can change any field including role and password."""
+    """Admin-level profile update â€” can change any field including role and password."""
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     phone_number: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -120,7 +120,7 @@ class UserResponse(BaseModel):
 
 
 class UserPublicResponse(BaseModel):
-    """Public profile — minimal info."""
+    """Public profile â€” minimal info."""
     user_id: str
     name: str
     role: str

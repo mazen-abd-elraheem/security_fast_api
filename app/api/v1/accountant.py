@@ -1,4 +1,4 @@
-"""
+﻿"""
 SecureTrack - Accountant Excel View API
 Generates, stores, edits, and approves the monthly payroll spreadsheet.
 """
@@ -189,7 +189,7 @@ async def get_payroll_sheet(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
 ):
-    """Returns all rows of the payroll spreadsheet for a month. Fast � reads from DB."""
+    """Returns all rows of the payroll spreadsheet for a month. Fast — reads from DB."""
     rows = db.query(PayrollSheetRow).filter(
         and_(PayrollSheetRow.year == year, PayrollSheetRow.month == month)
     ).order_by(PayrollSheetRow.serial_no).all()

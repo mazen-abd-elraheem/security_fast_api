@@ -1,5 +1,5 @@
-"""
-SecureTrack Platform — Route Service
+﻿"""
+SecureTrack Platform â€” Route Service
 Manages daily supervisor route assignments.
 """
 import uuid
