@@ -29,6 +29,7 @@ def _run_seed_migrations():
                 "bank_account": "VARCHAR(100) NULL",
                 "status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",
                 "fcm_token": "VARCHAR(500) NULL",
+                "payroll_amount": "FLOAT DEFAULT 0",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():
