@@ -1,7 +1,8 @@
-﻿"""
-SecureTrack Platform — Attendance Routes
+"""
+SecureTrack Platform � Attendance Routes
 """
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import date
 from typing import Optional
@@ -246,7 +247,7 @@ def get_attendance_report(
     )
 
 
-# ── Guard Auto Check-in ──
+# -- Guard Auto Check-in --
 
 from app.models.guard_roster import GuardRoster
 from app.models.shift import Shift
@@ -305,7 +306,7 @@ def guard_checkin(
     if existing:
         return {"status": "already_checked_in", "detail": "Already checked in for this shift"}
 
-    # Get the site via shift → site
+    # Get the site via shift ? site
     shift = db.query(Shift).filter(Shift.shift_id == roster.shift_id).first()
     if not shift:
         return {"status": "error", "detail": "Shift not found"}
@@ -341,7 +342,7 @@ def guard_checkin(
     db.add(log)
     db.commit()
 
-    logger.info(f"[CHECKIN] SUCCESS — log_id={log_id}, distance={int(distance)}m")
+    logger.info(f"[CHECKIN] SUCCESS � log_id={log_id}, distance={int(distance)}m")
 
     return {
         "status": "checked_in",
@@ -403,7 +404,7 @@ def debug_checkin(
     return result
 
 
-# ── CSV Export ──
+# -- CSV Export --
 
 from fastapi.responses import StreamingResponse
 import csv
@@ -456,7 +457,7 @@ def export_attendance_csv(
     )
 
 
-# ── Supervisor Attendance Daily Summary (for Admin) ──
+# -- Supervisor Attendance Daily Summary (for Admin) --
 
 @router.get("/daily-summary", summary="Supervisor attendance daily summary")
 def get_daily_summary(
@@ -606,7 +607,7 @@ def export_daily_summary_csv(
     )
 
 
-# ── Accountant Edit & Delete ──
+# -- Accountant Edit & Delete --
 class AttendanceUpdate(BaseModel):
     status: str
     notes: Optional[str] = None
