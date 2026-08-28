@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import os
 
 # Add project root to sys.path
@@ -30,6 +30,8 @@ def _run_seed_migrations():
                 "status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",
                 "fcm_token": "VARCHAR(500) NULL",
                 "payroll_amount": "FLOAT DEFAULT 0",
+                "transfer_name": "VARCHAR(255) NULL",
+                "transfer_method": "VARCHAR(100) NULL",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():

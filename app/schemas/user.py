@@ -62,6 +62,9 @@ class AdminUserCreate(BaseModel):
     phone_number: Optional[str] = Field(None, pattern=r'^\+?[0-9]{7,15}$')
     badge_number: Optional[str] = Field(None, max_length=50)
     region: Optional[str] = Field(None, max_length=100)
+    bank_account: Optional[str] = Field(None, max_length=100)
+    transfer_name: Optional[str] = Field(None, max_length=255)
+    transfer_method: Optional[str] = Field(None, max_length=100)
 
     @field_validator("password")
     @classmethod
@@ -85,6 +88,9 @@ class AdminUserUpdate(BaseModel):
     region: Optional[str] = Field(None, max_length=100)
     new_password: Optional[str] = Field(None, min_length=6, max_length=128)
     is_active: Optional[bool] = None
+    bank_account: Optional[str] = Field(None, max_length=100)
+    transfer_name: Optional[str] = Field(None, max_length=255)
+    transfer_method: Optional[str] = Field(None, max_length=100)
 
 
 # --- Output Schemas ---
@@ -104,6 +110,9 @@ class UserResponse(BaseModel):
     status: Optional[str] = "active"
     requested_role: Optional[str] = None
     base_salary: float = 0.0
+    bank_account: Optional[str] = None
+    transfer_name: Optional[str] = None
+    transfer_method: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

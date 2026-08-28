@@ -81,8 +81,10 @@ TAX_BRACKETS = [
 ]
 
 
-def calc_daily_rate(classification, config_override=None):
-    """Get daily rate from classification. Config override takes priority."""
+def calc_daily_rate(classification, config_override=None, user_daily_rate=None):
+    """Get daily rate. Priority: user_daily_rate > config_override > DAILY_RATE_MAP."""
+    if user_daily_rate and user_daily_rate > 0:
+        return user_daily_rate
     if config_override and classification in config_override:
         return config_override[classification].get("daily_rate", 0)
     return DAILY_RATE_MAP.get(classification, 2000 / 30)
@@ -195,8 +197,9 @@ def compute_row(user, attendance_data, advance_amount, config_overrides, year, m
                                     t_rest_allow, t_late, t_deduction, t_rest,
                                     t_annual_lv, t_sick_lv, term_reason)
 
-    # BH: daily rate
-    dr = calc_daily_rate(cls, config_overrides)
+    # BH: daily rate (priority: user-level daily_rate > config > hardcoded map)
+    user_dr = float(user.get("daily_rate", 0) or 0)
+    dr = calc_daily_rate(cls, config_overrides, user_daily_rate=user_dr)
 
     # BI: salary from ops
     salary_ops = op_days * dr
@@ -335,9 +338,9 @@ def compute_row(user, attendance_data, advance_amount, config_overrides, year, m
         "cash_payment": 0, "total_salary_diff_incentive": ca_total,
         "bonus_rounded": cb_bonus, "grand_incentive": cc_grand,
         # Bank
-        "transfer_name": user.get("name", ""), "incentive_transfer_name": user.get("name", ""),
+        "transfer_name": user.get("transfer_name", "") or user.get("name", ""), "incentive_transfer_name": user.get("transfer_name", "") or user.get("name", ""),
         "bank_account_1": user.get("bank_account", ""), "bank_account_2": user.get("bank_account", ""),
-        "transfer_method": "كويتي باي رول",
+        "transfer_method": user.get("transfer_method", "") or "",
         # Tax
         "monthly_salary": round(ci_monthly_sal, 2), "actual_salary": round(cj_actual, 2),
         "allowances": round(ck_allowances, 2), "total_income": round(cl_total_income, 2),

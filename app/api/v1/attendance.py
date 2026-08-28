@@ -1,4 +1,4 @@
-"""
+﻿"""
 SecureTrack Platform — Attendance Routes
 """
 from fastapi import APIRouter, Depends, Query
@@ -462,7 +462,8 @@ def export_attendance_csv(
 def get_daily_summary(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    site_id: str = Query(None, description="Filter by site ID"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     """
@@ -471,7 +472,7 @@ def get_daily_summary(
     """
     from sqlalchemy.orm import joinedload
 
-    logs = (
+    query = (
         db.query(AttendanceLog)
         .options(
             joinedload(AttendanceLog.roster).joinedload(GuardRoster.guard),
@@ -480,12 +481,14 @@ def get_daily_summary(
             joinedload(AttendanceLog.visit),
         )
         .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
+        .outerjoin(Shift, GuardRoster.shift_id == Shift.shift_id)
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
-        # Only include logs that have a visit_id (supervisor-recorded, not auto-checkin)
         .filter(AttendanceLog.visit_id.isnot(None))
-        .all()
     )
+    if site_id:
+        query = query.filter(Shift.site_id == site_id)
+    logs = query.all()
 
     # Group by site and date
     sites_map = {}
@@ -511,8 +514,12 @@ def get_daily_summary(
             }
 
         guard_entry = {
+            "log_id": log.log_id,
+            "roster_id": log.roster_id,
             "name": guard.name if guard else "Unknown",
             "badge_number": guard.badge_number if guard else "",
+            "employee_code": guard.employee_code if guard else "",
+            "classification": guard.classification if guard else "",
             "status": log.status,
             "notes": log.notes or "",
             "recorded_at": log.recorded_at.isoformat() if log.recorded_at else "",
@@ -545,13 +552,14 @@ def get_daily_summary(
 def export_daily_summary_csv(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    site_id: str = Query(None, description="Filter by site ID"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     """Export supervisor-recorded attendance for a date as CSV."""
     from sqlalchemy.orm import joinedload
 
-    logs = (
+    query = (
         db.query(AttendanceLog)
         .options(
             joinedload(AttendanceLog.roster).joinedload(GuardRoster.guard),
@@ -559,11 +567,14 @@ def export_daily_summary_csv(
             joinedload(AttendanceLog.supervisor),
         )
         .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
+        .outerjoin(Shift, GuardRoster.shift_id == Shift.shift_id)
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
         .filter(AttendanceLog.visit_id.isnot(None))
-        .all()
     )
+    if site_id:
+        query = query.filter(Shift.site_id == site_id)
+    logs = query.all()
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -594,3 +605,41 @@ def export_daily_summary_csv(
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
+
+# ── Accountant Edit & Delete ──
+class AttendanceUpdate(BaseModel):
+    status: str
+    notes: Optional[str] = None
+
+@router.put("/{log_id}", summary="Edit attendance record (Accountant)")
+def update_attendance(
+    log_id: str,
+    update_data: AttendanceUpdate,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+    db: Session = Depends(get_db),
+):
+    log = db.query(AttendanceLog).filter(AttendanceLog.log_id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+    
+    log.status = update_data.status
+    if update_data.notes is not None:
+        log.notes = update_data.notes
+        
+    db.commit()
+    db.refresh(log)
+    return {"message": "Updated successfully", "status": log.status}
+
+@router.delete("/{log_id}", summary="Delete attendance record (Accountant)")
+def delete_attendance(
+    log_id: str,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+    db: Session = Depends(get_db),
+):
+    log = db.query(AttendanceLog).filter(AttendanceLog.log_id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+    
+    db.delete(log)
+    db.commit()
+    return {"message": "Deleted successfully"}

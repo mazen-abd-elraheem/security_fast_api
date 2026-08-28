@@ -52,6 +52,8 @@ class User(Base):
     hire_date = Column(DateTime, nullable=True)
     insurance_status = Column(String(30), nullable=True, default='none')  # Ù…Ø¤Ù…Ù†/Ø®Ø§Øµ/Ø¨Ø¯ÙˆÙ†
     bank_account = Column(String(100), nullable=True)
+    transfer_name = Column(String(255), nullable=True)       # ?????? ??
+    transfer_method = Column(String(100), nullable=True)     # ????? ???????
     payroll_amount = Column(Float, nullable=True, default=0.0)  # Fixed PAYROLL value (BY column)
 
     # Timestamps

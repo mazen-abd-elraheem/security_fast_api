@@ -25,8 +25,8 @@ class RouteService:
         supervisor = db.query(User).filter(User.user_id == route_data.supervisor_id).first()
         if not supervisor:
             raise NotFoundException("Supervisor", route_data.supervisor_id)
-        if supervisor.role != "supervisor":
-            raise BadRequestException(f"User {supervisor.name} is not a supervisor")
+        if supervisor.role not in ("supervisor", "leader"):
+            raise BadRequestException(f"User {supervisor.name} is not a supervisor or leader")
 
         routes = []
         for site_assignment in route_data.sites:
@@ -67,8 +67,8 @@ class RouteService:
         supervisor = db.query(User).filter(User.user_id == supervisor_id).first()
         if not supervisor:
             raise NotFoundException("Supervisor", supervisor_id)
-        if supervisor.role != "supervisor":
-            raise BadRequestException(f"User {supervisor.name} is not a supervisor")
+        if supervisor.role not in ("supervisor", "leader"):
+            raise BadRequestException(f"User {supervisor.name} is not a supervisor or leader")
 
         all_routes = []
         skipped = 0

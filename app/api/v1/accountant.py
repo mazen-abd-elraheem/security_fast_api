@@ -4,7 +4,8 @@ Generates, stores, edits, and approves the monthly payroll spreadsheet.
 """
 import uuid
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
+from calendar import monthrange
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -25,7 +26,7 @@ from app.services.payroll_formulas import compute_row
 router = APIRouter()
 
 
-# ── Generate & Get Excel View ──
+# -- Generate & Get Excel View --
 @router.post("/generate/{year}/{month}", summary="Generate payroll sheet for a month")
 async def generate_payroll_sheet(
     year: int,
@@ -75,18 +76,35 @@ async def generate_payroll_sheet(
         if uid:
             advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
 
+    # -- Build weekly attendance from attendance_logs --
+    _, days_in_month = monthrange(year, month)
+    month_start = date(year, month, 1)
+    month_end = date(year, month, days_in_month)
+
+    # Week boundaries (7-day chunks)
+    week_ranges = []
+    for w in range(4):
+        ws = month_start + timedelta(days=w * 7)
+        we = min(month_start + timedelta(days=(w + 1) * 7 - 1), month_end)
+        week_ranges.append((ws, we))
+
     rows_created = []
     for idx, u in enumerate(users):
         # Build user dict for compute_row
+        # Use role as classification; daily_rate from base_salary/30 or user.daily_rate
+        effective_daily_rate = u.daily_rate if (u.daily_rate and u.daily_rate > 0) else ((u.base_salary / 30) if (u.base_salary and u.base_salary > 0) else 0)
         user_data = {
             "employee_code": u.employee_code or u.badge_number or "",
-            "classification": u.classification or "",
+            "classification": u.classification or u.role or "",
             "name": u.name,
+            "daily_rate": effective_daily_rate,
             "hire_date": str(u.hire_date)[:10] if u.hire_date else "",
             "termination_date": "",
             "termination_reason": "",
             "insurance_status": u.insurance_status or "none",
             "bank_account": u.bank_account or "",
+            "transfer_name": u.transfer_name or u.name or "",
+            "transfer_method": u.transfer_method or "",
             "payroll_amount": u.payroll_amount or 0,
             "shift_time": "",
             "supervisor_name": "",
@@ -95,19 +113,62 @@ async def generate_payroll_sheet(
             "employee_insurance": 0,
         }
 
-        # Get roster info for site/supervisor
-        roster = db.query(GuardRoster).filter(
+        # Get roster info for site/supervisor/shift
+        from sqlalchemy.orm import joinedload
+        roster = db.query(GuardRoster).options(
+            joinedload(GuardRoster.shift)
+        ).filter(
             GuardRoster.guard_id == u.user_id,
-            GuardRoster.is_active == True
-        ).first()
+        ).order_by(GuardRoster.assigned_date.desc()).first()
         if roster:
-            if hasattr(roster, 'site') and roster.site:
-                user_data["site_name"] = roster.site.name if roster.site else ""
+            if roster.shift and hasattr(roster.shift, 'site') and roster.shift.site:
+                user_data["site_name"] = roster.shift.site.name
+            if roster.shift:
+                user_data["shift_time"] = roster.shift.label if hasattr(roster.shift, 'label') else ""
+
+        # -- Query attendance_logs for this user this month --
+        user_logs = (
+            db.query(AttendanceLog)
+            .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
+            .filter(
+                GuardRoster.guard_id == u.user_id,
+                GuardRoster.assigned_date >= month_start,
+                GuardRoster.assigned_date <= month_end,
+            )
+            .all()
+        )
+
+        # Build a date->status map
+        date_status = {}
+        for log in user_logs:
+            if log.roster and log.roster.assigned_date:
+                d = log.roster.assigned_date
+                date_status[d] = log.status  # present, absent, late, replacement
+
+        # Aggregate into 4 weeks
+        attendance_data = []
+        for ws, we in week_ranges:
+            week = {
+                "absent_excused": 0, "absent_unexcused": 0,
+                "overtime": 0, "rest_allowance": 0,
+                "late": 0, "deduction": 0,
+                "rest": 0, "annual_leave": 0, "sick_leave": 0,
+            }
+            d = ws
+            while d <= we:
+                status = date_status.get(d, None)
+                if status == "absent":
+                    week["absent_unexcused"] += 1
+                elif status == "late":
+                    week["late"] += 1
+                # present/replacement = working day (no deduction)
+                d += timedelta(days=1)
+            attendance_data.append(week)
 
         adv = advance_map.get(u.user_id, 0)
 
-        # Compute all columns
-        row_data = compute_row(user_data, None, adv, config_map, year, month, idx + 1)
+        # Compute all columns with real attendance data
+        row_data = compute_row(user_data, attendance_data, adv, config_map, year, month, idx + 1)
         row_data["user_id"] = u.user_id
         row_data["year"] = year
         row_data["month"] = month
@@ -128,7 +189,7 @@ async def get_payroll_sheet(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
 ):
-    """Returns all rows of the payroll spreadsheet for a month. Fast — reads from DB."""
+    """Returns all rows of the payroll spreadsheet for a month. Fast � reads from DB."""
     rows = db.query(PayrollSheetRow).filter(
         and_(PayrollSheetRow.year == year, PayrollSheetRow.month == month)
     ).order_by(PayrollSheetRow.serial_no).all()
@@ -242,7 +303,7 @@ async def approve_payroll(
     return {"message": f"Payroll for {year}/{month} approved", "approved_by": current_user.name, "rows": len(rows)}
 
 
-# ── Salary Classification Config CRUD ──
+# -- Salary Classification Config CRUD --
 class ClassificationConfigCreate(BaseModel):
     classification: str
     daily_rate: float
