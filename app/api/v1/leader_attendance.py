@@ -1,4 +1,4 @@
-"""
+﻿"""
 SecureTrack - Leader Daily Attendance API
 Endpoints for Leaders to record daily attendance for guards at their sites.
 """
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.auth import get_current_user, require_role
+from app.api.deps import get_current_user, require_role
 from app.models.user import User
 from app.models.site import Site
 from app.models.daily_attendance_entry import DailyAttendanceEntry
@@ -19,10 +19,10 @@ from app.models.guard_roster import GuardRoster
 from app.models.shift import Shift
 from app.enums import UserRole
 
-router = APIRouter(prefix="/leader-attendance", tags=["Leader Attendance"])
+router = APIRouter()
 
 
-# ── Schemas ──
+# â”€â”€ Schemas â”€â”€
 
 class AttendanceEntryInput(BaseModel):
     employee_id: str
@@ -57,7 +57,7 @@ class AttendanceEntryResponse(BaseModel):
     entered_by: str
 
 
-# ── Guard list for a site on a given day ──
+# â”€â”€ Guard list for a site on a given day â”€â”€
 
 @router.get("/sites/{site_id}/guards", summary="List guards at site for attendance")
 def get_site_guards_for_attendance(
@@ -136,7 +136,7 @@ def get_site_guards_for_attendance(
     }
 
 
-# ── Bulk upsert ──
+# â”€â”€ Bulk upsert â”€â”€
 
 @router.post("/bulk", summary="Bulk save daily attendance")
 def bulk_save_attendance(
@@ -170,7 +170,7 @@ def bulk_save_attendance(
                 continue
 
             if existing.locked:
-                # Override — log it
+                # Override â€” log it
                 existing.override_reason = f"Edited after lock by {current_user.name}"
                 existing.overridden_by = current_user.user_id
                 existing.overridden_at = datetime.now(timezone.utc)
@@ -210,7 +210,7 @@ def bulk_save_attendance(
     }
 
 
-# ── Lock a day ──
+# â”€â”€ Lock a day â”€â”€
 
 @router.post("/lock-day", summary="Lock entries for a day")
 def lock_day(
@@ -237,7 +237,7 @@ def lock_day(
     return {"locked_count": count, "entry_date": entry_date, "site_id": site_id}
 
 
-# ── Get summary for a month (for accountant grid) ──
+# â”€â”€ Get summary for a month (for accountant grid) â”€â”€
 
 @router.get("/monthly-summary", summary="Monthly attendance summary for payroll")
 def get_monthly_summary(
@@ -342,3 +342,5 @@ def get_monthly_summary(
         "total_employees": len(rows),
         "rows": rows,
     }
+
+
