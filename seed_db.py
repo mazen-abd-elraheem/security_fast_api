@@ -53,9 +53,7 @@ def _run_seed_migrations():
                     except Exception as col_err:
                         print(f"Skipped 'expiry_date': {col_err}")
 
-        from sqlalchemy import inspect as sa_inspect, text as sa_text
-    insp = sa_inspect(engine)
-    if insp.has_table("attendance_logs"):
+        if insp.has_table("attendance_logs"):
             existing = {c["name"] for c in insp.get_columns("attendance_logs")}
             if "total_outside_seconds" not in existing:
                 with engine.begin() as conn:
@@ -140,4 +138,5 @@ if __name__ == "__main__":
                 with engine.begin() as conn:
                     conn.execute(sa_text(f"ALTER TABLE attendance_logs ADD COLUMN {col_name} {col_def}"))
                     print(f"  Added attendance_logs.{col_name}")
+
 
