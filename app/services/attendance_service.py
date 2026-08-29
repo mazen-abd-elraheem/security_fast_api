@@ -65,6 +65,13 @@ class AttendanceService:
             existing.status = record.status.value
             existing.replacement_guard_id = record.replacement_guard_id
             existing.notes = record.notes
+            existing.absence_type = record.absence_type
+            existing.excused_by = record.excused_by
+            existing.overtime_hours = record.overtime_hours or 0.0
+            existing.overtime_approved_by = record.overtime_approved_by
+            existing.is_rest_day = record.is_rest_day
+            existing.is_sick_leave = record.is_sick_leave
+            existing.is_annual_leave = record.is_annual_leave
             if actual_visit_id:
                 existing.visit_id = actual_visit_id
             db.commit()
@@ -79,6 +86,13 @@ class AttendanceService:
             status=record.status.value,
             replacement_guard_id=record.replacement_guard_id,
             notes=record.notes,
+            absence_type=record.absence_type,
+            excused_by=record.excused_by,
+            overtime_hours=record.overtime_hours or 0.0,
+            overtime_approved_by=record.overtime_approved_by,
+            is_rest_day=record.is_rest_day,
+            is_sick_leave=record.is_sick_leave,
+            is_annual_leave=record.is_annual_leave,
         )
         db.add(db_log)
         db.commit()

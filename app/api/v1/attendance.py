@@ -37,6 +37,14 @@ def _build_log_response(r) -> AttendanceLogResponse:
         guard_id=guard.user_id if guard else None,
         guard_name=guard.name if guard else None,
         site_name=site.name if site else None,
+        absence_type=getattr(r, 'absence_type', None),
+        excused_by=getattr(r, 'excused_by', None),
+        overtime_hours=getattr(r, 'overtime_hours', None),
+        overtime_approved_by=getattr(r, 'overtime_approved_by', None),
+        overtime_approved=getattr(r, 'overtime_approved', False),
+        is_rest_day=getattr(r, 'is_rest_day', False),
+        is_sick_leave=getattr(r, 'is_sick_leave', False),
+        is_annual_leave=getattr(r, 'is_annual_leave', False),
     )
 
 @router.post("", response_model=AttendanceLogResponse, status_code=201, summary="Record attendance")
@@ -208,6 +216,14 @@ def supervisor_attendance_dashboard(
                 "recorded_at": att_log.recorded_at.isoformat() if att_log else None,
                 "notes": att_log.notes if att_log else None,
                 "log_id": att_log.log_id if att_log else None,
+                "absence_type": att_log.absence_type if att_log else None,
+                "excused_by": att_log.excused_by if att_log else None,
+                "overtime_hours": att_log.overtime_hours if att_log else None,
+                "overtime_approved_by": att_log.overtime_approved_by if att_log else None,
+                "overtime_approved": att_log.overtime_approved if att_log else False,
+                "is_rest_day": att_log.is_rest_day if att_log else False,
+                "is_sick_leave": att_log.is_sick_leave if att_log else False,
+                "is_annual_leave": att_log.is_annual_leave if att_log else False,
             })
 
         total_guards += len(guards)
@@ -485,7 +501,6 @@ def get_daily_summary(
         .outerjoin(Shift, GuardRoster.shift_id == Shift.shift_id)
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
-        .filter(AttendanceLog.visit_id.isnot(None))
     )
     if site_id:
         query = query.filter(Shift.site_id == site_id)
@@ -571,7 +586,6 @@ def export_daily_summary_csv(
         .outerjoin(Shift, GuardRoster.shift_id == Shift.shift_id)
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
-        .filter(AttendanceLog.visit_id.isnot(None))
     )
     if site_id:
         query = query.filter(Shift.site_id == site_id)

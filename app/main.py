@@ -43,6 +43,7 @@ from app.api.v1 import (
     disciplinary,
     evaluations,
     accountant,
+    leader_attendance,
 )
 
 settings = get_settings()
@@ -302,10 +303,11 @@ app.include_router(operations_room.router, prefix="/api/v1/operations-room", tag
 app.include_router(disciplinary.router, prefix="/api/v1/disciplinary", tags=["Disciplinary Actions"])
 app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Guard Evaluations"])
 app.include_router(accountant.router, prefix="/api/v1/accountant-sheet", tags=["Accountant Sheet"])
+app.include_router(leader_attendance.router, prefix="/api/v1/leader-attendance", tags=["Leader Attendance"])
 
 
 # ==========================================
-# Static Files (uploaded images) Ã¢â‚¬â€ must be AFTER routers
+# Static Files (uploaded images) Ã¢â‚¬â€  must be AFTER routers
 # ==========================================
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount(

@@ -2,7 +2,7 @@
 SecureTrack Platform — Attendance Log Model
 Records the actual presence state of a guard as reported by a supervisor during a visit.
 """
-from sqlalchemy import Column, String, Float, DateTime, Text, ForeignKey, Index
+from sqlalchemy import Column, String, Float, Boolean, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -27,6 +27,16 @@ class AttendanceLog(Base):
 
     # If status is "replacement", who replaced the original guard
     replacement_guard_id = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+
+    # Absent sub-type: 'excused' or 'unexcused'
+    absence_type = Column(String(20), nullable=True)
+    excused_by = Column(String(100), nullable=True)
+    overtime_hours = Column(Float, nullable=True, default=0.0)
+    overtime_approved_by = Column(String(100), nullable=True)
+    overtime_approved = Column(Boolean, nullable=False, default=False)
+    is_rest_day = Column(Boolean, nullable=False, default=False)
+    is_sick_leave = Column(Boolean, nullable=False, default=False)
+    is_annual_leave = Column(Boolean, nullable=False, default=False)
 
     # Optional notes (e.g., "Guard arrived 15 min late due to traffic")
     notes = Column(Text, nullable=True)

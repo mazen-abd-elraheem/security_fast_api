@@ -123,7 +123,7 @@ class RuleCreate(BaseModel):
 
 @router.get("/rules", summary="List all deduction rules")
 def list_rules(
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
     """List all deduction rules. Seeds defaults if none exist."""
@@ -153,7 +153,7 @@ def list_rules(
 def update_rule(
     rule_id: str,
     update: RuleUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
     """Update a specific deduction rule's config."""

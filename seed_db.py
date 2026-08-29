@@ -30,6 +30,7 @@ def _run_seed_migrations():
                 "status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",
                 "fcm_token": "VARCHAR(500) NULL",
                 "payroll_amount": "FLOAT DEFAULT 0",
+        "shift_type": "VARCHAR(10) NULL",
                 "transfer_name": "VARCHAR(255) NULL",
                 "transfer_method": "VARCHAR(100) NULL",
             }
@@ -116,3 +117,22 @@ def seed():
 
 if __name__ == "__main__":
     seed()
+
+    # ── attendance_logs new columns ──
+    if insp.has_table("attendance_logs"):
+        existing_att = {c["name"] for c in insp.get_columns("attendance_logs")}
+        att_new_cols = {
+            "absence_type": "VARCHAR(20) NULL",
+            "excused_by": "VARCHAR(100) NULL",
+            "overtime_hours": "FLOAT DEFAULT 0",
+            "overtime_approved_by": "VARCHAR(100) NULL",
+            "overtime_approved": "BOOLEAN DEFAULT FALSE",
+            "is_rest_day": "BOOLEAN DEFAULT FALSE",
+            "is_sick_leave": "BOOLEAN DEFAULT FALSE",
+            "is_annual_leave": "BOOLEAN DEFAULT FALSE",
+        }
+        for col_name, col_def in att_new_cols.items():
+            if col_name not in existing_att:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE attendance_logs ADD COLUMN {col_name} {col_def}"))
+                    print(f"  Added attendance_logs.{col_name}")

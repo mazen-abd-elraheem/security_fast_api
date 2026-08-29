@@ -46,7 +46,8 @@ class User(Base):
     # Payroll
     base_salary = Column(Float, nullable=True, default=0.0)  # Monthly base salary in EGP
     daily_rate = Column(Float, nullable=True, default=0.0)  # Daily rate (derived from classification)
-    classification = Column(String(50), nullable=True)  # Ã™â€ Ã˜Â§Ã˜Â¦Ã˜Â¨/Ã™â€¦Ã˜Â´Ã˜Â±Ã™Â/Ã™ÂÃ˜Â±Ã˜Â¯ Ã¢â‚¬â€ drives salary tier
+    classification = Column(String(50), nullable=True)
+    shift_type = Column(String(10), nullable=True)  # ص (morning) / م (evening)  # Ã™â€ Ã˜Â§Ã˜Â¦Ã˜Â¨/Ã™â€¦Ã˜Â´Ã˜Â±Ã™Â/Ã™ÂÃ˜Â±Ã˜Â¯ Ã¢â‚¬â€ drives salary tier
 
     # HR fields
     hire_date = Column(DateTime, nullable=True)

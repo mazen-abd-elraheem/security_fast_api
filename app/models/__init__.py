@@ -27,6 +27,7 @@ from app.models.monthly_payroll import MonthlyPayroll
 from app.models.disciplinary_action import DisciplinaryAction
 from app.models.guard_evaluation import GuardEvaluation
 from app.models.payroll_sheet_row import PayrollSheetRow, SalaryClassificationConfig
+from app.models.daily_attendance_entry import DailyAttendanceEntry
 
 __all__ = [
     'Base', 'User', 'Site', 'Shift', 'GuardRoster', 'SupervisorRoute',
@@ -36,5 +37,5 @@ __all__ = [
     'InventoryItem', 'GuardDocument',
     'Complaint', 'LeaveRequest', 'DailyLogbook', 'SeparationRequest',
     'SalaryConfig', 'MonthlyPayroll', 'DisciplinaryAction', 'GuardEvaluation',
-    'PayrollSheetRow', 'SalaryClassificationConfig',
+    'PayrollSheetRow', 'SalaryClassificationConfig', 'DailyAttendanceEntry',
 ]

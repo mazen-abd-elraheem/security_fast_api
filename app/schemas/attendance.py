@@ -16,11 +16,18 @@ class AttendanceRecord(BaseModel):
     status: AttendanceStatus
     replacement_guard_id: Optional[str] = Field(None, description="Guard ID if status is 'replacement'")
     notes: Optional[str] = Field(None, max_length=2000)
+    absence_type: Optional[str] = Field(None, description="'excused' or 'unexcused'")
+    excused_by: Optional[str] = Field(None)
+    overtime_hours: Optional[float] = Field(None)
+    overtime_approved_by: Optional[str] = Field(None)
+    is_rest_day: bool = False
+    is_sick_leave: bool = False
+    is_annual_leave: bool = False
 
 
 class BulkAttendanceRequest(BaseModel):
     """Record attendance for all guards during a visit."""
-    visit_id: str
+    visit_id: Optional[str] = None
     records: List[AttendanceRecord]
 
 
@@ -41,6 +48,14 @@ class AttendanceLogResponse(BaseModel):
     replacement_guard_name: Optional[str] = None
     notes: Optional[str] = None
     recorded_at: datetime
+    absence_type: Optional[str] = None
+    excused_by: Optional[str] = None
+    overtime_hours: Optional[float] = None
+    overtime_approved_by: Optional[str] = None
+    overtime_approved: bool = False
+    is_rest_day: bool = False
+    is_sick_leave: bool = False
+    is_annual_leave: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

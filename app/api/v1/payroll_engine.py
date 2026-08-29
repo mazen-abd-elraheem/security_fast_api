@@ -619,3 +619,260 @@ def get_my_slip(
         "total_deductions": entry.total_deductions,
         "net_salary": entry.net_salary,
     }
+
+
+# ══════════════════════════════════════════
+# Auto-Populated Payroll Sheet (Excel-like)
+# ══════════════════════════════════════════
+
+@router.get('/payroll-sheet', summary='Auto-populated payroll sheet data')
+def get_payroll_sheet(
+    year: int = Query(...),
+    month: int = Query(...),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
+    db: Session = Depends(get_db),
+):
+    from calendar import monthrange
+    from app.models.leave_request import LeaveRequest
+    from app.models.deduction_rule import DeductionRule
+    from app.models.supervisor_route import SupervisorRoute
+
+    _, days_in_month = monthrange(year, month)
+    date_from = date(year, month, 1)
+    date_to = date(year, month, days_in_month)
+    week_ranges = [(1, 7), (8, 14), (15, 21), (22, days_in_month)]
+
+    employees = db.query(User).filter(
+        User.role.in_(['guard', 'outdoor']),
+        User.is_active == True,
+    ).all()
+
+    salary_configs = {
+        sc.classification: sc
+        for sc in db.query(SalaryConfig).filter(SalaryConfig.is_active == True).all()
+    }
+
+    rules = {
+        r.rule_type: r
+        for r in db.query(DeductionRule).filter(DeductionRule.is_active == True).all()
+    }
+
+    approved_leaves = db.query(LeaveRequest).filter(
+        LeaveRequest.status.in_(['approved_by_supervisor', 'approved_by_ops_mgr', 'approved_by_hr']),
+        LeaveRequest.start_date <= date_to,
+        LeaveRequest.end_date >= date_from,
+    ).all()
+
+    advances = db.query(CashAdvance).filter(
+        CashAdvance.status.in_(['admin_approved', 'supervisor_approved']),
+    ).all()
+    advance_map = {}
+    for adv in advances:
+        uid = adv.requester_id
+        advance_map[uid] = advance_map.get(uid, 0) + float(adv.amount or 0)
+
+    rows = []
+    for emp in employees:
+        rosters = db.query(GuardRoster).filter(
+            GuardRoster.guard_id == emp.user_id,
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
+        ).all()
+        roster_ids = [r.roster_id for r in rosters]
+        logs = []
+        if roster_ids:
+            logs = db.query(AttendanceLog).filter(AttendanceLog.roster_id.in_(roster_ids)).all()
+
+        log_by_day = {}
+        for r in rosters:
+            day = r.assigned_date.day if hasattr(r.assigned_date, 'day') else int(str(r.assigned_date).split('-')[2])
+            log_by_day[day] = None
+        for l in logs:
+            roster = next((r for r in rosters if r.roster_id == l.roster_id), None)
+            if roster:
+                day = roster.assigned_date.day if hasattr(roster.assigned_date, 'day') else int(str(roster.assigned_date).split('-')[2])
+                log_by_day[day] = l
+
+        weekly = []
+        for w_start, w_end in week_ranges:
+            w = {'absent_excused': 0, 'absent_unexcused': 0, 'overtime': 0.0,
+                 'rest_allowance': 0, 'late': 0, 'deduction': 0.0,
+                 'rest': 0, 'annual_leave': 0, 'sick_leave': 0}
+            for day_num in range(w_start, w_end + 1):
+                att = log_by_day.get(day_num)
+                if att is None:
+                    continue
+                if att.status == 'absent':
+                    if getattr(att, 'absence_type', None) == 'excused':
+                        w['absent_excused'] += 1
+                    else:
+                        w['absent_unexcused'] += 1
+                elif att.status == 'late':
+                    w['late'] += 1
+                if getattr(att, 'overtime_hours', 0) and getattr(att, 'overtime_approved', False):
+                    w['overtime'] += att.overtime_hours
+                if getattr(att, 'is_rest_day', False):
+                    if att.status in ('present', 'late'):
+                        w['rest_allowance'] += 1
+                    else:
+                        w['rest'] += 1
+                if getattr(att, 'is_annual_leave', False):
+                    w['annual_leave'] += 1
+                if getattr(att, 'is_sick_leave', False):
+                    w['sick_leave'] += 1
+            weekly.append(w)
+
+        working_days = sum(1 for l in logs if l.status in ('present', 'late'))
+        total_absent_excused = sum(w['absent_excused'] for w in weekly)
+        total_absent_unexcused = sum(w['absent_unexcused'] for w in weekly)
+        total_overtime = sum(w['overtime'] for w in weekly)
+        total_rest_allowance = sum(w['rest_allowance'] for w in weekly)
+        total_late_count = sum(w['late'] for w in weekly)
+        total_rest = sum(w['rest'] for w in weekly)
+        total_annual_leave = sum(w['annual_leave'] for w in weekly)
+        total_sick_leave = sum(w['sick_leave'] for w in weekly)
+        total_deduction = sum(w['deduction'] for w in weekly)
+
+        emp_classification = emp.classification or ''
+        config = salary_configs.get(emp_classification)
+        daily_rate = config.daily_rate if config else (getattr(emp, 'daily_rate', None) or 0.0)
+        monthly_base = config.monthly_base if config else (getattr(emp, 'base_salary', None) or 0.0)
+        insurance_share = config.insurance_employee_share if config else 0.0
+        incentive = config.incentive_rate if config else 0.0
+        gross = round(working_days * daily_rate, 2)
+
+        absent_rule = rules.get('absent')
+        late_rule = rules.get('late')
+        absence_ded = round((total_absent_excused + total_absent_unexcused) * (absent_rule.amount if absent_rule else 200.0), 2)
+        late_ded = round(total_late_count * (30 * late_rule.amount if late_rule and late_rule.is_per_minute else 50.0), 2)
+        advance_ded = advance_map.get(emp.user_id, 0.0)
+        tax_ded = calculate_monthly_tax(gross)
+        total_deductions = round(absence_ded + late_ded + advance_ded + insurance_share + tax_ded, 2)
+        net_salary = round(gross + incentive - total_deductions, 2)
+
+        supervisor_name = ''
+        try:
+            from app.models.shift import Shift as ShiftModel
+            sup_route = db.query(SupervisorRoute).join(
+                ShiftModel, SupervisorRoute.site_id == ShiftModel.site_id
+            ).join(
+                GuardRoster, GuardRoster.shift_id == ShiftModel.shift_id
+            ).filter(
+                GuardRoster.guard_id == emp.user_id,
+                SupervisorRoute.assigned_date >= date_from,
+                SupervisorRoute.assigned_date <= date_to,
+            ).first()
+            if sup_route:
+                sup = db.query(User).filter(User.user_id == sup_route.supervisor_id).first()
+                supervisor_name = sup.name if sup else ''
+        except Exception:
+            pass
+
+        row = {
+            'employee_code': getattr(emp, 'employee_code', '') or '',
+            'serial': 0,
+            'classification': emp_classification,
+            'work_schedule': '',
+            'supervisor': supervisor_name,
+            'project': '',
+            'hire_date': str(getattr(emp, 'hire_date', '') or ''),
+            'termination_date': '',
+            'uniform_status': '',
+            'termination_reason': '',
+            'insurance_status': getattr(emp, 'insurance_status', '') or '',
+            'name': emp.name,
+            'w1_absent_excused': weekly[0]['absent_excused'],
+            'w1_absent_unexcused': weekly[0]['absent_unexcused'],
+            'w1_overtime': weekly[0]['overtime'],
+            'w1_rest_allowance': weekly[0]['rest_allowance'],
+            'w1_late': weekly[0]['late'],
+            'w1_deduction': weekly[0]['deduction'],
+            'w1_rest': weekly[0]['rest'],
+            'w1_annual_leave': weekly[0]['annual_leave'],
+            'w1_sick_leave': weekly[0]['sick_leave'],
+            'w2_absent_excused': weekly[1]['absent_excused'],
+            'w2_absent_unexcused': weekly[1]['absent_unexcused'],
+            'w2_overtime': weekly[1]['overtime'],
+            'w2_rest_allowance': weekly[1]['rest_allowance'],
+            'w2_late': weekly[1]['late'],
+            'w2_deduction': weekly[1]['deduction'],
+            'w2_rest': weekly[1]['rest'],
+            'w2_annual_leave': weekly[1]['annual_leave'],
+            'w2_sick_leave': weekly[1]['sick_leave'],
+            'w3_absent_excused': weekly[2]['absent_excused'],
+            'w3_absent_unexcused': weekly[2]['absent_unexcused'],
+            'w3_overtime': weekly[2]['overtime'],
+            'w3_rest_allowance': weekly[2]['rest_allowance'],
+            'w3_late': weekly[2]['late'],
+            'w3_deduction': weekly[2]['deduction'],
+            'w3_rest': weekly[2]['rest'],
+            'w3_annual_leave': weekly[2]['annual_leave'],
+            'w3_sick_leave': weekly[2]['sick_leave'],
+            'w4_absent_excused': weekly[3]['absent_excused'],
+            'w4_absent_unexcused': weekly[3]['absent_unexcused'],
+            'w4_overtime': weekly[3]['overtime'],
+            'w4_rest_allowance': weekly[3]['rest_allowance'],
+            'w4_late': weekly[3]['late'],
+            'w4_deduction': weekly[3]['deduction'],
+            'w4_rest': weekly[3]['rest'],
+            'w4_annual_leave': weekly[3]['annual_leave'],
+            'w4_sick_leave': weekly[3]['sick_leave'],
+            'working_days': working_days,
+            'total_absent_excused': total_absent_excused,
+            'total_absent_unexcused': total_absent_unexcused,
+            'total_overtime': total_overtime,
+            'total_rest_allowance': total_rest_allowance,
+            'total_late': total_late_count,
+            'total_deduction': total_deduction,
+            'total_rest': total_rest,
+            'total_annual_leave': total_annual_leave,
+            'total_sick_leave': total_sick_leave,
+            'operational_working_days': working_days,
+            'daily_rate': daily_rate,
+            'operational_salary': gross,
+            'annual_increase': 0.0,
+            'previous_annual_increase': 0.0,
+            'gross_salary': gross,
+            'deduction': absence_ded + late_ded,
+            'advances': advance_ded,
+            'insurance_share': insurance_share,
+            'tax': tax_ded,
+            'net_salary': net_salary,
+            'extra_deductions': 0.0,
+            'salary_diff': 0.0,
+            'incentive': incentive,
+            'increase_2025': 0.0,
+            'bonus': 0.0,
+            'incentive_deduction': 0.0,
+            'total_incentive': incentive,
+            'payroll': net_salary,
+            'cash': 0.0,
+            'total_salary_incentive_diff': incentive,
+            'bonus_2': 0.0,
+            'total_incentive_2': incentive,
+            'transfer_name': getattr(emp, 'transfer_name', '') or emp.name,
+            'incentive_transfer_name': getattr(emp, 'transfer_name', '') or emp.name,
+            'bank_account': getattr(emp, 'bank_account', '') or '',
+            'transfer_method': getattr(emp, 'transfer_method', '') or '',
+            'monthly_salary': monthly_base,
+            'actual_salary': gross,
+            'grants_allowances': incentive,
+            'total_income': gross + incentive,
+            'employee_insurance_share': insurance_share,
+            'annual_personal_exemption': round(20000/12, 2),
+            'net_pay': net_salary,
+            'annual_taxable': round((gross + incentive) * 12, 2),
+            'annual_tax': calculate_annual_tax((gross + incentive) * 12),
+            'monthly_tax': tax_ded,
+        }
+        rows.append(row)
+
+    for i, row in enumerate(rows):
+        row['serial'] = i + 1
+
+    return {
+        'year': year,
+        'month': month,
+        'total_employees': len(rows),
+        'rows': rows,
+    }
