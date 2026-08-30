@@ -1,5 +1,5 @@
-"""
-SecureTrack Platform — User Routes
+﻿"""
+SecureTrack Platform â€” User Routes
 Profile management, location updates, and user listing.
 """
 from fastapi import APIRouter, Depends, Query
@@ -116,7 +116,7 @@ def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
         ).order_by(AttendanceLog.recorded_at.desc()).first()
 
         if distance > site.radius_meters:
-            # OUTSIDE geofence — only checkout after 5+ consecutive outside pings
+            # OUTSIDE geofence â€” only checkout after 5+ consecutive outside pings
             if existing and not existing.checkout_at:
                 recent_pings = (
                     db.query(GpsTrackingPing)
@@ -141,7 +141,7 @@ def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
             pass
         elif existing and existing.checkout_at:
             # RE-ENTRY: guard returned to geofence after checkout.
-            # Reopen the SAME session — accumulate outside time.
+            # Reopen the SAME session â€” accumulate outside time.
             outside_gap = (now_utc - existing.checkout_at).total_seconds()
             if outside_gap > 0:
                 existing.total_outside_seconds = (existing.total_outside_seconds or 0) + outside_gap
@@ -181,7 +181,7 @@ def list_users(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=50),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
     """List users with optional filtering. Admin only."""
@@ -222,10 +222,10 @@ def get_user(
 def admin_update_user(
     user_id: str,
     update_data: AdminUserUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
-    """Admin-level user update — can change any field."""
+    """Admin-level user update â€” can change any field."""
     try:
         return UserService.admin_update_user(db, user_id, update_data)
     except SecureTrackException as e:
@@ -243,3 +243,5 @@ def deactivate_user(
         return UserService.deactivate_user(db, user_id)
     except SecureTrackException as e:
         handle_service_exception(e)
+
+

@@ -250,41 +250,43 @@ def get_monthly_summary(
     """
     Aggregates daily_attendance_entries into weekly blocks for the payroll grid.
     Week 1: days 1-7, Week 2: 8-14, Week 3: 15-21, Week 4: 22-end.
-    Returns data ready for the accountant Excel-style view.
+    Returns ALL active guard employees, overlaying any daily entries on top.
     """
     from calendar import monthrange
+    from sqlalchemy import and_
 
     _, days_in_month = monthrange(year, month)
     date_from = date(year, month, 1)
     date_to = date(year, month, days_in_month)
     week_ranges = [(1, 7), (8, 14), (15, 21), (22, days_in_month)]
 
-    query = db.query(DailyAttendanceEntry).filter(
+    # 1) Get ALL active guard employees first
+    guard_query = db.query(User).filter(
+        User.role == "guard",
+        User.is_active == True,
+    )
+    all_guards = guard_query.all()
+    employees = {u.user_id: u for u in all_guards}
+
+    # 2) Fetch daily attendance entries for this month
+    entry_query = db.query(DailyAttendanceEntry).filter(
         DailyAttendanceEntry.entry_date >= date_from,
         DailyAttendanceEntry.entry_date <= date_to,
     )
     if site_id:
-        query = query.filter(DailyAttendanceEntry.site_id == site_id)
+        entry_query = entry_query.filter(DailyAttendanceEntry.site_id == site_id)
 
-    all_entries = query.all()
+    all_entries = entry_query.all()
 
-    # Group by employee
+    # Group entries by employee
     emp_entries = {}
     for e in all_entries:
         emp_entries.setdefault(e.employee_id, []).append(e)
 
-    # Get employee info
-    emp_ids = list(emp_entries.keys())
-    employees = {}
-    if emp_ids:
-        for u in db.query(User).filter(User.user_id.in_(emp_ids)).all():
-            employees[u.user_id] = u
-
+    # 3) Build rows for ALL guards (not just those with entries)
     rows = []
-    for emp_id, entries in emp_entries.items():
-        emp = employees.get(emp_id)
-        if not emp:
-            continue
+    for emp_id, emp in employees.items():
+        entries = emp_entries.get(emp_id, [])
 
         weekly = []
         for w_start, w_end in week_ranges:
@@ -315,25 +317,39 @@ def get_monthly_summary(
                     w["overtime"] += e.overtime_hours
             weekly.append(w)
 
-        # Check for missing days (no entry at all)
         entered_days = {e.entry_date.day for e in entries}
         missing_days = [d for d in range(1, days_in_month + 1) if d not in entered_days]
 
         working_days = sum(1 for e in entries if e.status in ("present", "rest_day_worked"))
-        working_days += sum(1 for e in entries if e.status == "present" and e.late_minutes > 0)  # late still counts
+
+        daily_rate = float(emp.daily_rate or 0)
+        base_salary = float(emp.base_salary or 0)
+        operational_salary = daily_rate * working_days if daily_rate > 0 else 0
+        gross_salary = operational_salary if operational_salary > 0 else base_salary
 
         rows.append({
             "employee_id": emp_id,
             "employee_code": emp.employee_code or "",
+            "name": emp.name,
             "employee_name": emp.name,
             "classification": emp.classification or "",
             "shift_type": getattr(emp, "shift_type", "") or "",
+            "work_schedule": getattr(emp, "shift_type", "") or "",
             "insurance_status": emp.insurance_status or "",
             "hire_date": str(emp.hire_date or ""),
+            "bank_account": getattr(emp, "bank_account", "") or "",
+            "transfer_name": getattr(emp, "transfer_name", "") or "",
+            "transfer_method": getattr(emp, "transfer_method", "") or "",
+            "daily_rate": daily_rate,
+            "base_salary": base_salary,
             "weekly": weekly,
             "total_entries": len(entries),
             "missing_days": missing_days,
             "working_days": working_days,
+            "operational_working_days": working_days,
+            "operational_salary": operational_salary,
+            "gross_salary": gross_salary,
+            "net_salary": gross_salary,
         })
 
     return {
