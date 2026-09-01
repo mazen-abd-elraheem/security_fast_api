@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack Platform — Attendance Routes
 """
 from fastapi import APIRouter, Depends, Query
@@ -454,6 +454,7 @@ def export_attendance_csv(
     )
 
     output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM for Excel
     writer = csv.writer(output)
     writer.writerow(["Guard Name", "Badge", "Site", "Shift", "Status", "Check-in Time", "Notes"])
 
@@ -599,6 +600,7 @@ def export_daily_summary_csv(
     logs = query.all()
 
     output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM for Excel
     writer = csv.writer(output)
     writer.writerow(["Date", "Site", "Supervisor", "Guard Name", "Badge", "Status", "Notes", "Recorded At"])
 

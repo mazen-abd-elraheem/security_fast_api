@@ -313,6 +313,7 @@ def export_payroll_csv(
         user_rosters.setdefault(guard.user_id, []).append(roster)
 
     output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM for Excel
     writer = csv.writer(output)
     writer.writerow([
         "Name", "Badge", "Role", "Base Salary (EGP)",

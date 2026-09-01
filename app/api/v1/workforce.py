@@ -371,6 +371,7 @@ def export_workforce_csv(
     rosters = query.all()
 
     output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM for Excel
     writer = csv.writer(output)
     writer.writerow([
         "Date", "Name", "Role", "Site", "Shift", "Scheduled Hours",

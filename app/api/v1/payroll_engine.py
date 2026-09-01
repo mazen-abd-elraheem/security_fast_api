@@ -542,6 +542,7 @@ def export_payroll_csv(
         raise HTTPException(status_code=404, detail="No payroll data found")
 
     output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM for Excel
     writer = csv.writer(output)
     writer.writerow([
         "Name", "Badge", "Classification", "Role",
