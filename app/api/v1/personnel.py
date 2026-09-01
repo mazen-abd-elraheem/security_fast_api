@@ -20,14 +20,90 @@ from app.models.guard_roster import GuardRoster
 from app.models.guard_document import GuardDocument
 from app.models.uniform_item import UniformItem
 from app.models.inventory_item import InventoryItem
-from app.enums import UserRole, DocumentType
+from app.enums import UserRole, DocumentType, UserStatus
+from app.core.security import hash_password
 
 router = APIRouter()
 settings = get_settings()
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-# Guard Site Assignment
+# ════════════════════════════════════════════
+# Personnel Officer: Create User (restricted roles)
+# ════════════════════════════════════════════
+
+PERSONNEL_ALLOWED_ROLES = {"guard", "lady", "outdoor", "leader", "supervisor"}
+
+class PersonnelCreateUserRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    email: str = Field(..., min_length=5, max_length=100)
+    phone_number: Optional[str] = None
+    password: str = Field(..., min_length=6)
+    role: str = Field(..., description="guard, lady, outdoor, leader, or supervisor")
+    badge_number: Optional[str] = None
+    region: Optional[str] = None
+
+
+@router.post("/create-user", summary="Personnel creates a user (restricted roles)")
+def personnel_create_user(
+    data: PersonnelCreateUserRequest,
+    current_user: User = Depends(require_role(UserRole.PERSONNEL_OFFICER, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """
+    Personnel officer creates a user account.
+    Allowed roles: guard, lady, outdoor, leader, supervisor.
+    Cannot create: personnel_officer, operations_manager, admin, ceo, accountant, hr.
+    """
+    if data.role not in PERSONNEL_ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Personnel cannot create role '{data.role}'. Allowed: {', '.join(sorted(PERSONNEL_ALLOWED_ROLES))}"
+        )
+
+    # Check duplicate email
+    existing = db.query(User).filter(User.email == data.email).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    # Check duplicate badge
+    if data.badge_number:
+        existing_badge = db.query(User).filter(User.badge_number == data.badge_number).first()
+        if existing_badge:
+            raise HTTPException(status_code=409, detail=f"Badge number already in use: {data.badge_number}")
+
+    import random
+    emp_code = str(random.randint(100000, 999999))
+    while db.query(User).filter(User.employee_code == emp_code).first():
+        emp_code = str(random.randint(100000, 999999))
+
+    db_user = User(
+        user_id=str(uuid.uuid4()),
+        employee_code=emp_code,
+        name=data.name,
+        email=data.email,
+        phone_number=data.phone_number,
+        password_hash=hash_password(data.password),
+        role=data.role,
+        badge_number=data.badge_number,
+        region=data.region,
+        is_active=True,
+        status=UserStatus.ACTIVE if hasattr(UserStatus, 'ACTIVE') else "active",
+    )
+
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+
+    return {
+        "message": "User created successfully",
+        "user_id": db_user.user_id,
+        "name": db_user.name,
+        "email": db_user.email,
+        "role": db_user.role,
+        "employee_code": db_user.employee_code,
+        "badge_number": db_user.badge_number,
+    }\n\n# Guard Site Assignment
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class AssignGuardRequest(BaseModel):

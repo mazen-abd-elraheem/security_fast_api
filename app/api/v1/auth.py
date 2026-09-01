@@ -64,12 +64,17 @@ def login(
     """
     OAuth2 password login.
 
-    - **username**: Email address
+    - **username**: Email address, badge number, or employee code
     - **password**: User password
     - Returns: `access_token`, `refresh_token`, and `token_type`
     """
     # First check if user exists but has a non-active status
-    pending_user = UserService.get_by_email(db, form_data.username)
+    if "@" in form_data.username:
+        pending_user = UserService.get_by_email(db, form_data.username)
+    else:
+        pending_user = db.query(User).filter(User.badge_number == form_data.username).first()
+        if not pending_user:
+            pending_user = db.query(User).filter(User.employee_code == form_data.username).first()
     if pending_user and not pending_user.is_active:
         user_status = getattr(pending_user, 'status', None)
         if user_status == 'rejected':
@@ -86,7 +91,7 @@ def login(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Incorrect email/badge number or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

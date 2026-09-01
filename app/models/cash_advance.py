@@ -1,6 +1,7 @@
 """
 SecureTrack Platform — Cash Advance Model
-Tracks cash advance requests from leaders for guards, with supervisor and admin approval chain.
+Tracks cash advance requests from leaders/supervisors for guards.
+Approval chain: Leader/Supervisor → Ops Manager → Admin → CEO.
 """
 from sqlalchemy import Column, String, Float, Integer, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
@@ -16,6 +17,7 @@ class CashAdvance(Base):
         Index('ix_cash_advance_leader', 'leader_id'),
         Index('ix_cash_advance_status', 'status'),
         Index('ix_cash_advance_supervisor', 'supervisor_id'),
+        Index('ix_cash_advance_ops', 'ops_manager_id'),
     )
 
     advance_id = Column(String(36), primary_key=True, index=True)
@@ -46,11 +48,21 @@ class CashAdvance(Base):
     supervisor_notes = Column(Text, nullable=True)
     supervisor_reviewed_at = Column(DateTime, nullable=True)
 
+    # Ops Manager review (new step)
+    ops_manager_id = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    ops_manager_notes = Column(Text, nullable=True)
+    ops_reviewed_at = Column(DateTime, nullable=True)
+
     # Admin review
     admin_id = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
     admin_notes = Column(Text, nullable=True)
     admin_reviewed_at = Column(DateTime, nullable=True)
     approved_amount = Column(Float, nullable=True)  # If admin modifies the amount
+
+    # CEO final review
+    ceo_id = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    ceo_notes = Column(Text, nullable=True)
+    ceo_reviewed_at = Column(DateTime, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
@@ -61,7 +73,9 @@ class CashAdvance(Base):
     guard = relationship("User", foreign_keys=[guard_id])
     leader = relationship("User", foreign_keys=[leader_id])
     supervisor = relationship("User", foreign_keys=[supervisor_id])
+    ops_manager = relationship("User", foreign_keys=[ops_manager_id])
     admin = relationship("User", foreign_keys=[admin_id])
+    ceo = relationship("User", foreign_keys=[ceo_id])
     site = relationship("Site", foreign_keys=[site_id])
 
     def __repr__(self):

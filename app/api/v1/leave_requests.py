@@ -76,15 +76,21 @@ def create_leave_request(
     current_user: User = Depends(get_current_user),
 ):
     """Create a leave request. Leader submits on behalf of guard (primary), or guard submits directly."""
-    allowed_roles = ["leader", "guard", "outdoor", "admin"]
+    allowed_roles = ["leader", "guard", "outdoor", "admin", "supervisor", "lady"]
     if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Not authorized to submit leave requests")
 
-    # If leader submits, auto-approve the leader step
+    # If leader or supervisor submits, auto-approve the leader step
     initial_status = "pending"
     leader_id = None
     leader_reviewed_at = None
     if current_user.role == "leader":
+        initial_status = "approved_by_leader"
+        leader_id = current_user.user_id
+        leader_reviewed_at = datetime.now(timezone.utc)
+    elif current_user.role == "supervisor":
+        # Supervisor can create leave for self, guard, or leader
+        # Auto-approve leader step since supervisor outranks leader
         initial_status = "approved_by_leader"
         leader_id = current_user.user_id
         leader_reviewed_at = datetime.now(timezone.utc)

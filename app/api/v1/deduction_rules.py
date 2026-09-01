@@ -123,7 +123,7 @@ class RuleCreate(BaseModel):
 
 @router.get("/rules", summary="List all deduction rules")
 def list_rules(
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OPERATIONS_MANAGER, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     """List all deduction rules. Seeds defaults if none exist."""
@@ -153,7 +153,7 @@ def list_rules(
 def update_rule(
     rule_id: str,
     update: RuleUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OPERATIONS_MANAGER, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     """Update a specific deduction rule's config."""
@@ -188,7 +188,7 @@ def update_rule(
 @router.post("/rules", summary="Create a custom deduction rule")
 def create_rule(
     rule: RuleCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     """Create a new custom deduction rule."""
@@ -219,7 +219,7 @@ def create_rule(
 @router.delete("/rules/{rule_id}", summary="Delete a deduction rule")
 def delete_rule(
     rule_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     """Delete a deduction rule."""
@@ -234,7 +234,7 @@ def delete_rule(
 
 @router.post("/rules/reset-defaults", summary="Reset rules to defaults")
 def reset_defaults(
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     """Delete all rules and re-seed defaults."""

@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import os
 
 # Add project root to sys.path
@@ -33,6 +33,7 @@ def _run_seed_migrations():
         "shift_type": "VARCHAR(10) NULL",
                 "transfer_name": "VARCHAR(255) NULL",
                 "transfer_method": "VARCHAR(100) NULL",
+                "uniform_status": "VARCHAR(100) DEFAULT 'none'",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():
@@ -61,6 +62,24 @@ def _run_seed_migrations():
                     print("Added 'total_outside_seconds' to attendance_logs")
     except Exception as e:
         print(f"Seed migration check: {e}")
+
+    # ── Cash Advances table: add ops_manager and CEO columns ──
+    if insp.has_table("cash_advances"):
+        existing = {c["name"] for c in insp.get_columns("cash_advances")}
+        ca_new = {
+            "ops_manager_id": "VARCHAR(36) NULL",
+            "ops_manager_notes": "TEXT NULL",
+            "ops_reviewed_at": "DATETIME NULL",
+            "ceo_id": "VARCHAR(36) NULL",
+            "ceo_notes": "TEXT NULL",
+            "ceo_reviewed_at": "DATETIME NULL",
+        }
+        for col_name, col_def in ca_new.items():
+            if col_name not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE cash_advances ADD COLUMN {col_name} {col_def}"))
+                    print(f"  [migration] cash_advances.{col_name} added")
+
 
 
 def seed():
@@ -118,7 +137,7 @@ def seed():
 if __name__ == "__main__":
     seed()
 
-    # ── attendance_logs new columns ──
+    # -- attendance_logs new columns --
     from sqlalchemy import inspect as sa_inspect, text as sa_text
     insp = sa_inspect(engine)
     if insp.has_table("attendance_logs"):

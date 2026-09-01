@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack Platform Ã¢â‚¬â€ User Model
 Centralized identity for Admins, Supervisors, Guards, Outdoor personnel, and Clients.
 """
@@ -47,7 +47,7 @@ class User(Base):
     base_salary = Column(Float, nullable=True, default=0.0)  # Monthly base salary in EGP
     daily_rate = Column(Float, nullable=True, default=0.0)  # Daily rate (derived from classification)
     classification = Column(String(50), nullable=True)
-    shift_type = Column(String(10), nullable=True)  # ص (morning) / م (evening)  # Ã™â€ Ã˜Â§Ã˜Â¦Ã˜Â¨/Ã™â€¦Ã˜Â´Ã˜Â±Ã™Â/Ã™ÂÃ˜Â±Ã˜Â¯ Ã¢â‚¬â€ drives salary tier
+    shift_type = Column(String(10), nullable=True)  # ص (morning) / م (evening)  # Ã™â€ Ã˜Â§Ã˜Â¦Ã˜Â¨/Ã™â€¦Ã˜Â´Ã˜Â±Ã™Â /Ã™Â Ã˜Â±Ã˜Â¯ Ã¢â‚¬â€  drives salary tier
 
     # HR fields
     hire_date = Column(DateTime, nullable=True)
@@ -55,6 +55,7 @@ class User(Base):
     bank_account = Column(String(100), nullable=True)
     transfer_name = Column(String(255), nullable=True)       # ?????? ??
     transfer_method = Column(String(100), nullable=True)     # ????? ???????
+    uniform_status = Column(String(100), nullable=True, default='none') # delivered / missing / none
     payroll_amount = Column(Float, nullable=True, default=0.0)  # Fixed PAYROLL value (BY column)
 
     # Timestamps

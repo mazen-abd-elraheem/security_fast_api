@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack - Leader Daily Attendance API
 Endpoints for Leaders to record daily attendance for guards at their sites.
 """
@@ -63,7 +63,7 @@ class AttendanceEntryResponse(BaseModel):
 def get_site_guards_for_attendance(
     site_id: str,
     entry_date: str = Query(..., description="YYYY-MM-DD"),
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
     db: Session = Depends(get_db),
 ):
     """
@@ -101,7 +101,11 @@ def get_site_guards_for_attendance(
         existing = {e.employee_id: e for e in entries}
 
     result = []
+    seen_guards = set()
     for roster, guard in rosters:
+        if guard.user_id in seen_guards:
+            continue
+        seen_guards.add(guard.user_id)
         entry = existing.get(guard.user_id)
         result.append({
             "employee_id": guard.user_id,
@@ -141,7 +145,7 @@ def get_site_guards_for_attendance(
 @router.post("/bulk", summary="Bulk save daily attendance")
 def bulk_save_attendance(
     payload: BulkAttendanceInput,
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
     db: Session = Depends(get_db),
 ):
     """
@@ -152,7 +156,16 @@ def bulk_save_attendance(
     target_date = date.fromisoformat(payload.entry_date)
     results = []
 
-    for record in payload.entries:
+    # Deduplicate entries by employee_id — keep last entry per employee
+    seen_emp = set()
+    unique_entries = []
+    for record in reversed(payload.entries):
+        if record.employee_id not in seen_emp:
+            seen_emp.add(record.employee_id)
+            unique_entries.append(record)
+    unique_entries.reverse()
+
+    for record in unique_entries:
         # Check if entry exists
         existing = (
             db.query(DailyAttendanceEntry)
@@ -216,7 +229,7 @@ def bulk_save_attendance(
 def lock_day(
     site_id: str = Query(...),
     entry_date: str = Query(...),
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
     db: Session = Depends(get_db),
 ):
     """Lock all entries for a site on a given day."""
@@ -244,38 +257,42 @@ def get_monthly_summary(
     year: int = Query(...),
     month: int = Query(...),
     site_id: Optional[str] = None,
+    role_filter: Optional[str] = Query(None, description="guard, outdoor, supervisor"),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """
-    Aggregates daily_attendance_entries into weekly blocks for the payroll grid.
-    Week 1: days 1-7, Week 2: 8-14, Week 3: 15-21, Week 4: 22-end.
-    Returns ALL active guard employees, overlaying any daily entries on top.
+    Returns ALL active employees with monthly attendance totals.
+    Includes guards, outdoor, and supervisors.
+    Enriches with site name, shift time, classification from role.
     """
     from calendar import monthrange
-    from sqlalchemy import and_
+    from app.models.site import Site
 
     _, days_in_month = monthrange(year, month)
     date_from = date(year, month, 1)
     date_to = date(year, month, days_in_month)
-    week_ranges = [(1, 7), (8, 14), (15, 21), (22, days_in_month)]
 
-    # 1) Get ALL active guard employees first
-    guard_query = db.query(User).filter(
-        User.role == "guard",
+    # 1) Get active employees (guards + outdoor + supervisors)
+    roles = ["guard", "outdoor", "lady"]
+    if role_filter:
+        roles = [role_filter]
+    else:
+        roles = ["guard", "outdoor", "supervisor", "lady"]
+
+    all_employees = db.query(User).filter(
+        User.role.in_(roles),
         User.is_active == True,
-    )
-    all_guards = guard_query.all()
-    employees = {u.user_id: u for u in all_guards}
+        User.status != "terminated",
+    ).all()
 
-    # 2) Fetch daily attendance entries for this month
+    # 2) Get daily attendance entries for this month
     entry_query = db.query(DailyAttendanceEntry).filter(
         DailyAttendanceEntry.entry_date >= date_from,
         DailyAttendanceEntry.entry_date <= date_to,
     )
     if site_id:
         entry_query = entry_query.filter(DailyAttendanceEntry.site_id == site_id)
-
     all_entries = entry_query.all()
 
     # Group entries by employee
@@ -283,80 +300,170 @@ def get_monthly_summary(
     for e in all_entries:
         emp_entries.setdefault(e.employee_id, []).append(e)
 
-    # 3) Build rows for ALL guards (not just those with entries)
+    # 3) Get holidays for this month
+    from app.models.accountant_models import Holiday, EmployeeBonus
+    holidays = db.query(Holiday).filter(
+        Holiday.date >= date_from,
+        Holiday.date <= date_to,
+    ).all()
+    holiday_days = {h.date.day for h in holidays}
+
+    # 4) Get bonuses for this month
+    bonuses = db.query(EmployeeBonus).filter(
+        EmployeeBonus.year == year,
+        EmployeeBonus.month == month,
+    ).all()
+    emp_bonuses = {}
+    for b in bonuses:
+        emp_bonuses.setdefault(b.employee_id, []).append(b)
+
+    # 5) Get roster -> shift -> site mapping for each employee
+    emp_site_info = {}
+    for emp in all_employees:
+        roster = db.query(GuardRoster).filter(
+            GuardRoster.guard_id == emp.user_id,
+        ).order_by(GuardRoster.assigned_date.desc()).first()
+
+        site_name = ""
+        shift_time = "none"
+        supervisor_name = ""
+
+        if roster:
+            shift = db.query(Shift).filter(Shift.shift_id == roster.shift_id).first()
+            if shift:
+                site = db.query(Site).filter(Site.site_id == shift.site_id).first()
+                if site:
+                    site_name = site.name or ""
+                if shift.start_time:
+                    shift_time = "\u0635" if shift.start_time.hour < 12 else "\u0645"
+
+        emp_site_info[emp.user_id] = {
+            "site_name": site_name,
+            "shift_time": shift_time,
+            "supervisor_name": supervisor_name,
+        }
+
+    # 6) Build rows
+    role_labels = {"guard": "\u062d\u0627\u0631\u0633", "outdoor": "\u062e\u0627\u0631\u062c\u064a", "supervisor": "\u0645\u0634\u0631\u0641"}
     rows = []
-    for emp_id, emp in employees.items():
-        entries = emp_entries.get(emp_id, [])
+    for idx, emp in enumerate(all_employees, 1):
+        entries = emp_entries.get(emp.user_id, [])
+        site_info = emp_site_info.get(emp.user_id, {})
 
-        weekly = []
-        for w_start, w_end in week_ranges:
-            w = {
-                "absent_excused": 0, "absent_unexcused": 0, "overtime": 0.0,
-                "rest_allowance": 0, "late": 0, "deduction": 0.0,
-                "rest": 0, "annual_leave": 0, "sick_leave": 0,
-            }
-            for e in entries:
-                day = e.entry_date.day
-                if day < w_start or day > w_end:
-                    continue
-                if e.status == "absence_excused":
-                    w["absent_excused"] += 1
-                elif e.status == "absence_unexcused":
-                    w["absent_unexcused"] += 1
-                elif e.status == "annual_leave":
-                    w["annual_leave"] += 1
-                elif e.status == "sick_leave":
-                    w["sick_leave"] += 1
-                elif e.status == "rest":
-                    w["rest"] += 1
-                elif e.status == "rest_day_worked":
-                    w["rest_allowance"] += 1
-                if e.late_minutes > 0:
-                    w["late"] += 1
-                if e.overtime_hours > 0 and e.overtime_approved:
-                    w["overtime"] += e.overtime_hours
-            weekly.append(w)
+        # Count attendance totals
+        total_present = 0
+        total_absent_excused = 0
+        total_absent_unexcused = 0
+        total_rest = 0
+        total_annual_leave = 0
+        total_sick_leave = 0
+        total_late = 0
+        total_overtime = 0.0
+        total_rest_allowance = 0
 
-        entered_days = {e.entry_date.day for e in entries}
-        missing_days = [d for d in range(1, days_in_month + 1) if d not in entered_days]
+        for e in entries:
+            if e.status == "present":
+                total_present += 1
+            elif e.status == "absence_excused":
+                total_absent_excused += 1
+            elif e.status == "absence_unexcused":
+                total_absent_unexcused += 1
+            elif e.status == "rest":
+                total_rest += 1
+            elif e.status == "annual_leave":
+                total_annual_leave += 1
+            elif e.status == "sick_leave":
+                total_sick_leave += 1
+            elif e.status == "rest_day_worked":
+                total_rest_allowance += 1
+                total_present += 1
 
-        working_days = sum(1 for e in entries if e.status in ("present", "rest_day_worked"))
+            if e.late_minutes > 0:
+                total_late += 1
+            if e.overtime_hours > 0 and e.overtime_approved:
+                total_overtime += e.overtime_hours
 
+        total_holidays = len(holiday_days)
+        total_off = total_rest + total_holidays + total_annual_leave + total_sick_leave
+        total_absent = total_absent_excused + total_absent_unexcused
+        total_days = total_present + total_absent + total_off
+        working_days = total_present
+
+        # Salary calculations
         daily_rate = float(emp.daily_rate or 0)
         base_salary = float(emp.base_salary or 0)
         operational_salary = daily_rate * working_days if daily_rate > 0 else 0
         gross_salary = operational_salary if operational_salary > 0 else base_salary
 
+        # Bonuses
+        emp_bonus_list = emp_bonuses.get(emp.user_id, [])
+        total_bonus = sum(b.amount for b in emp_bonus_list)
+
+        net_salary = gross_salary + total_bonus
+
+        # Missing days (not yet submitted by leader)
+        entered_days = {e.entry_date.day for e in entries}
+        missing_days = [d for d in range(1, days_in_month + 1) if d not in entered_days and d not in holiday_days]
+
+        classification = emp.classification or role_labels.get(emp.role, emp.role)
+
         rows.append({
-            "employee_id": emp_id,
-            "employee_code": emp.employee_code or "",
+            "employee_id": emp.user_id,
+            "serial_no": idx,
+            "employee_code": emp.employee_code or emp.badge_number or "",
             "name": emp.name,
             "employee_name": emp.name,
-            "classification": emp.classification or "",
-            "shift_type": getattr(emp, "shift_type", "") or "",
-            "work_schedule": getattr(emp, "shift_type", "") or "",
-            "insurance_status": emp.insurance_status or "",
-            "hire_date": str(emp.hire_date or ""),
+            "role": emp.role,
+            "classification": classification,
+            "shift_time": site_info.get("shift_time", "none"),
+            "shift_type": getattr(emp, "shift_type", "") or site_info.get("shift_time", "none"),
+            "work_schedule": getattr(emp, "shift_type", "") or site_info.get("shift_time", "none"),
+            "supervisor_name": site_info.get("supervisor_name", ""),
+            "site_name": site_info.get("site_name", ""),
+            "hire_date": str(emp.hire_date.strftime("%Y-%m-%d") if emp.hire_date else ""),
+            "insurance_status": emp.insurance_status or "none",
             "bank_account": getattr(emp, "bank_account", "") or "",
             "transfer_name": getattr(emp, "transfer_name", "") or "",
             "transfer_method": getattr(emp, "transfer_method", "") or "",
+            "uniform_status": "",
             "daily_rate": daily_rate,
             "base_salary": base_salary,
-            "weekly": weekly,
-            "total_entries": len(entries),
-            "missing_days": missing_days,
+            # Monthly totals
+            "total_present": total_present,
+            "total_absent_excused": total_absent_excused,
+            "total_absent_unexcused": total_absent_unexcused,
+            "total_absent": total_absent,
+            "total_rest": total_rest,
+            "total_rest_allowance": total_rest_allowance,
+            "total_annual_leave": total_annual_leave,
+            "total_sick_leave": total_sick_leave,
+            "total_holidays": total_holidays,
+            "total_off": total_off,
+            "total_late": total_late,
+            "total_overtime": total_overtime,
+            "total_days": total_days,
             "working_days": working_days,
+            "missing_days_count": len(missing_days),
+            # Salary
             "operational_working_days": working_days,
             "operational_salary": operational_salary,
             "gross_salary": gross_salary,
-            "net_salary": gross_salary,
+            "total_bonus": total_bonus,
+            "net_salary": net_salary,
         })
+
+    # Get all unique sites for filter
+    all_sites = list({r["site_name"] for r in rows if r["site_name"]})
 
     return {
         "year": year,
         "month": month,
+        "days_in_month": days_in_month,
         "total_employees": len(rows),
+        "total_gross": sum(r["gross_salary"] for r in rows),
+        "total_net": sum(r["net_salary"] for r in rows),
+        "holidays": [{"name": h.name, "date": str(h.date), "day": h.date.day} for h in holidays],
+        "sites": sorted(all_sites),
         "rows": rows,
     }
-
 

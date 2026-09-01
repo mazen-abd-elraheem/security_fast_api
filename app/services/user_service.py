@@ -42,8 +42,14 @@ class UserService:
             if existing:
                 raise DuplicateException(f"Badge number already in use: {user_in.badge_number}")
 
+        import random
+        emp_code = str(random.randint(100000, 999999))
+        while db.query(User).filter(User.employee_code == emp_code).first():
+            emp_code = str(random.randint(100000, 999999))
+
         db_user = User(
             user_id=str(uuid.uuid4()),
+            employee_code=emp_code,
             name=user_in.name,
             email=user_in.email,
             phone_number=user_in.phone_number,
@@ -74,8 +80,14 @@ class UserService:
             if existing:
                 raise DuplicateException(f"Badge number already in use: {user_in.badge_number}")
 
+        import random
+        emp_code = str(random.randint(100000, 999999))
+        while db.query(User).filter(User.employee_code == emp_code).first():
+            emp_code = str(random.randint(100000, 999999))
+
         db_user = User(
             user_id=str(uuid.uuid4()),
+            employee_code=emp_code,
             name=user_in.name,
             email=user_in.email,
             phone_number=user_in.phone_number,

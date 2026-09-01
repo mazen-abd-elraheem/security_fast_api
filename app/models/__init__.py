@@ -1,4 +1,4 @@
-from app.core.database import Base
+﻿from app.core.database import Base
 
 from app.models.user import User
 from app.models.site import Site
@@ -28,6 +28,7 @@ from app.models.disciplinary_action import DisciplinaryAction
 from app.models.guard_evaluation import GuardEvaluation
 from app.models.payroll_sheet_row import PayrollSheetRow, SalaryClassificationConfig
 from app.models.daily_attendance_entry import DailyAttendanceEntry
+from app.models.accountant_models import TaxBracket, EmployeeBonus, Holiday, Termination
 
 __all__ = [
     'Base', 'User', 'Site', 'Shift', 'GuardRoster', 'SupervisorRoute',
@@ -38,4 +39,8 @@ __all__ = [
     'Complaint', 'LeaveRequest', 'DailyLogbook', 'SeparationRequest',
     'SalaryConfig', 'MonthlyPayroll', 'DisciplinaryAction', 'GuardEvaluation',
     'PayrollSheetRow', 'SalaryClassificationConfig', 'DailyAttendanceEntry',
+    'TaxBracket', 'EmployeeBonus', 'Holiday', 'Termination',
 ]
+
+
+from app.models.travel_fee import TravelFee

@@ -12,6 +12,7 @@ class UserRole(str, Enum):
     LEADER = "leader"
     GUARD = "guard"
     OUTDOOR = "outdoor"
+    LADY = "lady"
     PERSONNEL_OFFICER = "personnel_officer"
     HR = "hr"
     ACCOUNTANT = "accountant"
@@ -20,11 +21,19 @@ class UserRole(str, Enum):
 
 class CashAdvanceStatus(str, Enum):
     PENDING = "pending"
-    SUPERVISOR_APPROVED = "supervisor_approved"
-    SUPERVISOR_REJECTED = "supervisor_rejected"
+    # Ops Manager step (replaces old supervisor step)
+    OPS_APPROVED = "ops_approved"
+    OPS_REJECTED = "ops_rejected"
+    # Admin step
     ADMIN_APPROVED = "admin_approved"
     ADMIN_REJECTED = "admin_rejected"
     ADMIN_MODIFIED = "admin_modified"
+    # CEO final step
+    CEO_APPROVED = "ceo_approved"
+    CEO_REJECTED = "ceo_rejected"
+    # Legacy (keep for backward compat)
+    SUPERVISOR_APPROVED = "supervisor_approved"
+    SUPERVISOR_REJECTED = "supervisor_rejected"
 
 
 class SiteStatus(str, Enum):

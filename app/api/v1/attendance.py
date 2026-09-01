@@ -190,9 +190,16 @@ def supervisor_attendance_dashboard(
 
         guards = []
         site_present = 0
+        seen_guard_ids = set()
         for roster in rosters:
             guard = roster.guard
             shift = roster.shift
+
+            # Skip duplicate guard entries (same guard on multiple shifts)
+            if guard and guard.user_id in seen_guard_ids:
+                continue
+            if guard:
+                seen_guard_ids.add(guard.user_id)
 
             # Check if guard has an attendance log for this roster recorded by THIS supervisor
             att_log = (
