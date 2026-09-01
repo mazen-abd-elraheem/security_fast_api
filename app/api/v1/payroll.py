@@ -161,35 +161,51 @@ def get_payroll_report(
     Generate payroll report for all guards/outdoor in a date range.
     Aggregates daily attendance, GPS presence hours, and deductions.
     """
-    # Get all roster entries in date range
+    # 1. Fetch eligible users
+    users_query = db.query(User).filter(User.is_active == True)
+    if role_filter and role_filter != "all":
+        users_query = users_query.filter(User.role == role_filter)
+    else:
+        users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
+    
+    users = users_query.all()
+    user_dict = {u.user_id: u for u in users}
+
+    if not users:
+        return {
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "currency": CURRENCY,
+            "employees": [],
+            "summary": {
+                "total_employees": 0,
+                "grand_total_deductions": 0.0,
+                "grand_total_net_pay": 0.0,
+            },
+        }
+
+    # 2. Get rosters for these users
     rosters = (
         db.query(GuardRoster)
         .options(
-            joinedload(GuardRoster.guard),
             joinedload(GuardRoster.shift).joinedload(Shift.site),
             joinedload(GuardRoster.attendance_logs),
         )
+        .filter(GuardRoster.guard_id.in_(user_dict.keys()))
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
         .all()
     )
 
-    # Group rosters by user
-    user_rosters: dict[str, list] = {}
+    user_rosters: dict[str, list] = {u_id: [] for u_id in user_dict.keys()}
     for roster in rosters:
-        guard = roster.guard
-        if not guard or not roster.shift:
-            continue
-        guard_role = guard.role.value if hasattr(guard.role, "value") else guard.role
-        if role_filter and role_filter != "all" and guard_role != role_filter:
-            continue
-        user_rosters.setdefault(guard.user_id, []).append(roster)
+        user_rosters[roster.guard_id].append(roster)
 
     # Build per-employee payroll records
     employees = []
-    for user_id, user_roster_list in user_rosters.items():
-        guard = user_roster_list[0].guard
-        base_salary = getattr(guard, "base_salary", None) or 0.0
+    for user_id, user in user_dict.items():
+        user_roster_list = user_rosters[user_id]
+        base_salary = getattr(user, "base_salary", None) or 0.0
 
         total_scheduled = 0.0
         total_actual = 0.0
@@ -218,7 +234,7 @@ def get_payroll_report(
                 .all()
             )
 
-            day_record = _compute_daily_record(guard, roster, shift, site, logs, pings, target_date)
+            day_record = _compute_daily_record(user, roster, shift, site, logs, pings, target_date)
             daily_records.append(day_record)
 
             total_scheduled += day_record["scheduled_hours"]
@@ -242,10 +258,10 @@ def get_payroll_report(
         net_pay = round(base_salary - total_deductions, 2)
 
         employees.append({
-            "user_id": guard.user_id,
-            "name": guard.name,
-            "role": guard.role.value if hasattr(guard.role, "value") else guard.role,
-            "badge_number": guard.badge_number,
+            "user_id": user.user_id,
+            "name": user.name,
+            "role": user.role.value if hasattr(user.role, "value") else user.role,
+            "badge_number": user.badge_number,
             "base_salary": base_salary,
             "total_scheduled_hours": round(total_scheduled, 2),
             "total_actual_hours": round(total_actual, 2),
@@ -287,30 +303,44 @@ def export_payroll_csv(
     db: Session = Depends(get_db),
 ):
     """Export payroll report as CSV."""
-    # Reuse the report logic
-    from app.api.v1.payroll import get_payroll_report as _report
-    # Build a mock for reuse — just call the same logic inline
+    # 1. Fetch eligible users
+    users_query = db.query(User).filter(User.is_active == True)
+    if role_filter and role_filter != "all":
+        users_query = users_query.filter(User.role == role_filter)
+    else:
+        users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
+    
+    users = users_query.all()
+    user_dict = {u.user_id: u for u in users}
+
+    if not users:
+        output = io.StringIO()
+        output.write('\ufeff')
+        writer = csv.writer(output)
+        writer.writerow(["Name", "Badge", "Role", "Base Salary (EGP)", "Days Present", "Days Late", "Days Absent", "Total Days", "Scheduled Hours", "Actual Hours", "Total Deductions (EGP)", "Net Pay (EGP)", "Deduction Details"])
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=payroll_{date_from}_to_{date_to}.csv"}
+        )
+
+    # 2. Get rosters for these users
     rosters = (
         db.query(GuardRoster)
         .options(
-            joinedload(GuardRoster.guard),
             joinedload(GuardRoster.shift).joinedload(Shift.site),
             joinedload(GuardRoster.attendance_logs),
         )
+        .filter(GuardRoster.guard_id.in_(user_dict.keys()))
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
         .all()
     )
 
-    user_rosters: dict[str, list] = {}
+    user_rosters: dict[str, list] = {u_id: [] for u_id in user_dict.keys()}
     for roster in rosters:
-        guard = roster.guard
-        if not guard or not roster.shift:
-            continue
-        guard_role = guard.role.value if hasattr(guard.role, "value") else guard.role
-        if role_filter and role_filter != "all" and guard_role != role_filter:
-            continue
-        user_rosters.setdefault(guard.user_id, []).append(roster)
+        user_rosters[roster.guard_id].append(roster)
 
     output = io.StringIO()
     output.write('\ufeff')  # UTF-8 BOM for Excel
@@ -322,9 +352,9 @@ def export_payroll_csv(
         "Total Deductions (EGP)", "Net Pay (EGP)", "Deduction Details",
     ])
 
-    for user_id, user_roster_list in user_rosters.items():
-        guard = user_roster_list[0].guard
-        base_salary = getattr(guard, "base_salary", None) or 0.0
+    for user_id, user in user_dict.items():
+        user_roster_list = user_rosters[user_id]
+        base_salary = getattr(user, "base_salary", None) or 0.0
 
         total_scheduled = 0.0
         total_actual = 0.0
@@ -351,7 +381,7 @@ def export_payroll_csv(
                 .all()
             )
 
-            day_record = _compute_daily_record(guard, roster, shift, site, logs, pings, target_date)
+            day_record = _compute_daily_record(user, roster, shift, site, logs, pings, target_date)
             total_scheduled += day_record["scheduled_hours"]
             total_actual += day_record["actual_hours"]
 
@@ -365,25 +395,13 @@ def export_payroll_csv(
             for d in day_record["deductions"]:
                 all_deductions.append(f"{target_date}: {d['reason']} ({d['amount']})")
 
-        total_deductions = round(sum(
-            d["total_deduction"]
-            for roster in user_roster_list
-            for d in [_compute_daily_record(
-                guard, roster, roster.shift, roster.shift.site if roster.shift else None,
-                roster.attendance_logs or [],
-                db.query(GpsTrackingPing)
-                .filter(GpsTrackingPing.user_id == user_id)
-                .filter(GpsTrackingPing.roster_id == roster.roster_id)
-                .all(),
-                roster.assigned_date,
-            )]
-        ), 2)
+        total_deductions = round(sum(d["amount"] for r in user_roster_list for d in _compute_daily_record(user, r, r.shift, r.shift.site if r.shift else None, r.attendance_logs or [], db.query(GpsTrackingPing).filter(GpsTrackingPing.user_id == user_id).filter(GpsTrackingPing.roster_id == r.roster_id).all(), r.assigned_date)["deductions"]), 2)
         net_pay = round(base_salary - total_deductions, 2)
 
         writer.writerow([
-            guard.name,
-            guard.badge_number or "",
-            guard.role.value if hasattr(guard.role, "value") else guard.role,
+            user.name,
+            user.badge_number or "N/A",
+            user.role.value if hasattr(user.role, "value") else user.role,
             base_salary,
             days_present,
             days_late,
