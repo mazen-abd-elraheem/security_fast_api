@@ -77,7 +77,7 @@ def _build_itinerary(routes, supervisor_id, supervisor_name, target_date):
 @router.get("/my", response_model=DailyItineraryResponse, summary="Get my today's route")
 def get_my_route(
     target_date: date = Query(default=None, description="Date (defaults to today)"),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """Get the authenticated supervisor's daily route."""
