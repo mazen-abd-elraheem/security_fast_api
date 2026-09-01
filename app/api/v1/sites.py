@@ -37,7 +37,7 @@ def list_sites(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=50),
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD,
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OPERATIONS_MANAGER, UserRole.LEADER,
     )),
     db: Session = Depends(get_db),
 ):
@@ -49,7 +49,7 @@ def list_sites(
 def get_site(
     site_id: str,
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR,
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER, UserRole.LEADER,
     )),
     db: Session = Depends(get_db),
 ):

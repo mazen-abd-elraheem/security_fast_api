@@ -30,6 +30,7 @@ class DailyAttendanceEntry(Base):
     overtime_approved = Column(Boolean, nullable=False, default=False)
     overtime_approved_by = Column(String(36), nullable=True)
     excused_by = Column(String(255), nullable=True)
+    advance_amount = Column(Float, nullable=False, default=0.0)
     note = Column(Text, nullable=True)
 
     entered_by = Column(String(36), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)

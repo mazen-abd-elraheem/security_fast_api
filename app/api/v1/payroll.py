@@ -19,6 +19,7 @@ from app.models.shift import Shift
 from app.models.site import Site
 from app.models.attendance_log import AttendanceLog
 from app.models.gps_tracking_ping import GpsTrackingPing
+from app.models.daily_attendance_entry import DailyAttendanceEntry
 from app.enums import UserRole
 from app.api.v1.tracking import compute_presence_hours_from_pings
 
@@ -149,6 +150,7 @@ def _compute_daily_record(
     }
 
 
+
 @router.get("/report", summary="Payroll report for date range")
 def get_payroll_report(
     date_from: date = Query(..., description="Start date"),
@@ -158,8 +160,7 @@ def get_payroll_report(
     db: Session = Depends(get_db),
 ):
     """
-    Generate payroll report for all guards/outdoor in a date range.
-    Aggregates daily attendance, GPS presence hours, and deductions.
+    Generate payroll report using DailyAttendanceEntry (supervisor's manual entries).
     """
     # 1. Fetch eligible users
     users_query = db.query(User).filter(User.is_active == True)
@@ -184,13 +185,10 @@ def get_payroll_report(
             },
         }
 
-    # 2. Get rosters for these users
+    # 2. Get rosters (just to know scheduled days and default site)
     rosters = (
         db.query(GuardRoster)
-        .options(
-            joinedload(GuardRoster.shift).joinedload(Shift.site),
-            joinedload(GuardRoster.attendance_logs),
-        )
+        .options(joinedload(GuardRoster.shift).joinedload(Shift.site))
         .filter(GuardRoster.guard_id.in_(user_dict.keys()))
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
@@ -201,61 +199,48 @@ def get_payroll_report(
     for roster in rosters:
         user_rosters[roster.guard_id].append(roster)
 
-    # Build per-employee payroll records
+    # 3. Get Daily Attendance Entries (source of truth)
+    entries = (
+        db.query(DailyAttendanceEntry)
+        .filter(DailyAttendanceEntry.employee_id.in_(user_dict.keys()))
+        .filter(DailyAttendanceEntry.entry_date >= date_from)
+        .filter(DailyAttendanceEntry.entry_date <= date_to)
+        .all()
+    )
+
+    user_entries: dict[str, list] = {u_id: [] for u_id in user_dict.keys()}
+    for entry in entries:
+        user_entries[entry.employee_id].append(entry)
+
     employees = []
     for user_id, user in user_dict.items():
         user_roster_list = user_rosters[user_id]
+        user_entry_list = user_entries[user_id]
+        
         base_salary = getattr(user, "base_salary", None) or 0.0
 
-        total_scheduled = 0.0
-        total_actual = 0.0
-        days_present = 0
-        days_absent = 0
-        days_late = 0
-        all_deductions = []
-        daily_records = []
-
-        for roster in user_roster_list:
-            shift = roster.shift
-            site = shift.site if shift else None
-            logs = roster.attendance_logs or []
-            target_date = roster.assigned_date
-
-            # Get GPS pings for this roster
-            start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
-            end_dt = datetime.combine(target_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
-            pings = (
-                db.query(GpsTrackingPing)
-                .filter(GpsTrackingPing.user_id == user_id)
-                .filter(GpsTrackingPing.roster_id == roster.roster_id)
-                .filter(GpsTrackingPing.recorded_at >= start_dt)
-                .filter(GpsTrackingPing.recorded_at < end_dt)
-                .order_by(GpsTrackingPing.recorded_at)
-                .all()
-            )
-
-            day_record = _compute_daily_record(user, roster, shift, site, logs, pings, target_date)
-            daily_records.append(day_record)
-
-            total_scheduled += day_record["scheduled_hours"]
-            total_actual += day_record["actual_hours"]
-
-            if day_record["status"] == "present":
-                days_present += 1
-            elif day_record["status"] == "absent":
-                days_absent += 1
-            elif day_record["status"] == "late":
-                days_late += 1
-
-            for d in day_record["deductions"]:
-                all_deductions.append({
-                    "date": target_date.isoformat(),
-                    "reason": d["reason"],
-                    "amount": d["amount"],
-                })
-
-        total_deductions = round(sum(d["amount"] for d in all_deductions), 2)
-        net_pay = round(base_salary - total_deductions, 2)
+        days_present = sum(1 for e in user_entry_list if e.status == 'present')
+        days_absent_unexcused = sum(1 for e in user_entry_list if e.status == 'absence_unexcused')
+        days_absent_excused = sum(1 for e in user_entry_list if e.status == 'absence_excused')
+        days_late = sum(1 for e in user_entry_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
+        
+        advances = sum(e.advance_amount for e in user_entry_list)
+        total_overtime = sum(e.overtime_hours for e in user_entry_list)
+        
+        # Calculate deductions based on entries
+        deductions = []
+        if days_absent_unexcused > 0:
+            deductions.append({"reason": "Absence (Unexcused)", "amount": round(days_absent_unexcused * ABSENT_DEDUCTION, 2)})
+            
+        late_deduction = 0.0
+        for e in user_entry_list:
+            if e.late_minutes > LATE_THRESHOLD_MINUTES:
+                late_deduction += e.late_minutes * LATE_DEDUCTION_PER_MINUTE
+        if late_deduction > 0:
+            deductions.append({"reason": "Late arrival", "amount": round(late_deduction, 2)})
+            
+        total_deduction = round(sum(d["amount"] for d in deductions), 2)
+        net_pay = round(base_salary - total_deduction - advances, 2)
 
         employees.append({
             "user_id": user.user_id,
@@ -263,17 +248,15 @@ def get_payroll_report(
             "role": user.role.value if hasattr(user.role, "value") else user.role,
             "badge_number": user.badge_number,
             "base_salary": base_salary,
-            "total_scheduled_hours": round(total_scheduled, 2),
-            "total_actual_hours": round(total_actual, 2),
             "days_present": days_present,
-            "days_absent": days_absent,
+            "days_absent": days_absent_unexcused + days_absent_excused,
             "days_late": days_late,
-            "total_days": len(daily_records),
-            "total_deductions": total_deductions,
-            "deduction_breakdown": all_deductions,
+            "total_days": len(user_entry_list),
+            "total_deductions": total_deduction,
+            "deduction_breakdown": deductions,
+            "advances": advances,
             "net_pay": net_pay,
             "currency": CURRENCY,
-            "daily_records": daily_records,
         })
 
     # Summary
@@ -302,8 +285,7 @@ def export_payroll_csv(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Export payroll report as CSV."""
-    # 1. Fetch eligible users
+    """Export payroll report as CSV with 21 Arabic columns."""
     users_query = db.query(User).filter(User.is_active == True)
     if role_filter and role_filter != "all":
         users_query = users_query.filter(User.role == role_filter)
@@ -313,11 +295,20 @@ def export_payroll_csv(
     users = users_query.all()
     user_dict = {u.user_id: u for u in users}
 
+    headers = [
+        "الاكواد", "مسلسل", "التصنيف", "توقيت\nالعمل", "المشرف", "مشروع", 
+        "تاريخ \nالتعيين", "الاســـــــــــــــــــــــــــــم", "غياب \nباذن", 
+        "غياب \nبدون", "اضافى", "بدل \nراحه", "تاخير", "خصم", "راحة", 
+        "اجازة \nمن \nالسنوي", "اجازة\nمرضي", "ايام \nالعمل \nالتشغيليه", 
+        "الاجر\nاليومية", "اجمالي الراتب", "السلف"
+    ]
+
+    output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM
+    writer = csv.writer(output)
+    writer.writerow(headers)
+
     if not users:
-        output = io.StringIO()
-        output.write('\ufeff')
-        writer = csv.writer(output)
-        writer.writerow(["Name", "Badge", "Role", "Base Salary (EGP)", "Days Present", "Days Late", "Days Absent", "Total Days", "Scheduled Hours", "Actual Hours", "Total Deductions (EGP)", "Net Pay (EGP)", "Deduction Details"])
         output.seek(0)
         return StreamingResponse(
             iter([output.getvalue()]),
@@ -325,13 +316,9 @@ def export_payroll_csv(
             headers={"Content-Disposition": f"attachment; filename=payroll_{date_from}_to_{date_to}.csv"}
         )
 
-    # 2. Get rosters for these users
     rosters = (
         db.query(GuardRoster)
-        .options(
-            joinedload(GuardRoster.shift).joinedload(Shift.site),
-            joinedload(GuardRoster.attendance_logs),
-        )
+        .options(joinedload(GuardRoster.shift).joinedload(Shift.site))
         .filter(GuardRoster.guard_id.in_(user_dict.keys()))
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
@@ -342,76 +329,113 @@ def export_payroll_csv(
     for roster in rosters:
         user_rosters[roster.guard_id].append(roster)
 
-    output = io.StringIO()
-    output.write('\ufeff')  # UTF-8 BOM for Excel
-    writer = csv.writer(output)
-    writer.writerow([
-        "Name", "Badge", "Role", "Base Salary (EGP)",
-        "Days Present", "Days Late", "Days Absent", "Total Days",
-        "Scheduled Hours", "Actual Hours",
-        "Total Deductions (EGP)", "Net Pay (EGP)", "Deduction Details",
-    ])
+    entries = (
+        db.query(DailyAttendanceEntry)
+        .filter(DailyAttendanceEntry.employee_id.in_(user_dict.keys()))
+        .filter(DailyAttendanceEntry.entry_date >= date_from)
+        .filter(DailyAttendanceEntry.entry_date <= date_to)
+        .all()
+    )
 
-    for user_id, user in user_dict.items():
-        user_roster_list = user_rosters[user_id]
+    user_entries: dict[str, list] = {u_id: [] for u_id in user_dict.keys()}
+    for entry in entries:
+        user_entries[entry.employee_id].append(entry)
+
+    # To get supervisor names for entries
+    sup_ids = {e.entered_by for e in entries}
+    supervisors = db.query(User).filter(User.user_id.in_(sup_ids)).all()
+    sup_dict = {s.user_id: s.name for s in supervisors}
+    
+    # To get site names
+    sites = db.query(Site).all()
+    site_dict = {s.site_id: s.name for s in sites}
+
+    for idx, (user_id, user) in enumerate(user_dict.items(), start=1):
+        r_list = user_rosters[user_id]
+        e_list = user_entries[user_id]
+        
         base_salary = getattr(user, "base_salary", None) or 0.0
+        daily_rate = round(base_salary / 30, 2) if base_salary else 0.0
 
-        total_scheduled = 0.0
-        total_actual = 0.0
-        days_present = 0
-        days_absent = 0
-        days_late = 0
-        all_deductions = []
+        days_excused = sum(1 for e in e_list if e.status == 'absence_excused')
+        days_unexcused = sum(1 for e in e_list if e.status == 'absence_unexcused')
+        days_present = sum(1 for e in e_list if e.status == 'present')
+        days_rest = sum(1 for e in e_list if e.status == 'rest')
+        days_rest_worked = sum(1 for e in e_list if e.status == 'rest_day_worked')
+        days_annual = sum(1 for e in e_list if e.status == 'annual_leave')
+        days_sick = sum(1 for e in e_list if e.status == 'sick_leave')
+        days_late = sum(1 for e in e_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
+        
+        overtime_hours = sum(e.overtime_hours for e in e_list)
+        advances = sum(e.advance_amount for e in e_list)
+        
+        # Site / Shift / Supervisor logic
+        primary_site = "N/A"
+        shift_label = "N/A"
+        if r_list:
+            if r_list[0].shift and r_list[0].shift.site:
+                primary_site = r_list[0].shift.site.name
+            shift_label = r_list[0].shift.label if r_list[0].shift else "N/A"
+        elif e_list:
+            primary_site = site_dict.get(e_list[-1].site_id, "N/A")
 
-        for roster in user_roster_list:
-            shift = roster.shift
-            site = shift.site if shift else None
-            logs = roster.attendance_logs or []
-            target_date = roster.assigned_date
+        primary_sup = "N/A"
+        if e_list:
+            primary_sup = sup_dict.get(e_list[-1].entered_by, "N/A")
 
-            start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
-            end_dt = datetime.combine(target_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
-            pings = (
-                db.query(GpsTrackingPing)
-                .filter(GpsTrackingPing.user_id == user_id)
-                .filter(GpsTrackingPing.roster_id == roster.roster_id)
-                .filter(GpsTrackingPing.recorded_at >= start_dt)
-                .filter(GpsTrackingPing.recorded_at < end_dt)
-                .order_by(GpsTrackingPing.recorded_at)
-                .all()
-            )
+        # Deductions
+        late_deduction = sum((e.late_minutes * LATE_DEDUCTION_PER_MINUTE) for e in e_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
+        absent_deduction = days_unexcused * ABSENT_DEDUCTION
+        total_deductions = round(late_deduction + absent_deduction, 2)
 
-            day_record = _compute_daily_record(user, roster, shift, site, logs, pings, target_date)
-            total_scheduled += day_record["scheduled_hours"]
-            total_actual += day_record["actual_hours"]
+        net_pay = round(base_salary - total_deductions - advances, 2)
 
-            if day_record["status"] == "present":
-                days_present += 1
-            elif day_record["status"] == "absent":
-                days_absent += 1
-            elif day_record["status"] == "late":
-                days_late += 1
-
-            for d in day_record["deductions"]:
-                all_deductions.append(f"{target_date}: {d['reason']} ({d['amount']})")
-
-        total_deductions = round(sum(d["amount"] for r in user_roster_list for d in _compute_daily_record(user, r, r.shift, r.shift.site if r.shift else None, r.attendance_logs or [], db.query(GpsTrackingPing).filter(GpsTrackingPing.user_id == user_id).filter(GpsTrackingPing.roster_id == r.roster_id).all(), r.assigned_date)["deductions"]), 2)
-        net_pay = round(base_salary - total_deductions, 2)
+        # 1. "الاكواد"
+        # 2. "مسلسل"
+        # 3. "التصنيف"
+        # 4. "توقيت\nالعمل"
+        # 5. "المشرف"
+        # 6. "مشروع"
+        # 7. "تاريخ \nالتعيين"
+        # 8. "الاســـــــــــــــــــــــــــــم"
+        # 9. "غياب \nباذن"
+        # 10. "غياب \nبدون"
+        # 11. "اضافى"
+        # 12. "بدل \nراحه"
+        # 13. "تاخير"
+        # 14. "خصم"
+        # 15. "راحة"
+        # 16. "اجازة \nمن \nالسنوي"
+        # 17. "اجازة\nمرضي"
+        # 18. "ايام \nالعمل \nالتشغيليه"
+        # 19. "الاجر\nاليومية"
+        # 20. "اجمالي الراتب"
+        # 21. "السلف"
+        hire_date_str = user.hire_date.strftime('%Y-%m-%d') if user.hire_date else "N/A"
+        role_str = user.role.value if hasattr(user.role, "value") else user.role
 
         writer.writerow([
-            user.name,
-            user.badge_number or "N/A",
-            user.role.value if hasattr(user.role, "value") else user.role,
-            base_salary,
-            days_present,
-            days_late,
-            days_absent,
-            len(user_roster_list),
-            round(total_scheduled, 2),
-            round(total_actual, 2),
-            total_deductions,
-            net_pay,
-            "; ".join(all_deductions) if all_deductions else "None",
+            user.badge_number or "N/A",  # الاكواد
+            idx,  # مسلسل
+            role_str,  # التصنيف
+            shift_label,  # توقيت العمل
+            primary_sup,  # المشرف
+            primary_site,  # مشروع
+            hire_date_str,  # تاريخ التعيين
+            user.name,  # الاسم
+            days_excused,  # غياب باذن
+            days_unexcused,  # غياب بدون
+            round(overtime_hours, 2),  # اضافى
+            days_rest_worked,  # بدل راحه
+            days_late,  # تاخير
+            total_deductions,  # خصم
+            days_rest,  # راحة
+            days_annual,  # اجازة سنوي
+            days_sick,  # اجازة مرضي
+            len(r_list) if len(r_list) > 0 else len(e_list),  # التشغيليه
+            daily_rate,  # الاجر اليومية
+            net_pay,  # اجمالي الراتب
+            advances  # السلف
         ])
 
     output.seek(0)
@@ -421,8 +445,6 @@ def export_payroll_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
-
-
 @router.put("/salary/{user_id}", summary="Update base salary")
 def update_salary(
     user_id: str,

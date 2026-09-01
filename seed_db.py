@@ -158,4 +158,9 @@ if __name__ == "__main__":
                     conn.execute(sa_text(f"ALTER TABLE attendance_logs ADD COLUMN {col_name} {col_def}"))
                     print(f"  Added attendance_logs.{col_name}")
 
-
+    if insp.has_table("daily_attendance_entries"):
+        existing_dae = {c["name"] for c in insp.get_columns("daily_attendance_entries")}
+        if "advance_amount" not in existing_dae:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE daily_attendance_entries ADD COLUMN advance_amount FLOAT DEFAULT 0"))
+                print("  Added daily_attendance_entries.advance_amount")

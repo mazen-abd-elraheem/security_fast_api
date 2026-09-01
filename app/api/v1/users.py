@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack Platform â€” User Routes
 Profile management, location updates, and user listing.
 """
@@ -47,7 +47,7 @@ def update_my_profile(
 def update_my_location(
     location: UserLocationUpdate,
     current_user: User = Depends(require_role(
-        UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR,
+        UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR, UserRole.OPERATIONS_MANAGER, UserRole.LEADER,
     )),
     db: Session = Depends(get_db),
 ):

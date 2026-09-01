@@ -31,6 +31,7 @@ class AttendanceEntryInput(BaseModel):
     overtime_hours: float = 0.0
     overtime_approved_by: Optional[str] = None
     excused_by: Optional[str] = None
+    advance_amount: float = 0.0
     note: Optional[str] = None
 
 
@@ -52,6 +53,7 @@ class AttendanceEntryResponse(BaseModel):
     overtime_approved: bool = False
     overtime_approved_by: Optional[str] = None
     excused_by: Optional[str] = None
+    advance_amount: float = 0.0
     note: Optional[str] = None
     locked: bool = False
     entered_by: str
@@ -193,6 +195,7 @@ def bulk_save_attendance(
             existing.overtime_hours = record.overtime_hours
             existing.overtime_approved_by = record.overtime_approved_by
             existing.excused_by = record.excused_by
+            existing.advance_amount = record.advance_amount
             existing.note = record.note
             existing.site_id = payload.site_id
             results.append({"employee_id": record.employee_id, "status": "updated", "id": existing.id})
@@ -207,6 +210,7 @@ def bulk_save_attendance(
                 overtime_hours=record.overtime_hours,
                 overtime_approved_by=record.overtime_approved_by,
                 excused_by=record.excused_by,
+                advance_amount=record.advance_amount,
                 note=record.note,
                 entered_by=current_user.user_id,
             )
