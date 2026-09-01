@@ -103,8 +103,7 @@ def personnel_create_user(
         "role": db_user.role,
         "employee_code": db_user.employee_code,
         "badge_number": db_user.badge_number,
-    }\n\n# Guard Site Assignment
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    }
 
 class AssignGuardRequest(BaseModel):
     guard_id: str
