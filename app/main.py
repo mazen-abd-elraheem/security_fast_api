@@ -1,5 +1,5 @@
 """
-SecureTrack Platform Ã¢â‚¬â€ Application Entry Point
+SecureTrack Platform  Application Entry Point
 FastAPI app with lifespan, middleware, global exception handler, and router registration.
 """
 import os
@@ -44,6 +44,7 @@ from app.api.v1 import (
     evaluations,
     accountant,
     leader_attendance,
+    travel_fees
 )
 
 settings = get_settings()
