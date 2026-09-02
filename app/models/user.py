@@ -1,5 +1,5 @@
 """
-SecureTrack Platform Ã¢â‚¬â€ User Model
+SecureTrack Platform User Model
 Centralized identity for Admins, Supervisors, Guards, Outdoor personnel, and Clients.
 """
 from sqlalchemy import Column, String, Float, DateTime, Boolean, Numeric, Index

@@ -2,7 +2,7 @@
 SecureTrack Platform — Site Model
 Physical locations requiring security coverage with geofence coordinates.
 """
-from sqlalchemy import Column, String, Float, Integer, DateTime
+from sqlalchemy import Column, String, Float, Integer, DateTime , Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
