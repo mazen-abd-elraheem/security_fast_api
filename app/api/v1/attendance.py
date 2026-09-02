@@ -1,7 +1,7 @@
 """
 SecureTrack Platform — Attendance Routes
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import date
@@ -667,3 +667,192 @@ def delete_attendance(
     db.delete(log)
     db.commit()
     return {"message": "Deleted successfully"}
+# -- Comprehensive Attendance Report --
+
+@router.get("/report", summary="Comprehensive Attendance Report")
+def get_attendance_report(
+    date_from: date = Query(..., description="Start date"),
+    date_to: date = Query(..., description="End date"),
+    site_id: str = Query(None, description="Filter by site ID"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy.orm import joinedload
+    from app.models.daily_attendance_entry import DailyAttendanceEntry
+    from app.api.v1.payroll import LATE_THRESHOLD_MINUTES, LATE_DEDUCTION_PER_MINUTE, ABSENT_DEDUCTION
+
+    users_query = db.query(User).filter(User.is_active == True)
+    users = users_query.all()
+    user_dict = {u.user_id: u for u in users}
+
+    rosters = (
+        db.query(GuardRoster)
+        .options(joinedload(GuardRoster.shift).joinedload(Shift.site))
+        .filter(GuardRoster.guard_id.in_(user_dict.keys()))
+        .filter(GuardRoster.assigned_date >= date_from)
+        .filter(GuardRoster.assigned_date <= date_to)
+        .all()
+    )
+
+    user_rosters = {u_id: [] for u_id in user_dict.keys()}
+    for roster in rosters:
+        user_rosters[roster.guard_id].append(roster)
+
+    entries = (
+        db.query(DailyAttendanceEntry)
+        .filter(DailyAttendanceEntry.employee_id.in_(user_dict.keys()))
+        .filter(DailyAttendanceEntry.entry_date >= date_from)
+        .filter(DailyAttendanceEntry.entry_date <= date_to)
+        .all()
+    )
+
+    user_entries = {u_id: [] for u_id in user_dict.keys()}
+    for entry in entries:
+        user_entries[entry.employee_id].append(entry)
+
+    employees = []
+    serial = 1
+    for user_id, user in user_dict.items():
+        user_roster_list = user_rosters[user_id]
+        user_entry_list = user_entries[user_id]
+        
+        # If site filter is provided, skip users not assigned to this site in this period
+        if site_id:
+            user_sites = {r.shift.site_id for r in user_roster_list if r.shift}
+            if site_id not in user_sites:
+                continue
+
+        # Get latest roster for shift/site/supervisor info
+        latest_roster = None
+        if user_roster_list:
+            latest_roster = sorted(user_roster_list, key=lambda r: r.assigned_date)[-1]
+            
+        shift_label = latest_roster.shift.label if latest_roster and latest_roster.shift else "N/A"
+        site_name = latest_roster.shift.site.name if latest_roster and latest_roster.shift and latest_roster.shift.site else "N/A"
+        supervisor_name = "N/A" # Supervisors aren't directly on GuardRoster, but site managers or roll callers are.
+
+        # Aggregate counts
+        days_present = sum(1 for e in user_entry_list if e.status == 'present')
+        days_absent_excused = sum(1 for e in user_entry_list if e.status == 'absence_excused')
+        days_absent_unexcused = sum(1 for e in user_entry_list if e.status == 'absence_unexcused')
+        days_annual_leave = sum(1 for e in user_entry_list if e.status == 'annual_leave')
+        days_sick_leave = sum(1 for e in user_entry_list if e.status == 'sick_leave')
+        days_rest = sum(1 for e in user_entry_list if e.status == 'rest')
+        days_rest_worked = sum(1 for e in user_entry_list if e.status == 'rest_day_worked')
+        
+        late_count = sum(1 for e in user_entry_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
+        total_overtime_hours = sum(e.overtime_hours for e in user_entry_list)
+        
+        # Calculate deduction money
+        late_deduction = sum((e.late_minutes * LATE_DEDUCTION_PER_MINUTE) for e in user_entry_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
+        absent_deduction = days_absent_unexcused * ABSENT_DEDUCTION
+        total_deduction_money = round(late_deduction + absent_deduction, 2)
+
+        # Leave date logic
+        leave_date = ""
+        if not user.is_active and user.updated_at:
+            leave_date = user.updated_at.strftime("%Y-%m-%d")
+
+        employees.append({
+            "serial": serial,
+            "badge_number": user.employee_code or user.badge_number or "",
+            "classification": user.classification or "",
+            "shift_label": shift_label,
+            "supervisor": supervisor_name,
+            "site_name": site_name,
+            "hire_date": user.hire_date.strftime("%Y-%m-%d") if user.hire_date else "",
+            "leave_date": leave_date,
+            "name": user.name,
+            "absence_excused": days_absent_excused,
+            "absence_unexcused": days_absent_unexcused,
+            "overtime_hours": total_overtime_hours,
+            "rest_day_worked": days_rest_worked,
+            "late_count": late_count,
+            "deductions": total_deduction_money,
+            "rest_days": days_rest,
+            "annual_leave": days_annual_leave,
+            "sick_leave": days_sick_leave,
+            "days_present": days_present,
+            "user_id": user.user_id,
+        })
+        serial += 1
+
+    return {
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "employees": employees
+    }
+
+
+@router.get("/export-report", summary="Export comprehensive attendance report as CSV")
+def export_attendance_report(
+    date_from: date = Query(..., description="Start date"),
+    date_to: date = Query(..., description="End date"),
+    site_id: str = Query(None, description="Filter by site ID"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    import io
+    import csv
+    from fastapi.responses import StreamingResponse
+    
+    report = get_attendance_report(date_from=date_from, date_to=date_to, site_id=site_id, current_user=current_user, db=db)
+    employees = report["employees"]
+
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    
+    headers = [
+        "الاكواد",
+        "مسلسل",
+        "التصنيف",
+        "توقيت العمل",
+        "المشرف",
+        "مشروع",
+        "تاريخ التعيين",
+        "تاريخ ترك العمل",
+        "الاســـــــــــــــــــــــــــــم",
+        "غياب باذن",
+        "غياب بدون",
+        "اضافى",
+        "بدل راحه",
+        "تاخير",
+        "خصم",
+        "راحة",
+        "اجازة من السنوي",
+        "اجازة مرضي",
+        "ايام العمل التشغيليه"
+    ]
+    writer.writerow(headers)
+    
+    for emp in employees:
+        writer.writerow([
+            emp["badge_number"],
+            emp["serial"],
+            emp["classification"],
+            emp["shift_label"],
+            emp["supervisor"],
+            emp["site_name"],
+            emp["hire_date"],
+            emp["leave_date"],
+            emp["name"],
+            emp["absence_excused"],
+            emp["absence_unexcused"],
+            emp["overtime_hours"],
+            emp["rest_day_worked"],
+            emp["late_count"],
+            emp["deductions"],
+            emp["rest_days"],
+            emp["annual_leave"],
+            emp["sick_leave"],
+            emp["days_present"]
+        ])
+        
+    output.seek(0)
+    filename = f"attendance_report_{date_from.isoformat()}_to_{date_to.isoformat()}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
