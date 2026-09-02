@@ -20,6 +20,8 @@ from app.models.site import Site
 from app.models.attendance_log import AttendanceLog
 from app.models.gps_tracking_ping import GpsTrackingPing
 from app.models.daily_attendance_entry import DailyAttendanceEntry
+from app.models.supervisor_visit import SupervisorVisit
+from app.models.travel_fee import TravelFee
 from app.enums import UserRole
 from app.api.v1.tracking import compute_presence_hours_from_pings
 
@@ -300,7 +302,7 @@ def export_payroll_csv(
         "تاريخ \nالتعيين", "الاســـــــــــــــــــــــــــــم", "غياب \nباذن", 
         "غياب \nبدون", "اضافى", "بدل \nراحه", "تاخير", "خصم", "راحة", 
         "اجازة \nمن \nالسنوي", "اجازة\nمرضي", "ايام \nالعمل \nالتشغيليه", 
-        "الاجر\nاليومية", "اجمالي الراتب", "السلف"
+        "الاجر\nاليومية", "بدل \nانتقالات", "اجمالي الراتب", "السلف"
     ]
 
     output = io.StringIO()
@@ -349,6 +351,12 @@ def export_payroll_csv(
     # To get site names
     sites = db.query(Site).all()
     site_dict = {s.site_id: s.name for s in sites}
+    
+    # Pre-fetch Base site and Travel Fees for calculation
+    base_site = next((s for s in sites if getattr(s, 'is_base', False)), None)
+    base_site_name = base_site.name if base_site else "Base"
+    travel_fees = db.query(TravelFee).filter(TravelFee.is_active == True).all()
+    travel_fee_map = {(tf.from_site_name.lower(), tf.to_site_name.lower()): float(tf.amount) for tf in travel_fees}
 
     for idx, (user_id, user) in enumerate(user_dict.items(), start=1):
         r_list = user_rosters[user_id]
@@ -388,7 +396,40 @@ def export_payroll_csv(
         absent_deduction = days_unexcused * ABSENT_DEDUCTION
         total_deductions = round(late_deduction + absent_deduction, 2)
 
-        net_pay = round(base_salary - total_deductions - advances, 2)
+        travel_allowance = 0.0
+        role_str = user.role.value if hasattr(user.role, "value") else user.role
+        if role_str in ['supervisor', 'leader']:
+            visits = (
+                db.query(SupervisorVisit)
+                .options(joinedload(SupervisorVisit.site))
+                .filter(
+                    SupervisorVisit.supervisor_id == user.user_id,
+                    SupervisorVisit.check_in_time >= datetime.combine(date_from, datetime.min.time()),
+                    SupervisorVisit.check_in_time <= datetime.combine(date_to, datetime.max.time()),
+                    SupervisorVisit.is_verified == True
+                )
+                .order_by(SupervisorVisit.check_in_time.asc())
+                .all()
+            )
+            visits_by_date = {}
+            for v in visits:
+                d = v.check_in_time.date()
+                if d not in visits_by_date:
+                    visits_by_date[d] = []
+                visits_by_date[d].append(v)
+            for d, daily_visits in visits_by_date.items():
+                if not daily_visits:
+                    continue
+                first_site = daily_visits[0].site.name
+                travel_allowance += travel_fee_map.get((base_site_name.lower(), first_site.lower()), 0.0)
+                for i in range(1, len(daily_visits)):
+                    from_s = daily_visits[i-1].site.name
+                    to_s = daily_visits[i].site.name
+                    travel_allowance += travel_fee_map.get((from_s.lower(), to_s.lower()), 0.0)
+                last_site = daily_visits[-1].site.name
+                travel_allowance += travel_fee_map.get((last_site.lower(), base_site_name.lower()), 0.0)
+                
+        net_pay = round(base_salary + travel_allowance - total_deductions - advances, 2)
 
         # 1. "الاكواد"
         # 2. "مسلسل"
@@ -412,7 +453,6 @@ def export_payroll_csv(
         # 20. "اجمالي الراتب"
         # 21. "السلف"
         hire_date_str = user.hire_date.strftime('%Y-%m-%d') if user.hire_date else "N/A"
-        role_str = user.role.value if hasattr(user.role, "value") else user.role
 
         writer.writerow([
             user.badge_number or "N/A",  # الاكواد
@@ -434,6 +474,7 @@ def export_payroll_csv(
             days_sick,  # اجازة مرضي
             len(r_list) if len(r_list) > 0 else len(e_list),  # التشغيليه
             daily_rate,  # الاجر اليومية
+            round(travel_allowance, 2),  # بدل انتقالات
             net_pay,  # اجمالي الراتب
             advances  # السلف
         ])
