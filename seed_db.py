@@ -63,6 +63,7 @@ def _run_seed_migrations():
     except Exception as e:
         print(f"Seed migration check: {e}")
 
+    # ── Cash Advances table: add ops_manager and CEO columns ──
     if insp.has_table("cash_advances"):
         existing = {c["name"] for c in insp.get_columns("cash_advances")}
         ca_new = {
@@ -79,19 +80,7 @@ def _run_seed_migrations():
                     conn.execute(sa_text(f"ALTER TABLE cash_advances ADD COLUMN {col_name} {col_def}"))
                     print(f"  [migration] cash_advances.{col_name} added")
 
-    if insp.has_table("sites"):
-        existing = {c["name"] for c in insp.get_columns("sites")}
-        if "is_base" not in existing:
-            with engine.begin() as conn:
-                conn.execute(sa_text("ALTER TABLE sites ADD COLUMN is_base BOOLEAN NOT NULL DEFAULT 0"))
-                print("  [migration] sites.is_base added")
 
-    if insp.has_table("monthly_payroll"):
-        existing = {c["name"] for c in insp.get_columns("monthly_payroll")}
-        if "travel_allowance" not in existing:
-            with engine.begin() as conn:
-                conn.execute(sa_text("ALTER TABLE monthly_payroll ADD COLUMN travel_allowance FLOAT NOT NULL DEFAULT 0"))
-                print("  [migration] monthly_payroll.travel_allowance added")
 
 def seed():
     Base.metadata.create_all(bind=engine)

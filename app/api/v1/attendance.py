@@ -252,22 +252,7 @@ def supervisor_attendance_dashboard(
 
 
 
-@router.get("/report", response_model=AttendanceReportResponse, summary="Attendance report")
-def get_attendance_report(
-    site_id: Optional[str] = Query(None),
-    date_from: date = Query(...),
-    date_to: date = Query(...),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
-    db: Session = Depends(get_db),
-):
-    """Generate attendance summary report for a date range."""
-    summary = AttendanceService.get_attendance_summary(db, site_id, date_from, date_to)
-    return AttendanceReportResponse(
-        site_id=site_id,
-        date_from=date_from,
-        date_to=date_to,
-        **summary,
-    )
+
 
 
 # -- Guard Auto Check-in --
@@ -681,7 +666,7 @@ def get_attendance_report(
     from app.models.daily_attendance_entry import DailyAttendanceEntry
     from app.api.v1.payroll import LATE_THRESHOLD_MINUTES, LATE_DEDUCTION_PER_MINUTE, ABSENT_DEDUCTION
 
-    users_query = db.query(User).filter(User.is_active == True)
+    users_query = db.query(User)
     users = users_query.all()
     user_dict = {u.user_id: u for u in users}
 
