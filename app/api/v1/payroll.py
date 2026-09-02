@@ -452,7 +452,7 @@ def export_payroll_csv(
         # 19. "الاجر\nاليومية"
         # 20. "اجمالي الراتب"
         # 21. "السلف"
-        hire_date_str = user.hire_date.strftime('%Y-%m-%d') if user.hire_date else "N/A"
+        hire_date_str = user.hire_date.strftime('%Y-%m-%d') if user.hire_date else (user.created_at.strftime('%Y-%m-%d') if user.created_at else "N/A")
 
         writer.writerow([
             user.badge_number or "N/A",  # الاكواد
