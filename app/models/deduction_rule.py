@@ -29,6 +29,9 @@ class DeductionRule(Base):
     # Whether this is a deduction (negative) or bonus (positive)
     is_bonus = Column(Boolean, nullable=False, default=False)
 
+    # If true, the `amount` field represents number of days to multiply by the user's daily rate
+    is_days_multiplier = Column(Boolean, nullable=False, default=False)
+
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),

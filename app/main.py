@@ -121,6 +121,17 @@ def _run_auto_migrations():
                         logger.info("Added expiry_date to guard_documents")
                     except Exception:
                         pass
+        
+        # deduction_rules.is_days_multiplier
+        if insp.has_table("deduction_rules"):
+            existing = {c["name"] for c in insp.get_columns("deduction_rules")}
+            if "is_days_multiplier" not in existing:
+                with engine.begin() as conn:
+                    try:
+                        conn.execute(sa_text("ALTER TABLE deduction_rules ADD COLUMN is_days_multiplier BOOLEAN NOT NULL DEFAULT FALSE"))
+                        logger.info("Added is_days_multiplier to deduction_rules")
+                    except Exception:
+                        pass
 
     except Exception as e:
         logger.warning(f"Ã¢Å¡Â  Auto-migration check failed: {e}")

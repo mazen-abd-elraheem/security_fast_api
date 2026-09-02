@@ -29,6 +29,9 @@ class Site(Base):
     # Status: active, inactive, maintenance
     status = Column(String(20), nullable=False, default="active")
 
+    # Base identifier for supervisor travel fees calculation
+    is_base = Column(Boolean, nullable=False, default=False)
+
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),

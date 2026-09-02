@@ -78,6 +78,7 @@ DEFAULT_RULES = [
         "threshold_minutes": 0,
         "is_active": True,
         "is_bonus": False,
+        "is_days_multiplier": False,
     },
 ]
 
@@ -106,6 +107,7 @@ class RuleUpdate(BaseModel):
     threshold_minutes: Optional[int] = None
     is_active: Optional[bool] = None
     is_bonus: Optional[bool] = None
+    is_days_multiplier: Optional[bool] = None
 
 
 class RuleCreate(BaseModel):
@@ -117,6 +119,7 @@ class RuleCreate(BaseModel):
     threshold_minutes: int = 0
     is_active: bool = True
     is_bonus: bool = False
+    is_days_multiplier: bool = False
 
 
 # ── Endpoints ──

@@ -26,6 +26,9 @@ from app.models.monthly_payroll import MonthlyPayroll
 from app.models.cash_advance import CashAdvance
 from app.models.leave_request import LeaveRequest
 from app.models.deduction_rule import DeductionRule
+from app.models.supervisor_visit import SupervisorVisit
+from app.models.travel_fee import TravelFee
+from app.models.site import Site
 from app.enums import UserRole
 
 router = APIRouter()
@@ -214,11 +217,19 @@ def generate_monthly_payroll(
     date_from = date(year, month, 1)
     date_to = date(year, month, days_in_month)
 
-    # Get all guards/outdoor users
+    # Get all guards/outdoor users, and supervisors/leaders
     employees = db.query(User).filter(
-        User.role.in_(['guard', 'outdoor']),
+        User.role.in_(['guard', 'outdoor', 'supervisor', 'leader']),
         User.is_active == True,
     ).all()
+
+    # Fetch Base site
+    base_site = db.query(Site).filter(Site.is_base == True).first()
+    base_site_name = base_site.name if base_site else "Base"
+
+    # Fetch all active Travel Fees
+    travel_fees = db.query(TravelFee).filter(TravelFee.is_active == True).all()
+    travel_fee_map = {(tf.from_site_name.lower(), tf.to_site_name.lower()): float(tf.amount) for tf in travel_fees}
 
     # Get salary configs for lookup
     salary_configs = {
@@ -308,14 +319,22 @@ def generate_monthly_payroll(
         # Deductions
         absence_ded = 0.0
         if absent_deduction_amount:
-            absence_ded = round(days_absent * absent_deduction_amount.amount, 2)
+            if getattr(absent_deduction_amount, 'is_days_multiplier', False):
+                absence_ded = round(days_absent * absent_deduction_amount.amount * daily_rate, 2)
+            else:
+                absence_ded = round(days_absent * absent_deduction_amount.amount, 2)
         else:
             absence_ded = round(days_absent * 200.0, 2)  # Default 200 EGP per absent day
 
         late_ded = 0.0
-        if late_deduction_rule and late_deduction_rule.is_per_minute:
-            # Estimate: each late day = 30 min average late
-            late_ded = round(days_late * 30 * late_deduction_rule.amount, 2)
+        if late_deduction_rule:
+            if getattr(late_deduction_rule, 'is_days_multiplier', False):
+                late_ded = round(days_late * late_deduction_rule.amount * daily_rate, 2)
+            elif late_deduction_rule.is_per_minute:
+                # Estimate: each late day = 30 min average late
+                late_ded = round(days_late * 30 * late_deduction_rule.amount, 2)
+            else:
+                late_ded = round(days_late * late_deduction_rule.amount, 2)
         else:
             late_ded = round(days_late * 50.0, 2)  # Default flat 50 EGP per late day
 
@@ -324,7 +343,47 @@ def generate_monthly_payroll(
         tax_ded = calculate_monthly_tax(gross)
 
         total_deductions = round(absence_ded + late_ded + advance_ded + insurance_ded + tax_ded, 2)
-        total_additions = round(incentive, 2)
+
+        travel_allowance = 0.0
+        if emp.role in ['supervisor', 'leader']:
+            visits = (
+                db.query(SupervisorVisit)
+                .options(joinedload(SupervisorVisit.site))
+                .filter(
+                    SupervisorVisit.supervisor_id == emp.user_id,
+                    SupervisorVisit.check_in_time >= datetime.combine(date_from, datetime.min.time()),
+                    SupervisorVisit.check_in_time <= datetime.combine(date_to, datetime.max.time()),
+                    SupervisorVisit.is_verified == True
+                )
+                .order_by(SupervisorVisit.check_in_time.asc())
+                .all()
+            )
+            
+            visits_by_date = {}
+            for v in visits:
+                d = v.check_in_time.date()
+                if d not in visits_by_date:
+                    visits_by_date[d] = []
+                visits_by_date[d].append(v)
+                
+            for d, daily_visits in visits_by_date.items():
+                if not daily_visits:
+                    continue
+                # Leg 1: Base -> First site
+                first_site = daily_visits[0].site.name
+                travel_allowance += travel_fee_map.get((base_site_name.lower(), first_site.lower()), 0.0)
+                
+                # Intermediate legs
+                for i in range(1, len(daily_visits)):
+                    from_s = daily_visits[i-1].site.name
+                    to_s = daily_visits[i].site.name
+                    travel_allowance += travel_fee_map.get((from_s.lower(), to_s.lower()), 0.0)
+                    
+                # Final leg: Last site -> Base
+                last_site = daily_visits[-1].site.name
+                travel_allowance += travel_fee_map.get((last_site.lower(), base_site_name.lower()), 0.0)
+
+        total_additions = round(incentive + travel_allowance, 2)
         net_salary = round(gross + total_additions - total_deductions, 2)
 
         payroll = MonthlyPayroll(
@@ -352,6 +411,7 @@ def generate_monthly_payroll(
             tax_deduction=tax_ded,
             total_deductions=total_deductions,
             incentive=incentive,
+            travel_allowance=round(travel_allowance, 2),
             total_additions=total_additions,
             net_salary=net_salary,
         )

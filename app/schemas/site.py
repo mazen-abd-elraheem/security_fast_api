@@ -17,6 +17,7 @@ class SiteCreate(BaseModel):
     longitude: float = Field(..., ge=-180, le=180)
     radius_meters: int = Field(100, ge=10, le=5000, description="Geofence radius in meters")
     region: Optional[str] = Field(None, max_length=100)
+    is_base: bool = False
 
 
 class SiteUpdate(BaseModel):
@@ -27,6 +28,7 @@ class SiteUpdate(BaseModel):
     radius_meters: Optional[int] = Field(None, ge=10, le=5000)
     region: Optional[str] = Field(None, max_length=100)
     status: Optional[SiteStatus] = None
+    is_base: Optional[bool] = None
 
 
 # --- Output Schemas ---
@@ -40,6 +42,7 @@ class SiteResponse(BaseModel):
     radius_meters: int
     region: Optional[str] = None
     status: str
+    is_base: bool
     created_at: datetime
     updated_at: datetime
 

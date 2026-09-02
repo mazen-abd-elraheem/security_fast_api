@@ -52,6 +52,7 @@ class MonthlyPayroll(Base):
     incentive = Column(Float, nullable=False, default=0.0)
     bonus = Column(Float, nullable=False, default=0.0)
     overtime_pay = Column(Float, nullable=False, default=0.0)
+    travel_allowance = Column(Float, nullable=False, default=0.0)
     total_additions = Column(Float, nullable=False, default=0.0)
 
     # Final
