@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack Platform â€” User Schemas (Pydantic v2)
 """
 import re
@@ -89,6 +89,7 @@ class AdminUserUpdate(BaseModel):
     new_password: Optional[str] = Field(None, min_length=6, max_length=128)
     is_active: Optional[bool] = None
     bank_account: Optional[str] = Field(None, max_length=100)
+    base_salary: Optional[float] = None
     transfer_name: Optional[str] = Field(None, max_length=255)
     transfer_method: Optional[str] = Field(None, max_length=100)
 

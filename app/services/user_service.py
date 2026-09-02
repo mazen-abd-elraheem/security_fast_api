@@ -165,6 +165,10 @@ class UserService:
             user.password_hash = hash_password(update_data.new_password)
         if update_data.is_active is not None:
             user.is_active = update_data.is_active
+        if update_data.bank_account is not None:
+            user.bank_account = update_data.bank_account
+        if update_data.base_salary is not None:
+            user.base_salary = update_data.base_salary
 
         db.commit()
         db.refresh(user)
