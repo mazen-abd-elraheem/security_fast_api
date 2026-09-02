@@ -249,6 +249,7 @@ def get_payroll_report(
             "name": user.name,
             "role": user.role.value if hasattr(user.role, "value") else user.role,
             "badge_number": user.badge_number,
+            "bank_account": getattr(user, "bank_account", "") or "",
             "base_salary": base_salary,
             "days_present": days_present,
             "days_absent": days_absent_unexcused + days_absent_excused,
@@ -486,6 +487,125 @@ def export_payroll_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+@router.get("/export-bank", summary="Export Bank Payroll as CSV")
+def export_bank_payroll_csv(
+    date_from: date = Query(..., description="Start date"),
+    date_to: date = Query(..., description="End date"),
+    role_filter: Optional[str] = Query(None),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    """Export Bank Payroll report as CSV."""
+    users_query = db.query(User).filter(User.is_active == True)
+    if role_filter and role_filter != "all":
+        users_query = users_query.filter(User.role == role_filter)
+    else:
+        users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
+    
+    users = users_query.all()
+    user_dict = {u.user_id: u for u in users}
+
+    # As requested by the user:
+    headers = ["الكود", "الاسم", "رقم الحساب", "المبلغ"]
+
+    output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM
+    writer = csv.writer(output)
+    writer.writerow(headers)
+
+    if not users:
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=bank_payroll_{date_from}_to_{date_to}.csv"}
+        )
+
+    entries = (
+        db.query(DailyAttendanceEntry)
+        .filter(DailyAttendanceEntry.employee_id.in_(user_dict.keys()))
+        .filter(DailyAttendanceEntry.entry_date >= date_from)
+        .filter(DailyAttendanceEntry.entry_date <= date_to)
+        .all()
+    )
+
+    user_entries: dict[str, list] = {u_id: [] for u_id in user_dict.keys()}
+    for entry in entries:
+        user_entries[entry.employee_id].append(entry)
+
+    sites = db.query(Site).all()
+    base_site = next((s for s in sites if getattr(s, 'is_base', False)), None)
+    base_site_name = base_site.name if base_site else "Base"
+    travel_fees = db.query(TravelFee).filter(TravelFee.is_active == True).all()
+    travel_fee_map = {(tf.from_site_name.lower(), tf.to_site_name.lower()): float(tf.amount) for tf in travel_fees}
+
+    total_sum = 0.0
+
+    for user_id, user in user_dict.items():
+        e_list = user_entries[user_id]
+        
+        base_salary = getattr(user, "base_salary", None) or 0.0
+        days_unexcused = sum(1 for e in e_list if e.status == 'absence_unexcused')
+        advances = sum(e.advance_amount for e in e_list)
+        
+        late_deduction = sum((e.late_minutes * LATE_DEDUCTION_PER_MINUTE) for e in e_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
+        absent_deduction = days_unexcused * ABSENT_DEDUCTION
+        total_deductions = round(late_deduction + absent_deduction, 2)
+
+        travel_allowance = 0.0
+        role_str = user.role.value if hasattr(user.role, "value") else user.role
+        if role_str in ['supervisor', 'leader']:
+            visits = (
+                db.query(SupervisorVisit)
+                .options(joinedload(SupervisorVisit.site))
+                .filter(
+                    SupervisorVisit.supervisor_id == user.user_id,
+                    SupervisorVisit.check_in_time >= datetime.combine(date_from, datetime.min.time()),
+                    SupervisorVisit.check_in_time <= datetime.combine(date_to, datetime.max.time()),
+                    SupervisorVisit.is_verified == True
+                )
+                .order_by(SupervisorVisit.check_in_time.asc())
+                .all()
+            )
+            visits_by_date = {}
+            for v in visits:
+                d = v.check_in_time.date()
+                if d not in visits_by_date:
+                    visits_by_date[d] = []
+                visits_by_date[d].append(v)
+            for d, daily_visits in visits_by_date.items():
+                if not daily_visits:
+                    continue
+                first_site = daily_visits[0].site.name
+                travel_allowance += travel_fee_map.get((base_site_name.lower(), first_site.lower()), 0.0)
+                for i in range(1, len(daily_visits)):
+                    from_s = daily_visits[i-1].site.name
+                    to_s = daily_visits[i].site.name
+                    travel_allowance += travel_fee_map.get((from_s.lower(), to_s.lower()), 0.0)
+                last_site = daily_visits[-1].site.name
+                travel_allowance += travel_fee_map.get((last_site.lower(), base_site_name.lower()), 0.0)
+                
+        net_pay = round(base_salary + travel_allowance - total_deductions - advances, 2)
+        total_sum += net_pay
+
+        writer.writerow([
+            user.badge_number or "N/A",  # الكود
+            user.name,  # الاسم
+            getattr(user, "bank_account", "") or "",  # رقم الحساب
+            net_pay  # المبلغ
+        ])
+
+    # Footer row
+    writer.writerow(["", "", "اجمالي المرتبات", round(total_sum, 2)])
+
+    output.seek(0)
+    filename = f"bank_payroll_{date_from.isoformat()}_to_{date_to.isoformat()}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 @router.put("/salary/{user_id}", summary="Update base salary")
 def update_salary(
     user_id: str,
@@ -506,4 +626,26 @@ def update_salary(
         "detail": f"Salary updated to {base_salary} EGP",
         "user_id": user_id,
         "base_salary": base_salary,
+    }
+
+@router.put("/bank-account/{user_id}", summary="Update bank account number")
+def update_bank_account(
+    user_id: str,
+    bank_account: str = Query(..., description="New bank account number"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    """Update a user's bank account number."""
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.bank_account = bank_account
+    db.commit()
+
+    return {
+        "detail": "Bank account updated successfully",
+        "user_id": user_id,
+        "bank_account": bank_account,
     }
