@@ -741,11 +741,11 @@ def get_attendance_report(
         employees.append({
             "serial": serial,
             "badge_number": user.employee_code or user.badge_number or "",
-            "classification": user.classification or "",
+            "classification": user.role or "",
             "shift_label": shift_label,
             "supervisor": supervisor_name,
             "site_name": site_name,
-            "hire_date": user.hire_date.strftime("%Y-%m-%d") if user.hire_date else "",
+            "hire_date": user.created_at.strftime("%Y-%m-%d") if user.created_at else "",
             "leave_date": leave_date,
             "name": user.name,
             "absence_excused": days_absent_excused,
