@@ -1,30 +1,38 @@
 version: '3.8'
 
 # =========================================================
-# Sanaie Platform — Production Docker Compose
+# SecureTrack Platform — Production Docker Compose
 # Usage: docker compose -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   1. Copy .env.example to .env and fill in all values
+#   2. Place SSL certs at the paths specified in .env
+#   3. Update nginx/nginx.conf with your domain
 # =========================================================
 
 services:
   db:
     image: mysql:8.0
-    container_name: sanaie-mysql
+    container_name: securetrack-mysql
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: sanaie_db
-      MYSQL_USER: sanaie_user
+      MYSQL_DATABASE: securetrack_db
+      MYSQL_USER: securetrack_user
       MYSQL_PASSWORD: ${DB_PASSWORD}
       MYSQL_CHARACTER_SET_SERVER: utf8mb4
       MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
     volumes:
       - mysql_data:/var/lib/mysql
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    # NO external port exposure — only accessible from internal Docker network
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -34,21 +42,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: sanaie-api
+    container_name: securetrack-api
     restart: always
+    # Bind only to localhost — Nginx handles public traffic
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      DATABASE_URL: mysql+pymysql://sanaie_user:${DB_PASSWORD}@db:3306/sanaie_db
+      DATABASE_URL: mysql+pymysql://securetrack_user:${DB_PASSWORD}@db:3306/securetrack_db
       SECRET_KEY: ${SECRET_KEY}
       ALGORITHM: ${ALGORITHM:-HS256}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
       ENVIRONMENT: production
       DEBUG: "False"
       UPLOAD_DIR: /app/uploaded_images
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-10}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["https://api.sanaie.com"]}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
     volumes:
       - uploads:/app/uploaded_images
@@ -61,13 +70,39 @@ services:
       timeout: 10s
       start_period: 20s
       retries: 3
+    networks:
+      - backend
     deploy:
       resources:
         limits:
           memory: 512M
+
+  nginx:
+    image: nginx:alpine
+    container_name: securetrack-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${SSL_CERT_PATH}:/etc/nginx/ssl/fullchain.pem:ro
+      - ${SSL_KEY_PATH}:/etc/nginx/ssl/privkey.pem:ro
+    depends_on:
+      - api
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
 volumes:
   mysql_data:
     driver: local
   uploads:
     driver: local
+
+networks:
+  backend:
+    driver: bridge

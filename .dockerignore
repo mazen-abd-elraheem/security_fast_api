@@ -1,0 +1,47 @@
+# Build artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Version control
+.git/
+.gitignore
+
+# Database files (NEVER ship local DBs into the image)
+*.db
+*.sqlite3
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files (secrets — NEVER bake into image)
+.env
+.env.*
+
+# Docs & scripts not needed at runtime
+*.md
+LICENSE
+tests/
+scripts/
+implementation_plan.md
+task.md
+walkthrough.md
+
+# Local migration scripts
+migrate_*.py
+fix.py
+test_*.py
+
+# Uploaded images (mounted as volume, not baked in)
+uploaded_images/
+
+# Flutter app (not needed in backend image)
+securetrack_app/
+
+# Misc
+incidents_dump.json
