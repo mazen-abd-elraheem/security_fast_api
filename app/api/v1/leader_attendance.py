@@ -306,7 +306,7 @@ def get_monthly_summary(
 
     # 3) Get holidays for this month
     from app.models.accountant_models import Holiday, EmployeeBonus
-from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
+    from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
     holidays = db.query(Holiday).filter(
         Holiday.date >= date_from,
         Holiday.date <= date_to,

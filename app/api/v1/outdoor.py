@@ -110,7 +110,7 @@ def outdoor_checkin(
         }
     except Exception as e:
         import traceback
-from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
+        from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
         return {"status": "error", "detail": str(e), "trace": traceback.format_exc()}
 
 

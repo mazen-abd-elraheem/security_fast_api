@@ -655,11 +655,10 @@ def get_my_slip(
     db: Session = Depends(get_db),
 ):
     """Guard views their own salary slip for a given month."""
-    from app.models.payroll import PayrollEntry
-    entry = db.query(PayrollEntry).filter(
-        PayrollEntry.user_id == current_user.user_id,
-        PayrollEntry.year == year,
-        PayrollEntry.month == month,
+    entry = db.query(MonthlyPayroll).filter(
+        MonthlyPayroll.user_id == current_user.user_id,
+        MonthlyPayroll.year == year,
+        MonthlyPayroll.month == month,
     ).first()
     if not entry:
         raise HTTPException(status_code=404, detail="No payroll data found for this month")
@@ -669,14 +668,14 @@ def get_my_slip(
         "month": entry.month,
         "month_name": ["", "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][entry.month],
         "base_salary": entry.base_salary,
-        "allowances": getattr(entry, 'allowances', 0) or 0,
-        "overtime_pay": getattr(entry, 'overtime_pay', 0) or 0,
+        "allowances": getattr(entry, 'total_additions', 0) or 0,
+        "overtime_pay": 0,
         "gross_salary": entry.gross_salary,
-        "tax": entry.tax,
-        "insurance": entry.insurance,
-        "absence_deductions": entry.absence_deductions,
-        "late_deductions": entry.late_deductions,
-        "advance_deductions": getattr(entry, 'advance_deductions', 0) or 0,
+        "tax": entry.tax_deduction,
+        "insurance": entry.insurance_deduction,
+        "absence_deductions": entry.absence_deduction,
+        "late_deductions": entry.late_deduction,
+        "advance_deductions": entry.advance_deduction,
         "total_deductions": entry.total_deductions,
         "net_salary": entry.net_salary,
     }
@@ -814,7 +813,7 @@ def get_payroll_sheet(
         supervisor_name = ''
         try:
             from app.models.shift import Shift as ShiftModel
-from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
+            from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
             sup_route = db.query(SupervisorRoute).join(
                 ShiftModel, SupervisorRoute.site_id == ShiftModel.site_id
             ).join(

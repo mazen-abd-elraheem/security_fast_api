@@ -639,7 +639,7 @@ def update_bank_account(
     user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
         from fastapi import HTTPException
-from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
+        from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
         raise HTTPException(status_code=404, detail="User not found")
 
     user.bank_account = bank_account

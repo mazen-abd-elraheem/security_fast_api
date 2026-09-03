@@ -163,6 +163,6 @@ def serve_photo_file(filename: str):
     filepath = os.path.join(UPLOAD_DIR, filename)
     if not os.path.exists(filepath):
         from fastapi import HTTPException
-from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
+        from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
         raise HTTPException(status_code=404, detail="Photo not found")
     return FileResponse(filepath, media_type="image/jpeg")

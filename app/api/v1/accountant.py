@@ -115,7 +115,7 @@ async def generate_payroll_sheet(
 
         # Get roster info for site/supervisor/shift
         from sqlalchemy.orm import joinedload
-from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
+        from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
         roster = db.query(GuardRoster).options(
             joinedload(GuardRoster.shift)
         ).filter(
