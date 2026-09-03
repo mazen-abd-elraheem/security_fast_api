@@ -18,6 +18,7 @@ from app.models.user import User
 from app.models.site import Site
 from app.models.cash_advance import CashAdvance
 from app.enums import UserRole, CashAdvanceStatus
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 
@@ -74,6 +75,9 @@ def create_cash_advance(
     db.add(advance)
     db.commit()
     db.refresh(advance)
+
+    log_create(db, current_user, "cash_advance", advance, f"Cash advance of {data.amount} EGP for {guard.name}")
+    db.commit()
 
     return _advance_to_dict(advance)
 
@@ -164,6 +168,8 @@ def ops_manager_review(
     if not advance:
         raise HTTPException(status_code=404, detail="Cash advance request not found")
 
+    old = snapshot(advance)
+
     if advance.status != CashAdvanceStatus.PENDING.value:
         raise HTTPException(status_code=400, detail="Request is not pending ops manager review")
 
@@ -184,6 +190,10 @@ def ops_manager_review(
 
     db.commit()
     db.refresh(advance)
+
+    log_update(db, current_user, "cash_advance", old, advance,
+               f"Ops Manager {review.status} cash advance {advance_id} ({advance.amount} EGP)")
+    db.commit()
 
     return _advance_to_dict(advance)
 
@@ -241,6 +251,8 @@ def admin_review(
     if not advance:
         raise HTTPException(status_code=404, detail="Cash advance request not found")
 
+    old = snapshot(advance)
+
     if advance.status != CashAdvanceStatus.OPS_APPROVED.value:
         raise HTTPException(status_code=400, detail="Request is not pending admin review")
 
@@ -266,6 +278,10 @@ def admin_review(
 
     db.commit()
     db.refresh(advance)
+
+    log_update(db, current_user, "cash_advance", old, advance,
+               f"Admin {review.status} cash advance {advance_id} ({advance.amount} EGP)")
+    db.commit()
 
     return _advance_to_dict(advance)
 

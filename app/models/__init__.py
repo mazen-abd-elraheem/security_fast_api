@@ -1,4 +1,4 @@
-﻿from app.core.database import Base
+from app.core.database import Base
 
 from app.models.user import User
 from app.models.site import Site
@@ -44,3 +44,4 @@ __all__ = [
 
 
 from app.models.travel_fee import TravelFee
+from app.models.revoked_token import RevokedToken

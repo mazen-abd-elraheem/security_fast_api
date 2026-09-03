@@ -20,6 +20,7 @@ from app.models.gps_tracking_ping import GpsTrackingPing
 from app.models.attendance_log import AttendanceLog
 from app.enums import UserRole
 from app.services.geo_service import GeoService
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

@@ -630,6 +630,7 @@ def get_expiring_documents(
 ):
     """Get documents expiring within the next N days."""
     from datetime import date, timedelta
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
     today = date.today()
     cutoff = today + timedelta(days=days_ahead)
 

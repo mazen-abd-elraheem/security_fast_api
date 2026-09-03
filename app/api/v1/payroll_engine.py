@@ -814,6 +814,7 @@ def get_payroll_sheet(
         supervisor_name = ''
         try:
             from app.models.shift import Shift as ShiftModel
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
             sup_route = db.query(SupervisorRoute).join(
                 ShiftModel, SupervisorRoute.site_id == ShiftModel.site_id
             ).join(

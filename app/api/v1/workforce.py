@@ -20,6 +20,7 @@ from app.models.attendance_log import AttendanceLog
 from app.models.gps_tracking_ping import GpsTrackingPing
 from app.enums import UserRole
 from app.api.v1.tracking import compute_presence_hours_from_pings
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

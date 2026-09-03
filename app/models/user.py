@@ -2,7 +2,7 @@
 SecureTrack Platform User Model
 Centralized identity for Admins, Supervisors, Guards, Outdoor personnel, and Clients.
 """
-from sqlalchemy import Column, String, Float, DateTime, Boolean, Numeric, Index
+from sqlalchemy import Column, String, Float, DateTime, Boolean, Integer, Numeric, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -57,6 +57,16 @@ class User(Base):
     transfer_method = Column(String(100), nullable=True)     # ????? ???????
     uniform_status = Column(String(100), nullable=True, default='none') # delivered / missing / none
     payroll_amount = Column(Float, nullable=True, default=0.0)  # Fixed PAYROLL value (BY column)
+
+    # Security — Account Lockout
+    failed_login_count = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
+    last_failed_login = Column(DateTime, nullable=True)
+
+    # Security — MFA (TOTP)
+    totp_secret = Column(String(32), nullable=True)
+    totp_enabled = Column(Boolean, nullable=False, default=False)
+    totp_confirmed_at = Column(DateTime, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))

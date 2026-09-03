@@ -15,6 +15,7 @@ from app.api.deps import require_role
 from app.models.user import User
 from app.models.inventory_item import InventoryItem
 from app.enums import UserRole
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

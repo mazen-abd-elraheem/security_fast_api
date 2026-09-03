@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models.daily_logbook import DailyLogbook
 from app.models.user import User
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

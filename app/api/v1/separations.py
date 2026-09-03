@@ -204,6 +204,10 @@ def action_separation(
             if user:
                 user.is_active = False
                 user.status = "separated"
+                # SECURITY: Instantly revoke all active tokens
+                from app.core.security import revoke_all_user_tokens
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
+                revoke_all_user_tokens(user.user_id, "separation", db)
 
         elif current_user.role == "admin":
             sep.hr_id = current_user.user_id

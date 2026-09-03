@@ -13,6 +13,7 @@ from app.api.deps import require_role
 from app.models.user import User
 from app.models.deduction_rule import DeductionRule
 from app.enums import UserRole
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 
@@ -164,12 +165,18 @@ def update_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
 
+    old = snapshot(rule)
+
     update_data = update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(rule, field, value)
 
     db.commit()
     db.refresh(rule)
+
+    log_update(db, current_user, "deduction_rule", old, rule,
+               f"Updated deduction rule: {rule.label}")
+    db.commit()
 
     return {
         "message": f"Rule '{rule.label}' updated",

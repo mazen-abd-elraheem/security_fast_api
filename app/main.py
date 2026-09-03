@@ -44,7 +44,8 @@ from app.api.v1 import (
     evaluations,
     accountant,
     leader_attendance,
-    travel_fees
+    travel_fees,
+    mfa,
 )
 
 settings = get_settings()
@@ -103,12 +104,20 @@ def _run_auto_migrations():
                 "bank_account": "VARCHAR(100) NULL",
                 "fcm_token": "VARCHAR(500) NULL",
                 "payroll_amount": "FLOAT DEFAULT 0",
+                # Security — Account Lockout
+                "failed_login_count": "INTEGER DEFAULT 0",
+                "locked_until": "DATETIME NULL",
+                "last_failed_login": "DATETIME NULL",
+                # Security — MFA (TOTP)
+                "totp_secret": "VARCHAR(32) NULL",
+                "totp_enabled": "BOOLEAN DEFAULT FALSE",
+                "totp_confirmed_at": "DATETIME NULL",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():
                     if col_name not in existing:
                         conn.execute(sa_text(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"))
-                        logger.info(f"Ã¢Å“â€œ Migration: added '{col_name}' to users")
+                        logger.info(f"Migration: added '{col_name}' to users")
 
 
         # guard_documents.expiry_date
@@ -132,6 +141,19 @@ def _run_auto_migrations():
                         logger.info("Added is_days_multiplier to deduction_rules")
                     except Exception:
                         pass
+
+        # Cleanup expired revoked tokens on startup
+        if insp.has_table("revoked_tokens"):
+            try:
+                from app.core.security import cleanup_expired_revocations
+                from app.core.database import SessionLocal as _SL
+                _db = _SL()
+                deleted = cleanup_expired_revocations(_db)
+                _db.close()
+                if deleted:
+                    logger.info(f"Cleaned up {deleted} expired token revocations")
+            except Exception:
+                pass
 
     except Exception as e:
         logger.warning(f"Ã¢Å¡Â  Auto-migration check failed: {e}")
@@ -205,6 +227,19 @@ async def securetrack_exception_handler(request: Request, exc: SecureTrackExcept
     }
     status_code = status_map.get(type(exc), 500)
     return JSONResponse(status_code=status_code, content={"detail": exc.message})
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    """
+    SECURITY: Catch-all handler that prevents internal stack traces
+    from leaking to clients. Errors are logged server-side only.
+    """
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 # ==========================================
@@ -316,6 +351,7 @@ app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Guar
 app.include_router(accountant.router, prefix="/api/v1/accountant-sheet", tags=["Accountant Sheet"])
 app.include_router(leader_attendance.router, prefix="/api/v1/leader-attendance", tags=["Leader Attendance"])
 app.include_router(travel_fees.router, prefix="/api/v1/travel-fees", tags=["Travel Fees"])
+app.include_router(mfa.router, prefix="/api/v1/mfa", tags=["MFA (TOTP)"])
 
 
 # ==========================================

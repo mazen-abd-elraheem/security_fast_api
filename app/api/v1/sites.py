@@ -13,6 +13,7 @@ from app.enums import UserRole
 from app.schemas.site import SiteCreate, SiteUpdate, SiteResponse, SiteListResponse
 from app.services.site_service import SiteService
 from app.core.exceptions import SecureTrackException
+from app.core.audit import log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 
@@ -25,7 +26,10 @@ def create_site(
 ):
     """Create a new site with geofence coordinates."""
     try:
-        return SiteService.create_site(db, site_data)
+        site = SiteService.create_site(db, site_data)
+        log_create(db, current_user, "site", site)
+        db.commit()
+        return site
     except SecureTrackException as e:
         handle_service_exception(e)
 
@@ -69,7 +73,12 @@ def update_site(
 ):
     """Update site details and geofence configuration."""
     try:
-        return SiteService.update_site(db, site_id, update_data)
+        old_site = SiteService.get_site(db, site_id)
+        old = snapshot(old_site)
+        updated = SiteService.update_site(db, site_id, update_data)
+        log_update(db, current_user, "site", old, updated)
+        db.commit()
+        return updated
     except SecureTrackException as e:
         handle_service_exception(e)
 
@@ -82,7 +91,10 @@ def delete_site(
 ):
     """Deactivate a site (soft delete)."""
     try:
+        site = SiteService.get_site(db, site_id)
+        log_delete(db, current_user, "site", site)
         SiteService.delete_site(db, site_id)
+        db.commit()
         return {"detail": "Site deactivated"}
     except SecureTrackException as e:
         handle_service_exception(e)

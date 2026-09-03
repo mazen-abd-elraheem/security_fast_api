@@ -16,6 +16,7 @@ from app.models.site import Site
 from app.models.shift import Shift
 from app.models.guard_roster import GuardRoster
 from app.models.attendance_log import AttendanceLog
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

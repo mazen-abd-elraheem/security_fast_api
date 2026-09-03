@@ -16,6 +16,7 @@ from app.enums import UserRole
 from app.schemas.user import UserResponse, UserListResponse
 from app.services.user_service import UserService
 from app.core.exceptions import SecureTrackException
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

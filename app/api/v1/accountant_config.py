@@ -158,6 +158,7 @@ def list_holidays(
     q = db.query(Holiday)
     if year:
         from sqlalchemy import extract
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
         q = q.filter(extract("year", Holiday.date) == year)
     return q.order_by(Holiday.date).all()
 

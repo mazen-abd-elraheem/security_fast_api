@@ -16,6 +16,7 @@ from app.schemas.user import (
 )
 from app.services.user_service import UserService
 from app.core.exceptions import SecureTrackException
+from app.core.audit import log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 
@@ -196,7 +197,10 @@ def admin_create_user(
 ):
     """Admin creates any type of user account."""
     try:
-        return UserService.admin_create_user(db, user_data)
+        user = UserService.admin_create_user(db, user_data)
+        log_create(db, current_user, "user", user)
+        db.commit()
+        return user
     except SecureTrackException as e:
         handle_service_exception(e)
 
@@ -213,6 +217,8 @@ def get_user(
         if not user:
             from app.core.exceptions import NotFoundException
             raise NotFoundException("User", user_id)
+        log_read(db, current_user, "user", user_id, user.name)
+        db.commit()
         return user
     except SecureTrackException as e:
         handle_service_exception(e)
@@ -225,9 +231,14 @@ def admin_update_user(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
-    """Admin-level user update â€” can change any field."""
+    """Admin-level user update — can change any field."""
     try:
-        return UserService.admin_update_user(db, user_id, update_data)
+        user = UserService.get_by_id(db, user_id)
+        old = snapshot(user) if user else {}
+        updated = UserService.admin_update_user(db, user_id, update_data)
+        log_update(db, current_user, "user", old, updated)
+        db.commit()
+        return updated
     except SecureTrackException as e:
         handle_service_exception(e)
 
@@ -240,7 +251,11 @@ def deactivate_user(
 ):
     """Soft-delete: deactivate a user account."""
     try:
-        return UserService.deactivate_user(db, user_id)
+        user = UserService.get_by_id(db, user_id)
+        log_delete(db, current_user, "user", user, f"Deactivated user: {user.name if user else user_id}")
+        result = UserService.deactivate_user(db, user_id)
+        db.commit()
+        return result
     except SecureTrackException as e:
         handle_service_exception(e)
 

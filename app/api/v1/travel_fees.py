@@ -16,6 +16,7 @@ from app.api.deps import require_role, get_current_user
 from app.models.travel_fee import TravelFee
 from app.models.user import User
 from app.enums import UserRole
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

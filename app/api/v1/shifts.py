@@ -11,6 +11,7 @@ from app.enums import UserRole
 from app.schemas.shift import ShiftCreate, ShiftUpdate, ShiftResponse, ShiftListResponse
 from app.services.shift_service import ShiftService
 from app.core.exceptions import SecureTrackException
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 
@@ -25,7 +26,10 @@ def create_shift(
     """Create a new shift for a site."""
     shift_data.site_id = site_id
     try:
-        return ShiftService.create_shift(db, shift_data)
+        shift = ShiftService.create_shift(db, shift_data)
+        log_create(db, current_user, "shift", shift)
+        db.commit()
+        return shift
     except SecureTrackException as e:
         handle_service_exception(e)
 
@@ -53,7 +57,13 @@ def update_shift(
 ):
     """Update shift details."""
     try:
-        return ShiftService.update_shift(db, shift_id, update_data)
+        from app.models.shift import Shift
+        old_shift = db.query(Shift).filter(Shift.shift_id == shift_id).first()
+        old = snapshot(old_shift) if old_shift else {}
+        updated = ShiftService.update_shift(db, shift_id, update_data)
+        log_update(db, current_user, "shift", old, updated)
+        db.commit()
+        return updated
     except SecureTrackException as e:
         handle_service_exception(e)
 
@@ -66,7 +76,11 @@ def delete_shift(
 ):
     """Deactivate a shift."""
     try:
+        from app.models.shift import Shift
+        shift = db.query(Shift).filter(Shift.shift_id == shift_id).first()
+        log_delete(db, current_user, "shift", shift)
         ShiftService.delete_shift(db, shift_id)
+        db.commit()
         return {"detail": "Shift deactivated"}
     except SecureTrackException as e:
         handle_service_exception(e)

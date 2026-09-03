@@ -220,12 +220,17 @@ class UserService:
 
     @staticmethod
     def deactivate_user(db: Session, user_id: str) -> User:
-        """Soft-delete: deactivate a user account."""
+        """Soft-delete: deactivate a user account and revoke all tokens."""
         user = UserService.get_by_id(db, user_id)
         if not user:
             raise NotFoundException("User", user_id)
 
         user.is_active = False
+
+        # SECURITY: Instantly revoke all active tokens for this user
+        from app.core.security import revoke_all_user_tokens
+        revoke_all_user_tokens(user_id, "deactivation", db)
+
         db.commit()
         db.refresh(user)
         return user

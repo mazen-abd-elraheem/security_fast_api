@@ -780,6 +780,7 @@ def export_attendance_report(
     import io
     import csv
     from fastapi.responses import StreamingResponse
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
     
     report = get_attendance_report(date_from=date_from, date_to=date_to, site_id=site_id, current_user=current_user, db=db)
     employees = report["employees"]

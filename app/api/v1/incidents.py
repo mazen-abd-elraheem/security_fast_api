@@ -12,6 +12,7 @@ from app.enums import UserRole
 from app.schemas.incident import IncidentCreate, IncidentUpdate, IncidentResponse, IncidentListResponse
 from app.services.incident_service import IncidentService
 from app.core.exceptions import SecureTrackException
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

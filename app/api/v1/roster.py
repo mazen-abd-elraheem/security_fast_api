@@ -89,6 +89,7 @@ def get_guard_schedule(
     user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
     if user_role == "guard" and current_user.user_id != guard_id:
         from fastapi import HTTPException
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
         raise HTTPException(status_code=403, detail="Guards can only view their own schedule")
 
     roster = RosterService.get_guard_schedule(db, guard_id, date_from, date_to)

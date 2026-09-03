@@ -15,6 +15,7 @@ from app.api.deps import require_role, get_current_user
 from app.models.user import User
 from app.models.disciplinary_action import DisciplinaryAction
 from app.enums import UserRole
+from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
 
 router = APIRouter()
 

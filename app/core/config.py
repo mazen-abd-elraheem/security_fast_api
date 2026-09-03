@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "change-this-to-a-secure-random-string"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # File Uploads (photos, incident evidence)
@@ -68,6 +68,12 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     settings = Settings()
+    # SECURITY: Refuse to start with the default insecure secret key
+    if settings.SECRET_KEY == "change-this-to-a-secure-random-string" and settings.ENVIRONMENT != "development":
+        raise RuntimeError(
+            "FATAL: SECRET_KEY is still set to the default value. "
+            "Set a strong random SECRET_KEY in your .env file before running in production."
+        )
     logger.info(f"✓ Settings loaded for {settings.ENVIRONMENT} environment")
     return settings
 

@@ -34,6 +34,14 @@ def _run_seed_migrations():
                 "transfer_name": "VARCHAR(255) NULL",
                 "transfer_method": "VARCHAR(100) NULL",
                 "uniform_status": "VARCHAR(100) DEFAULT 'none'",
+                # Security — Account Lockout
+                "failed_login_count": "INTEGER DEFAULT 0",
+                "locked_until": "DATETIME NULL",
+                "last_failed_login": "DATETIME NULL",
+                # Security — MFA (TOTP)
+                "totp_secret": "VARCHAR(32) NULL",
+                "totp_enabled": "BOOLEAN DEFAULT FALSE",
+                "totp_confirmed_at": "DATETIME NULL",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():

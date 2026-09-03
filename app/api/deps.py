@@ -1,13 +1,13 @@
 """
 SecureTrack Platform — Shared API Dependencies
-Authentication dependencies and role checkers used across all routers.
+Authentication dependencies, role checkers, and token revocation checks.
 """
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import verify_token
+from app.core.security import verify_token, is_token_revoked, is_user_tokens_revoked
 from app.core.exceptions import (
     NotFoundException,
     DuplicateException,
@@ -29,7 +29,7 @@ def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    """Dependency — extracts current user from JWT token."""
+    """Dependency — extracts current user from JWT token with revocation check."""
     payload = verify_token(token)
     if payload is None:
         raise HTTPException(
@@ -41,6 +41,23 @@ def get_current_user(
     user_id: str = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    # Check if this specific token has been revoked
+    jti = payload.get("jti")
+    if jti and is_token_revoked(jti, db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Check if ALL tokens for this user have been revoked (deactivation/termination)
+    if is_user_tokens_revoked(user_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="All sessions have been revoked. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
