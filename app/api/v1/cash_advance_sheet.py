@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, or_
 
 from app.core.database import get_db
 from app.api.deps import require_role
@@ -25,6 +25,7 @@ from app.models.daily_attendance_entry import DailyAttendanceEntry
 from app.models.guard_evaluation import GuardEvaluation
 from app.models.cash_advance import CashAdvance
 from app.models.rest_allowance_config import RestAllowanceConfig
+from app.models.employee_rest_allowance import EmployeeRestAllowance
 from app.enums import UserRole
 
 router = APIRouter()
@@ -166,7 +167,29 @@ def _build_sheet_data(
     rest_configs = db.query(RestAllowanceConfig).filter(
         RestAllowanceConfig.is_active == True
     ).all()
-    rest_rate_map = {rc.role: rc.rate_per_day for rc in rest_configs}
+    rest_config_map = {rc.role: rc for rc in rest_configs}
+
+    # 5b) Get employee rest allowance overrides
+    # Find assignments for these employees that apply to this month or are permanent
+    req_month_year = datetime.strptime(date_from, "%Y-%m-%d").strftime("%Y-%m") if date_from else None
+    
+    q_overrides = db.query(EmployeeRestAllowance).filter(
+        EmployeeRestAllowance.user_id.in_(employee_ids)
+    )
+    if req_month_year:
+        q_overrides = q_overrides.filter(
+            or_(
+                EmployeeRestAllowance.month_year == req_month_year,
+                EmployeeRestAllowance.month_year == None
+            )
+        )
+    emp_rest_allowance_records = q_overrides.all()
+    
+    # Group overrides by user
+    emp_rest_overrides: dict[str, list[EmployeeRestAllowance]] = {}
+    for r in emp_rest_allowance_records:
+        emp_rest_overrides.setdefault(r.user_id, []).append(r)
+
 
     # 6) Get supervisor assignments — find the most recent roster and its site's supervisor
     # We look for roster entries in the date range to find the guard's site
@@ -229,10 +252,29 @@ def _build_sheet_data(
             if a.status in ("ops_approved", "admin_approved", "admin_modified", "ceo_approved")
         )
 
-        # Calculate rest allowance
+        # Calculate rest allowance (Base + Extra)
         role = emp.role or "guard"
-        rest_rate = rest_rate_map.get(role, 0.0)
-        rest_allowance = att["rest_day_worked"] * rest_rate
+        base_rest_allowance_money = 0.0
+        
+        # Base from role config
+        role_config = rest_config_map.get(role)
+        if role_config:
+            if role_config.is_days_multiplier:
+                # Value represents days allowed
+                base_rest_allowance_money = role_config.value * (emp.daily_rate or 0.0)
+            else:
+                # Value represents money (rate per day worked, so we multiply by days worked)
+                base_rest_allowance_money = att["rest_day_worked"] * role_config.value
+                
+        # Extra from employee assignment
+        extra_rest_allowance_money = 0.0
+        for extra in emp_rest_overrides.get(eid, []):
+            if extra.is_days_multiplier:
+                extra_rest_allowance_money += extra.value * (emp.daily_rate or 0.0)
+            else:
+                extra_rest_allowance_money += extra.value
+                
+        rest_allowance = base_rest_allowance_money + extra_rest_allowance_money
 
         # Classification: use user's classification field or Arabic role label
         classification = emp.classification or ROLE_LABELS_AR.get(role, role)

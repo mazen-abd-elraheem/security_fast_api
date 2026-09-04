@@ -145,6 +145,21 @@ def _run_auto_migrations():
                     except Exception:
                         pass
 
+        # rest_allowance_config: rename rate_per_day to value and add is_days_multiplier
+        if insp.has_table("rest_allowance_config"):
+            existing = {c["name"] for c in insp.get_columns("rest_allowance_config")}
+            with engine.begin() as conn:
+                try:
+                    if "rate_per_day" in existing and "value" not in existing:
+                        conn.execute(sa_text("ALTER TABLE rest_allowance_config CHANGE rate_per_day value FLOAT NOT NULL DEFAULT 0"))
+                        logger.info("Renamed rate_per_day to value in rest_allowance_config")
+                    
+                    if "is_days_multiplier" not in existing:
+                        conn.execute(sa_text("ALTER TABLE rest_allowance_config ADD COLUMN is_days_multiplier BOOLEAN NOT NULL DEFAULT FALSE"))
+                        logger.info("Added is_days_multiplier to rest_allowance_config")
+                except Exception as e:
+                    logger.warning(f"Failed to migrate rest_allowance_config: {e}")
+
         # Cleanup expired revoked tokens on startup
         if insp.has_table("revoked_tokens"):
             try:
