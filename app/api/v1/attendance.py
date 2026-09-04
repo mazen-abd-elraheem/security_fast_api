@@ -666,7 +666,21 @@ def get_attendance_report(
     from app.models.daily_attendance_entry import DailyAttendanceEntry
     from app.api.v1.payroll import LATE_THRESHOLD_MINUTES, LATE_DEDUCTION_PER_MINUTE, ABSENT_DEDUCTION
 
-    users_query = db.query(User)
+    # Arabic labels for roles shown in the attendance report
+    ROLE_ARABIC_MAP = {
+        "supervisor": "المشرف",
+        "leader": "ليدر",
+        "guard": "فرد",
+        "outdoor": "فرد خارجي",
+        "operations_manager": "لواء",
+        "accountant": "محاسب",
+        "lady": "ليدي",
+        "personnel_officer": "اداري",
+        "hr": "موارد بشريه",
+    }
+    ATTENDANCE_ROLES = set(ROLE_ARABIC_MAP.keys())
+
+    users_query = db.query(User).filter(User.role.in_(ATTENDANCE_ROLES))
     users = users_query.all()
     user_dict = {u.user_id: u for u in users}
 
@@ -741,7 +755,7 @@ def get_attendance_report(
         employees.append({
             "serial": serial,
             "badge_number": user.employee_code or user.badge_number or "",
-            "classification": user.role or "",
+            "classification": user.classification if user.classification else ROLE_ARABIC_MAP.get(user.role, user.role or ""),
             "shift_label": shift_label,
             "supervisor": supervisor_name,
             "site_name": site_name,

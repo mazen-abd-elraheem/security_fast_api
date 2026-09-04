@@ -44,4 +44,5 @@ __all__ = [
 
 
 from app.models.travel_fee import TravelFee
+from app.models.travel_allowance_entry import TravelAllowanceEntry
 from app.models.revoked_token import RevokedToken

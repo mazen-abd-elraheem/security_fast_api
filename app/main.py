@@ -45,6 +45,7 @@ from app.api.v1 import (
     accountant,
     leader_attendance,
     travel_fees,
+    travel_allowance,
     mfa,
 )
 
@@ -351,6 +352,7 @@ app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Guar
 app.include_router(accountant.router, prefix="/api/v1/accountant-sheet", tags=["Accountant Sheet"])
 app.include_router(leader_attendance.router, prefix="/api/v1/leader-attendance", tags=["Leader Attendance"])
 app.include_router(travel_fees.router, prefix="/api/v1/travel-fees", tags=["Travel Fees"])
+app.include_router(travel_allowance.router, prefix="/api/v1/travel-allowance", tags=["Travel Allowance"])
 app.include_router(mfa.router, prefix="/api/v1/mfa", tags=["MFA (TOTP)"])
 
 

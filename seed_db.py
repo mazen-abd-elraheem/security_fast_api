@@ -71,6 +71,21 @@ def _run_seed_migrations():
     except Exception as e:
         print(f"Seed migration check: {e}")
 
+    # ── travel_allowance_entries: ensure table columns are up to date ──
+    try:
+        if insp.has_table("travel_allowance_entries"):
+            existing = {c["name"] for c in insp.get_columns("travel_allowance_entries")}
+            tae_cols = {
+                "is_active": "BOOLEAN DEFAULT TRUE",
+            }
+            for col_name, col_def in tae_cols.items():
+                if col_name not in existing:
+                    with engine.begin() as conn:
+                        conn.execute(sa_text(f"ALTER TABLE travel_allowance_entries ADD COLUMN {col_name} {col_def}"))
+                        print(f"  [migration] travel_allowance_entries.{col_name} added")
+    except Exception as e:
+        print(f"travel_allowance_entries migration: {e}")
+
     # ── Cash Advances table: add ops_manager and CEO columns ──
     if insp.has_table("cash_advances"):
         existing = {c["name"] for c in insp.get_columns("cash_advances")}
