@@ -47,6 +47,8 @@ from app.api.v1 import (
     travel_fees,
     travel_allowance,
     mfa,
+    rest_allowance,
+    cash_advance_sheet,
 )
 
 settings = get_settings()
@@ -354,6 +356,8 @@ app.include_router(leader_attendance.router, prefix="/api/v1/leader-attendance",
 app.include_router(travel_fees.router, prefix="/api/v1/travel-fees", tags=["Travel Fees"])
 app.include_router(travel_allowance.router, prefix="/api/v1/travel-allowance", tags=["Travel Allowance"])
 app.include_router(mfa.router, prefix="/api/v1/mfa", tags=["MFA (TOTP)"])
+app.include_router(rest_allowance.router, prefix="/api/v1/rest-allowance", tags=["Rest Allowance"])
+app.include_router(cash_advance_sheet.router, prefix="/api/v1/cash-advance-sheet", tags=["Cash Advance Sheet"])
 
 
 # ==========================================

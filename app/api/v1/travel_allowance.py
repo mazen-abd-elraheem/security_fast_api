@@ -254,7 +254,28 @@ def travel_allowance_report(
             ],
         })
 
+    # ── Include ALL active supervisors/leaders even with 0 trips ──
+    all_sup_filter = [User.is_active == True, User.role.in_(["supervisor", "leader"])]
+    if target_sup_id:
+        all_sup_filter.append(User.user_id == target_sup_id)
+    all_supervisors = db.query(User).filter(*all_sup_filter).all()
+
+    existing_ids = {r["user_id"] for r in result}
+    for sup in all_supervisors:
+        if sup.user_id not in existing_ids:
+            result.append({
+                "user_id": sup.user_id,
+                "name": sup.name,
+                "badge_number": sup.badge_number or "",
+                "employee_code": sup.employee_code or "",
+                "shift_type": getattr(sup, 'shift_type', '') or "",
+                "classification": sup.classification or "",
+                "total_allowance": 0.0,
+                "trips": [],
+            })
+
     return {"supervisors": result}
+
 
 
 # ── POST / ──

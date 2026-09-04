@@ -103,6 +103,12 @@ def _run_seed_migrations():
                     conn.execute(sa_text(f"ALTER TABLE cash_advances ADD COLUMN {col_name} {col_def}"))
                     print(f"  [migration] cash_advances.{col_name} added")
 
+    # ── rest_allowance_config: table is created by create_all, no extra columns needed ──
+    # Just log its existence
+    if insp.has_table("rest_allowance_config"):
+        print("  [migration] rest_allowance_config table exists")
+    else:
+        print("  [migration] rest_allowance_config table will be created by create_all")
 
 
 def seed():
