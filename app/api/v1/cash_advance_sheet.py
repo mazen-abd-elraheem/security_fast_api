@@ -171,7 +171,7 @@ def _build_sheet_data(
 
     # 5b) Get employee rest allowance overrides
     # Find assignments for these employees that apply to this month or are permanent
-    req_month_year = datetime.strptime(date_from, "%Y-%m-%d").strftime("%Y-%m") if date_from else None
+    req_month_year = date_from.strftime("%Y-%m") if date_from else None
     
     q_overrides = db.query(EmployeeRestAllowance).filter(
         EmployeeRestAllowance.user_id.in_(employee_ids)
