@@ -14,6 +14,7 @@ from app.models.user import User
 from app.enums import UserRole
 from app.models.site import Site
 from app.models.guard_roster import GuardRoster
+from app.models.supervisor_route import SupervisorRoute
 
 router = APIRouter(tags=["Insurance Record"])
 
@@ -50,6 +51,13 @@ def _build_insurance_data(db: Session) -> list[dict]:
     supervisors = db.query(User).filter(User.role.in_([UserRole.SUPERVISOR.value, UserRole.LEADER.value])).all()
     supervisor_map = {s.user_id: s.name for s in supervisors}
     
+    # Map site_id -> supervisor_id based on most recent SupervisorRoute
+    routes = db.query(SupervisorRoute).order_by(SupervisorRoute.assigned_date.desc()).all()
+    site_supervisor_map = {}
+    for r in routes:
+        if r.site_id not in site_supervisor_map:
+            site_supervisor_map[r.site_id] = r.supervisor_id
+    
     results = []
     for guard in guards:
         site_id = guard_site_map.get(guard.user_id)
@@ -58,10 +66,11 @@ def _build_insurance_data(db: Session) -> list[dict]:
         # Site name
         site_name = site.name if site else ""
         
-        # Supervisor name
+        # Supervisor name (Supervisor routing is many-to-many, take most recent)
         supervisor_name = ""
-        if site and site.manager_id:
-            supervisor_name = supervisor_map.get(site.manager_id, "")
+        if site_id and site_id in site_supervisor_map:
+            sup_id = site_supervisor_map[site_id]
+            supervisor_name = supervisor_map.get(sup_id, "")
             
         # Role in arabic
         role_ar = "فرد أمن"
