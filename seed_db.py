@@ -46,6 +46,9 @@ def _run_seed_migrations():
                 "totp_secret": "VARCHAR(32) NULL",
                 "totp_enabled": "BOOLEAN DEFAULT FALSE",
                 "totp_confirmed_at": "DATETIME NULL",
+                # Employee Documents Sheet
+                "file_number": "VARCHAR(100) NULL",
+                "documents_notes": "VARCHAR(500) NULL",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():

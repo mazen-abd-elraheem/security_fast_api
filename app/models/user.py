@@ -61,6 +61,8 @@ class User(Base):
     transfer_method = Column(String(100), nullable=True)     # طريقة التحويل
     uniform_status = Column(String(100), nullable=True, default='none') # delivered / missing / none
     payroll_amount = Column(Float, nullable=True, default=0.0)  # Fixed PAYROLL value (BY column)
+    file_number = Column(String(100), nullable=True)            # رقم الملف
+    documents_notes = Column(String(500), nullable=True)        # ملاحظات المستندات
 
     # Security — Account Lockout
     failed_login_count = Column(Integer, nullable=False, default=0)
