@@ -9,8 +9,9 @@ from sqlalchemy import func
 import pandas as pd
 
 from app.core.database import get_db
-from app.core.security import require_role
-from app.models.user import User, UserRole
+from app.api.deps import require_role
+from app.models.user import User
+from app.enums import UserRole
 from app.models.site import Site
 from app.models.guard_roster import GuardRoster
 
