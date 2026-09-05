@@ -15,7 +15,7 @@ from app.enums import UserRole
 from app.models.site import Site
 from app.models.guard_roster import GuardRoster
 
-router = APIRouter(prefix="/insurance-record", tags=["Insurance Record"])
+router = APIRouter(tags=["Insurance Record"])
 
 class InsuranceUpdateItem(BaseModel):
     user_id: str
