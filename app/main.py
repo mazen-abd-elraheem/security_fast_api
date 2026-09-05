@@ -108,6 +108,13 @@ def _run_auto_migrations():
                 "bank_account": "VARCHAR(100) NULL",
                 "fcm_token": "VARCHAR(500) NULL",
                 "payroll_amount": "FLOAT DEFAULT 0",
+                "national_id": "VARCHAR(20) NULL",
+                "insurance_number": "VARCHAR(50) NULL",
+                "insurance_date": "DATETIME NULL",
+                "insurable_wage": "FLOAT DEFAULT 0",
+                "transfer_name": "VARCHAR(255) NULL",
+                "transfer_method": "VARCHAR(100) NULL",
+                "uniform_status": "VARCHAR(100) DEFAULT 'none'",
                 # Security — Account Lockout
                 "failed_login_count": "INTEGER DEFAULT 0",
                 "locked_until": "DATETIME NULL",

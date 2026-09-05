@@ -28,7 +28,7 @@ class InsuranceUpdateRequest(BaseModel):
 def _build_insurance_data(db: Session) -> list[dict]:
     # Get all active guards
     guards = db.query(User).filter(
-        User.role == UserRole.GUARD,
+        User.role == UserRole.GUARD.value,
         User.is_active == True,
         User.status != "terminated"
     ).all()
@@ -47,7 +47,7 @@ def _build_insurance_data(db: Session) -> list[dict]:
     site_map = {s.site_id: s for s in sites}
     
     # Get all supervisors to map user_id -> name
-    supervisors = db.query(User).filter(User.role.in_([UserRole.SUPERVISOR, UserRole.LEADER])).all()
+    supervisors = db.query(User).filter(User.role.in_([UserRole.SUPERVISOR.value, UserRole.LEADER.value])).all()
     supervisor_map = {s.user_id: s.name for s in supervisors}
     
     results = []
@@ -65,9 +65,9 @@ def _build_insurance_data(db: Session) -> list[dict]:
             
         # Role in arabic
         role_ar = "فرد أمن"
-        if guard.role == UserRole.SUPERVISOR:
+        if guard.role == UserRole.SUPERVISOR.value:
             role_ar = "مشرف"
-        elif guard.role == UserRole.LEADER:
+        elif guard.role == UserRole.LEADER.value:
             role_ar = "قائد"
             
         results.append({
