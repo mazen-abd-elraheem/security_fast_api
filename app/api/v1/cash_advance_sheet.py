@@ -81,7 +81,7 @@ def _build_sheet_data(
     elif tab == "rejected":
         status_filter = ["ops_rejected", "admin_rejected", "ceo_rejected"]
     else:  # pending / in_progress
-        status_filter = ["pending", "ops_approved"]
+        status_filter = ["pending", "ops_approved", "supervisor_approved", "leader_approved"]
 
     advances = (
         db.query(CashAdvance)

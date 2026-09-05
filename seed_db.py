@@ -38,6 +38,10 @@ def _run_seed_migrations():
                 "failed_login_count": "INTEGER DEFAULT 0",
                 "locked_until": "DATETIME NULL",
                 "last_failed_login": "DATETIME NULL",
+                "national_id": "VARCHAR(20) NULL",
+                "insurance_number": "VARCHAR(50) NULL",
+                "insurance_date": "DATETIME NULL",
+                "insurable_wage": "FLOAT DEFAULT 0",
                 # Security — MFA (TOTP)
                 "totp_secret": "VARCHAR(32) NULL",
                 "totp_enabled": "BOOLEAN DEFAULT FALSE",

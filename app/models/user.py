@@ -51,10 +51,14 @@ class User(Base):
 
     # HR fields
     hire_date = Column(DateTime, nullable=True)
-    insurance_status = Column(String(30), nullable=True, default='none')  # Ã™â€¦Ã˜Â¤Ã™â€¦Ã™â€ /Ã˜Â®Ã˜Â§Ã˜Âµ/Ã˜Â¨Ã˜Â¯Ã™Ë†Ã™â€ 
+    national_id = Column(String(20), nullable=True)
+    insurance_status = Column(String(30), nullable=True, default='none')  # مؤمن/خاص/بدون
+    insurance_number = Column(String(50), nullable=True)
+    insurance_date = Column(DateTime, nullable=True)
+    insurable_wage = Column(Float, nullable=True, default=0.0)
     bank_account = Column(String(100), nullable=True)
-    transfer_name = Column(String(255), nullable=True)       # ?????? ??
-    transfer_method = Column(String(100), nullable=True)     # ????? ???????
+    transfer_name = Column(String(255), nullable=True)       # اسم التحويل
+    transfer_method = Column(String(100), nullable=True)     # طريقة التحويل
     uniform_status = Column(String(100), nullable=True, default='none') # delivered / missing / none
     payroll_amount = Column(Float, nullable=True, default=0.0)  # Fixed PAYROLL value (BY column)
 

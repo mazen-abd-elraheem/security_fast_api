@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack Platform â€” Personnel Officer Routes
 Guard site assignments, document uploads, and uniform distribution with condition tracking.
 """
@@ -42,6 +42,10 @@ class PersonnelCreateUserRequest(BaseModel):
     role: str = Field(..., description="guard, lady, outdoor, leader, or supervisor")
     badge_number: Optional[str] = None
     region: Optional[str] = None
+    national_id: Optional[str] = None
+    insurance_number: Optional[str] = None
+    insurance_date: Optional[date] = None
+    insurable_wage: Optional[float] = None
 
 
 @router.post("/create-user", summary="Personnel creates a user (restricted roles)")
@@ -76,6 +80,11 @@ def personnel_create_user(
     emp_code = str(random.randint(100000, 999999))
     while db.query(User).filter(User.employee_code == emp_code).first():
         emp_code = str(random.randint(100000, 999999))
+        
+    # Process date
+    ins_date = None
+    if data.insurance_date:
+        ins_date = datetime.combine(data.insurance_date, datetime.min.time())
 
     db_user = User(
         user_id=str(uuid.uuid4()),
@@ -87,6 +96,10 @@ def personnel_create_user(
         role=data.role,
         badge_number=data.badge_number,
         region=data.region,
+        national_id=data.national_id,
+        insurance_number=data.insurance_number,
+        insurance_date=ins_date,
+        insurable_wage=data.insurable_wage,
         is_active=True,
         status=UserStatus.ACTIVE if hasattr(UserStatus, 'ACTIVE') else "active",
     )

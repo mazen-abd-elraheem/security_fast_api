@@ -49,6 +49,7 @@ from app.api.v1 import (
     mfa,
     rest_allowance,
     cash_advance_sheet,
+    insurance_record,
 )
 
 settings = get_settings()
@@ -373,6 +374,7 @@ app.include_router(travel_allowance.router, prefix="/api/v1/travel-allowance", t
 app.include_router(mfa.router, prefix="/api/v1/mfa", tags=["MFA (TOTP)"])
 app.include_router(rest_allowance.router, prefix="/api/v1/rest-allowance", tags=["Rest Allowance"])
 app.include_router(cash_advance_sheet.router, prefix="/api/v1/cash-advance-sheet", tags=["Cash Advance Sheet"])
+app.include_router(insurance_record.router, prefix="/api/v1/insurance-record", tags=["Insurance Record"])
 
 
 # ==========================================
