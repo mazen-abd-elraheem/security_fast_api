@@ -51,6 +51,7 @@ from app.api.v1 import (
     cash_advance_sheet,
     insurance_record,
     employee_documents_sheet,
+    clothes_inventory,
 )
 
 settings = get_settings()
@@ -384,6 +385,7 @@ app.include_router(rest_allowance.router, prefix="/api/v1/rest-allowance", tags=
 app.include_router(cash_advance_sheet.router, prefix="/api/v1/cash-advance-sheet", tags=["Cash Advance Sheet"])
 app.include_router(insurance_record.router, prefix="/api/v1/insurance-record", tags=["Insurance Record"])
 app.include_router(employee_documents_sheet.router, prefix="/api/v1/employee-documents", tags=["Employee Documents Sheet"])
+app.include_router(clothes_inventory.router, prefix="/api/v1/clothes-inventory", tags=["Clothes Inventory"])
 
 
 # ==========================================

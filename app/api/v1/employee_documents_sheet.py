@@ -22,6 +22,7 @@ from app.models.site import Site
 from app.models.shift import Shift
 from app.models.guard_roster import GuardRoster
 from app.models.guard_document import GuardDocument
+from app.models.notification import Notification
 from app.enums import UserRole
 
 router = APIRouter()
@@ -38,6 +39,15 @@ REQUIRED_DOCS = [
     "work_contract",
     "criminal_record"
 ]
+
+DOC_TRANSLATIONS = {
+    "id_front": "الامام",
+    "id_back": "الخلف",
+    "military_service": "شهاده الخدمه العسكريه",
+    "insurance_print": "البرينت التأميني",
+    "work_contract": "عقد العمل",
+    "criminal_record": "فيش و تشبيه"
+}
 
 
 # ── Schemas ──
@@ -131,17 +141,18 @@ def _build_documents_sheet_data(db: Session) -> list[dict]:
             doc: (doc in guard_docs) for doc in REQUIRED_DOCS
         }
         
-        # Compute default notes if empty
         computed_notes = emp.documents_notes
         if not computed_notes:
             missing = [d for d, present in doc_status.items() if not present]
             if missing:
-                computed_notes = f"نواقص: {', '.join(missing)}"
+                missing_arabic = [DOC_TRANSLATIONS.get(d, d) for d in missing]
+                computed_notes = f"نواقص: {', '.join(missing_arabic)}"
             else:
                 computed_notes = "مكتمل"
         
         row = {
             "user_id": eid,
+            "role": emp.role.value if hasattr(emp.role, "value") else str(emp.role or ""),
             "supervisor_name": emp_supervisor_map.get(eid, ""),
             "badge_number": emp.badge_number or "",
             "name": emp.name or "",
@@ -264,3 +275,38 @@ def export_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+@router.post("/alert/{user_id}", summary="Alert personnel officers about missing documents")
+def alert_missing_documents(
+    user_id: str,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    target_user = db.query(User).filter(User.user_id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    personnel_officers = db.query(User).filter(
+        User.role == "personnel_officer",
+        User.is_active == True
+    ).all()
+
+    if not personnel_officers:
+        raise HTTPException(status_code=404, detail="No active personnel officers found")
+
+    alert_message = f"Missing documents for {target_user.role} {target_user.name} (Badge: {target_user.badge_number})"
+    
+    count = 0
+    for po in personnel_officers:
+        notif = Notification(
+            notification_id=str(uuid.uuid4()),
+            user_id=po.user_id,
+            notif_type="system",
+            title="Missing Documents Alert",
+            message=alert_message,
+        )
+        db.add(notif)
+        count += 1
+        
+    db.commit()
+    return {"message": f"Alert sent to {count} personnel officers"}

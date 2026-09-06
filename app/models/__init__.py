@@ -40,8 +40,10 @@ __all__ = [
     'SalaryConfig', 'MonthlyPayroll', 'DisciplinaryAction', 'GuardEvaluation',
     'PayrollSheetRow', 'SalaryClassificationConfig', 'DailyAttendanceEntry',
     'TaxBracket', 'EmployeeBonus', 'Holiday', 'Termination',
+    'ClothesRequest', 'ClothesTermination',
 ]
 
+from app.models.clothes_inventory import ClothesRequest, ClothesTermination
 
 from app.models.travel_fee import TravelFee
 from app.models.travel_allowance_entry import TravelAllowanceEntry
