@@ -23,7 +23,7 @@ class UpdatePayload(BaseModel):
     updates: List[ClothesRequestUpdateItem]
 
 @router.get("/requests")
-def get_clothes_requests(db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_active_user)):
+def get_clothes_requests(db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):
     records = db.query(ClothesRequest).all()
     # If empty, maybe seed a few? Or just return empty
     if not records:
@@ -45,7 +45,7 @@ def get_clothes_requests(db: Session = Depends(deps.get_db), current_user=Depend
     return {"records": out}
 
 @router.put("/requests/update-cells")
-def update_clothes_requests(payload: UpdatePayload, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_active_user)):
+def update_clothes_requests(payload: UpdatePayload, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):
     for u in payload.updates:
         rec = db.query(ClothesRequest).filter(ClothesRequest.id == u.id).first()
         if rec:
@@ -62,7 +62,7 @@ def update_clothes_requests(payload: UpdatePayload, db: Session = Depends(deps.g
     return {"success": True}
 
 @router.get("/terminations")
-def get_clothes_terminations(db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_active_user)):
+def get_clothes_terminations(db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):
     records = db.query(ClothesTermination).all()
     out = []
     for r in records:
@@ -82,7 +82,7 @@ def get_clothes_terminations(db: Session = Depends(deps.get_db), current_user=De
     return {"records": out}
 
 @router.put("/terminations/update-cells")
-def update_clothes_terminations(payload: UpdatePayload, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_active_user)):
+def update_clothes_terminations(payload: UpdatePayload, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):
     for u in payload.updates:
         rec = db.query(ClothesTermination).filter(ClothesTermination.id == u.id).first()
         if rec:
