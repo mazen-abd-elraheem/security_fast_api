@@ -2,7 +2,7 @@
 SecureTrack Platform — Inventory Item Model
 Tracks clothing/uniform stock managed by Admin.
 """
-from sqlalchemy import Column, String, Integer, DateTime
+from sqlalchemy import Column, String, Integer, DateTime, Float
 from datetime import datetime, timezone
 
 from app.core.database import Base
@@ -22,6 +22,7 @@ class InventoryItem(Base):
     quantity_total = Column(Integer, nullable=False, default=0)       # Total stock ever added
     quantity_available = Column(Integer, nullable=False, default=0)   # Current available
     min_stock_level = Column(Integer, nullable=False, default=5)      # Alert threshold
+    replacement_cost = Column(Float, nullable=False, default=0.0)     # Cost deducted if lost/destroyed
 
     notes = Column(String(500), nullable=True)
 

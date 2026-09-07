@@ -117,6 +117,46 @@ def _run_seed_migrations():
     else:
         print("  [migration] rest_allowance_config table will be created by create_all")
 
+    # ── Clothes Requests: add workflow columns ──
+    if insp.has_table("clothes_requests"):
+        existing = {c["name"] for c in insp.get_columns("clothes_requests")}
+        cr_new = {
+            "status": "VARCHAR(50) DEFAULT 'pending_ops'",
+            "ops_manager_id": "VARCHAR(36) NULL",
+            "ops_reason": "VARCHAR(255) NULL",
+            "hr_manager_id": "VARCHAR(36) NULL",
+            "hr_reason": "VARCHAR(255) NULL",
+        }
+        for col_name, col_def in cr_new.items():
+            if col_name not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE clothes_requests ADD COLUMN {col_name} {col_def}"))
+                    print(f"  [migration] clothes_requests.{col_name} added")
+        if "user_id" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE clothes_requests ADD COLUMN user_id VARCHAR(36) NULL"))
+                print("  [migration] clothes_requests.user_id added")
+
+    # ── Clothes Terminations: add workflow columns ──
+    if insp.has_table("clothes_terminations"):
+        existing = {c["name"] for c in insp.get_columns("clothes_terminations")}
+        if "user_id" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE clothes_terminations ADD COLUMN user_id VARCHAR(36) NULL"))
+                print("  [migration] clothes_terminations.user_id added")
+        if "calculated_deduction" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE clothes_terminations ADD COLUMN calculated_deduction FLOAT DEFAULT 0"))
+                print("  [migration] clothes_terminations.calculated_deduction added")
+
+    # ── Inventory Items: add replacement cost ──
+    if insp.has_table("inventory_items"):
+        existing = {c["name"] for c in insp.get_columns("inventory_items")}
+        if "replacement_cost" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE inventory_items ADD COLUMN replacement_cost FLOAT DEFAULT 0"))
+                print("  [migration] inventory_items.replacement_cost added")
+
 
 def seed():
     Base.metadata.create_all(bind=engine)
@@ -141,12 +181,32 @@ def seed():
         },
         {
             "user_id": str(uuid.uuid4()),
+            "name": "CEO Executive",
+            "email": "ceo@securetrack.com",
+            "password_hash": hash_password("ceo123"),
+            "role": "ceo",
+            "badge_number": "ST-CEO-01",
+            "is_active": True,
+            "status": "active"
+        },
+        {
+            "user_id": str(uuid.uuid4()),
             "name": "John Supervisor",
             "email": "supervisor@securetrack.com",
-            "password_hash": hash_password("super123"),
+            "password_hash": hash_password("supervisor123"),
             "role": "supervisor",
             "badge_number": "ST-7729-X",
             "region": "Sector A",
+            "is_active": True,
+            "status": "active"
+        },
+        {
+            "user_id": str(uuid.uuid4()),
+            "name": "Team Leader",
+            "email": "leader@securetrack.com",
+            "password_hash": hash_password("leader123"),
+            "role": "leader",
+            "badge_number": "ST-L-01",
             "is_active": True,
             "status": "active"
         },
@@ -160,6 +220,66 @@ def seed():
             "region": "Sector A",
             "is_active": True,
             "status": "active"
+        },
+        {
+            "user_id": str(uuid.uuid4()),
+            "name": "Outdoor Agent",
+            "email": "outdoor@securetrack.com",
+            "password_hash": hash_password("outdoor123"),
+            "role": "outdoor",
+            "badge_number": "ST-O-001",
+            "is_active": True,
+            "status": "active"
+        },
+        {
+            "user_id": str(uuid.uuid4()),
+            "name": "Lady Guard",
+            "email": "lady@securetrack.com",
+            "password_hash": hash_password("lady123"),
+            "role": "lady",
+            "badge_number": "ST-LY-001",
+            "is_active": True,
+            "status": "active"
+        },
+        {
+            "user_id": str(uuid.uuid4()),
+            "name": "Personnel Officer",
+            "email": "personnel@securetrack.com",
+            "password_hash": hash_password("personnel123"),
+            "role": "personnel_officer",
+            "badge_number": "ST-PO-001",
+            "is_active": True,
+            "status": "active"
+        },
+        {
+            "user_id": str(uuid.uuid4()),
+            "name": "HR Manager",
+            "email": "hr@securetrack.com",
+            "password_hash": hash_password("hr123"),
+            "role": "hr",
+            "badge_number": "ST-HR-001",
+            "is_active": True,
+            "status": "active"
+        },
+        {
+            "user_id": str(uuid.uuid4()),
+            "name": "Senior Accountant",
+            "email": "accountant@securetrack.com",
+            "password_hash": hash_password("accountant123"),
+            "role": "accountant",
+            "badge_number": "ST-ACC-001",
+            "is_active": True,
+            "status": "active"
+        },
+        {
+            "user_id": str(uuid.uuid4()),
+            "name": "Operations Manager",
+            "email": "ops@securetrack.com",
+            "password_hash": hash_password("ops123"),
+            "role": "operations_manager",
+            "badge_number": "ST-OPS-001",
+            "is_active": True,
+            "status": "active"
         }
     ]
 
@@ -167,7 +287,7 @@ def seed():
         db.add(User(**u))
 
     db.commit()
-    print("Successfully seeded 3 test users.")
+    print(f"Successfully seeded {len(users_to_create)} test users.")
     db.close()
 
 if __name__ == "__main__":

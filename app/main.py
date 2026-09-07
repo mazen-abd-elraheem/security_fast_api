@@ -70,14 +70,14 @@ logging.basicConfig(
 def _run_auto_migrations():
     """
     Add missing columns that create_all won't handle on existing tables.
-    Each migration is idempotent Ã¢â‚¬â€ safe to run on every startup.
+    Each migration is idempotent Ã¢â‚¬â€  safe to run on every startup.
     """
     from sqlalchemy import inspect as sa_inspect, text as sa_text
 
     try:
         insp = sa_inspect(engine)
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ attendance_logs.total_outside_seconds Ã¢â€â‚¬Ã¢â€â‚¬
+        # Ã¢â€ â‚¬Ã¢â€ â‚¬ attendance_logs.total_outside_seconds Ã¢â€ â‚¬Ã¢â€ â‚¬
         if insp.has_table("attendance_logs"):
             existing = {c["name"] for c in insp.get_columns("attendance_logs")}
             if "total_outside_seconds" not in existing:
@@ -93,9 +93,9 @@ def _run_auto_migrations():
                         ))
                 logger.info("Ã¢Å“â€œ Migration: added 'total_outside_seconds' to attendance_logs")
             else:
-                logger.info("Ã¢Å“â€œ Migration: 'total_outside_seconds' already exists Ã¢â‚¬â€ skipped")
+                logger.info("Ã¢Å“â€œ Migration: 'total_outside_seconds' already exists Ã¢â‚¬â€  skipped")
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ users: payroll + HR columns Ã¢â€â‚¬Ã¢â€â‚¬
+        # Ã¢â€ â‚¬Ã¢â€ â‚¬ users: payroll + HR columns Ã¢â€ â‚¬Ã¢â€ â‚¬
         if insp.has_table("users"):
             existing = {c["name"] for c in insp.get_columns("users")}
             new_cols = {
@@ -190,7 +190,7 @@ def _run_auto_migrations():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    logger.info(f"Ã°Å¸â€ºÂ¡Ã¯Â¸Â Starting {settings.APP_NAME}")
+    logger.info(f"Ã°Å¸â€ºÂ¡Ã¯Â¸Â  Starting {settings.APP_NAME}")
 
     try:
         Base.metadata.create_all(bind=engine)
@@ -331,7 +331,7 @@ async def health_check():
         test_connection()
         db_status = "connected"
     except Exception:
-        db_status = "disconnected Ã¢â‚¬â€ start MySQL with: net start MySQL80"
+        db_status = "disconnected Ã¢â‚¬â€  start MySQL with: net start MySQL80"
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
