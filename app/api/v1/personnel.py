@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.api.deps import require_role
 from app.models.user import User
 from app.models.site import Site
+from app.models.shift import Shift
 from app.models.guard_roster import GuardRoster
 from app.models.guard_document import GuardDocument
 from app.models.uniform_item import UniformItem
@@ -144,12 +145,18 @@ def assign_guard(
     # Create roster entry for today if no date specified
     target_date = data.date_from or date.today().isoformat()
 
+    if not data.shift_id:
+        # Find a default shift for this site if none provided
+        shift = db.query(Shift).filter(Shift.site_id == data.site_id).first()
+        if not shift:
+            raise HTTPException(status_code=400, detail="Site has no shifts. Cannot assign guard.")
+        data.shift_id = shift.shift_id
+
     roster = GuardRoster(
         roster_id=str(uuid.uuid4()),
         guard_id=data.guard_id,
-        site_id=data.site_id,
         shift_id=data.shift_id,
-        date=target_date,
+        assigned_date=target_date,
         status="scheduled",
     )
     db.add(roster)
@@ -177,14 +184,16 @@ def list_guards(
         # Get latest roster entry
         latest_roster = db.query(GuardRoster).filter(
             GuardRoster.guard_id == guard.user_id
-        ).order_by(GuardRoster.date.desc()).first()
+        ).order_by(GuardRoster.assigned_date.desc()).first()
 
         site_name = None
         current_site_id = None
         if latest_roster:
-            site = db.query(Site).filter(Site.site_id == latest_roster.site_id).first()
-            site_name = site.name if site else None
-            current_site_id = latest_roster.site_id
+            shift = db.query(Shift).filter(Shift.shift_id == latest_roster.shift_id).first()
+            if shift:
+                site = db.query(Site).filter(Site.site_id == shift.site_id).first()
+                site_name = site.name if site else None
+                current_site_id = shift.site_id
 
         if site_id and current_site_id != site_id:
             continue
