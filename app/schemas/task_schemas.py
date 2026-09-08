@@ -50,6 +50,12 @@ class ClientAccountCreate(BaseModel):
     phone_number: Optional[str] = None
     password: str = Field(..., min_length=6)
 
+class ClientAccountUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    password: Optional[str] = None
+
 class ClientAccountOut(BaseModel):
     client_id: str
     tenant_id: str

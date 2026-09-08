@@ -213,6 +213,37 @@ def toggle_client_status(
     db.commit()
     return {"message": f"Client account {status_val}"}
 
+@router.put("/clients/{client_id}", response_model=ClientAccountOut)
+def update_client_account(
+    client_id: str,
+    update_data: ClientAccountUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Admin updates a client user account."""
+    client = db.query(ClientAccount).filter_by(client_id=client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client account not found")
+
+    if update_data.name is not None:
+        client.name = update_data.name
+    if update_data.email is not None:
+        # Check email conflict
+        exists = db.query(ClientAccount).filter(
+            ClientAccount.email == update_data.email,
+            ClientAccount.client_id != client_id
+        ).first()
+        if exists:
+            raise HTTPException(status_code=409, detail="Email already used")
+        client.email = update_data.email
+    if update_data.phone_number is not None:
+        client.phone_number = update_data.phone_number
+    if update_data.password is not None and len(update_data.password) > 0:
+        client.password_hash = hash_password(update_data.password)
+
+    db.commit()
+    db.refresh(client)
+    return client
 
 # ══════════════════════════════════════════════
 # TASK ROLE MANAGEMENT (Admin only)

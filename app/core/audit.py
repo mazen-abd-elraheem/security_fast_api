@@ -5,7 +5,7 @@ with full before/after snapshots across every API endpoint.
 """
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, time
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -39,7 +39,7 @@ def _model_to_dict(obj) -> dict:
     data = {}
     for col in obj.__table__.columns:
         val = getattr(obj, col.name, None)
-        if isinstance(val, datetime):
+        if isinstance(val, (datetime, date, time)):
             val = val.isoformat()
         data[col.name] = val
     return _sanitize_dict(data)
