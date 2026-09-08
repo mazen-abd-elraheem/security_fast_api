@@ -50,3 +50,11 @@ from app.models.travel_allowance_entry import TravelAllowanceEntry
 from app.models.revoked_token import RevokedToken
 from app.models.rest_allowance_config import RestAllowanceConfig
 from app.models.employee_rest_allowance import EmployeeRestAllowance
+
+from app.models.task_models import (
+    Tenant, TenantSiteAccess, ClientAccount,
+    TaskRole, TaskRoleAssignment,
+    TaskTemplate, TaskSection, TaskItem, TaskItemAlertRecipient,
+    TaskInstance, TaskResponse,
+    TaskAlert, TaskAlertDelivery,
+)

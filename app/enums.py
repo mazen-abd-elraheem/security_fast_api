@@ -128,3 +128,64 @@ class DocumentType(str, Enum):
     NATIONAL_ID_FRONT = "national_id_front"
     NATIONAL_ID_BACK = "national_id_back"
 
+
+# ══════════════════════════════════════════════
+# Task Inspection & Alert System Enums
+# ══════════════════════════════════════════════
+
+class TaskItemResponseType(str, Enum):
+    """How a leader can respond to a task item."""
+    RIGHT_WRONG = "right_wrong"            # ✓ / ✗ only
+    NOTE = "note"                          # Free-text observation
+    RIGHT_WRONG_NOTE = "right_wrong_note"  # ✓ / ✗ + optional note
+
+
+class TaskItemResult(str, Enum):
+    """The result the leader selects for a task item."""
+    PASS = "pass"
+    FAIL = "fail"
+    NA = "na"
+
+
+class TaskInstanceStatus(str, Enum):
+    """Lifecycle of a task instance."""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    REVIEWED = "reviewed"         # Client approved/rejected
+    SYNCED = "synced"             # Completed offline then synced
+
+
+class TaskAlertStatus(str, Enum):
+    """Lifecycle of an alert triggered by a failed task item."""
+    PENDING = "pending"
+    ACKNOWLEDGED = "acknowledged"
+    ESCALATED = "escalated"
+
+
+class TaskAlertType(str, Enum):
+    """What triggered the alert."""
+    WRONG = "wrong"      # Leader marked item as ✗
+    NOTE = "note"        # Leader wrote a note on an alertable item
+
+
+class TenantStatus(str, Enum):
+    """Status of a client tenant (e.g. the bank)."""
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    PENDING_APPROVAL = "pending_approval"
+
+
+class ClientAccountStatus(str, Enum):
+    """Status of a client user account."""
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    PENDING_APPROVAL = "pending_approval"
+
+
+class TaskRecurrenceRule(str, Enum):
+    """How often a recurring task template repeats."""
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    CUSTOM = "custom"

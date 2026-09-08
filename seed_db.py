@@ -157,6 +157,24 @@ def _run_seed_migrations():
                 conn.execute(sa_text("ALTER TABLE inventory_items ADD COLUMN replacement_cost FLOAT DEFAULT 0"))
                 print("  [migration] inventory_items.replacement_cost added")
 
+    # ══════════════════════════════════════════════
+    # Task Inspection & Alert System tables
+    # ══════════════════════════════════════════════
+    # These are NEW tables — Base.metadata.create_all() handles initial creation.
+    # This block ensures future column additions are handled idempotently.
+    task_tables = [
+        "tenants", "tenant_site_access", "client_accounts",
+        "task_roles", "task_role_assignments",
+        "task_templates", "task_sections", "task_items", "task_item_alert_recipients",
+        "task_instances", "task_responses",
+        "task_alerts", "task_alert_deliveries",
+    ]
+    for tbl in task_tables:
+        if insp.has_table(tbl):
+            print(f"  [migration] {tbl} table exists ✓")
+        else:
+            print(f"  [migration] {tbl} will be created by create_all")
+
 
 def seed():
     Base.metadata.create_all(bind=engine)
