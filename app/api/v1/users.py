@@ -181,7 +181,7 @@ def list_users(
     region: Optional[str] = Query(None, description="Filter by region"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=50),
+    limit: int = Query(1000, ge=1, le=2000),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
