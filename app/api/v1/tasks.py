@@ -23,7 +23,7 @@ from app.models.task_models import (
 )
 from app.schemas.task_schemas import (
     TenantCreate, TenantUpdate, TenantOut, TenantSiteAccessCreate,
-    ClientAccountCreate, ClientAccountOut,
+    ClientAccountCreate, ClientAccountUpdate, ClientAccountOut,
     TaskRoleCreate, TaskRoleUpdate, TaskRoleOut, TaskRoleAssignmentCreate,
     TaskTemplateCreate, TaskTemplateUpdate, TaskTemplateOut,
     TaskSectionCreate, TaskSectionOut,
