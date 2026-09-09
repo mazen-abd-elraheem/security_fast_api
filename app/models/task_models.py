@@ -32,6 +32,7 @@ class Tenant(Base):
 
     tenant_id = Column(String(36), primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    tenant_code = Column(String(20), nullable=False, unique=True, index=True)  # Auto-generated login code
     contact_email = Column(String(255), nullable=True)
     contact_phone = Column(String(50), nullable=True)
     status = Column(String(30), nullable=False, default="pending_approval")
@@ -346,6 +347,7 @@ class TaskInstance(Base):
     site = relationship("Site")
     responses = relationship("TaskResponse", back_populates="instance", cascade="all, delete-orphan")
     alerts = relationship("TaskAlert", back_populates="instance", cascade="all, delete-orphan")
+    comments = relationship("TaskInstanceComment", back_populates="instance", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<TaskInstance({self.instance_id}, template={self.template_id}, status={self.status})>"
@@ -450,3 +452,35 @@ class TaskAlertDelivery(Base):
     def __repr__(self):
         target = self.user_id or self.client_id
         return f"<TaskAlertDelivery(alert={self.alert_id}, target={target})>"
+
+
+# ══════════════════════════════════════════════
+# Task Instance Comments
+# ══════════════════════════════════════════════
+
+class TaskInstanceComment(Base):
+    """
+    A comment/note on a task instance — can be from a client account or internal user.
+    """
+    __tablename__ = "task_instance_comments"
+    __table_args__ = (
+        Index('ix_tic_instance', 'instance_id'),
+    )
+
+    comment_id = Column(String(36), primary_key=True, index=True)
+    instance_id = Column(String(36), ForeignKey("task_instances.instance_id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+
+    # One of these is set (internal user or client account)
+    client_id = Column(String(36), ForeignKey("client_accounts.client_id", ondelete="CASCADE"), nullable=True)
+    user_id = Column(String(36), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=True)
+
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    instance = relationship("TaskInstance", back_populates="comments")
+
+    def __repr__(self):
+        author = self.client_id or self.user_id
+        return f"<TaskInstanceComment({self.comment_id}, author={author})>"

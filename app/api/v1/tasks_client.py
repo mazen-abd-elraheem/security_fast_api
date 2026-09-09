@@ -19,11 +19,14 @@ from app.models.task_models import (
     TaskTemplate, TaskSection, TaskItem,
     TaskInstance, TaskResponse,
     TaskAlert, TaskAlertDelivery,
+    TaskInstanceComment,
 )
 from app.schemas.task_schemas import (
     ClientLoginRequest, ClientLoginResponse, ClientAccountOut,
     TaskInstanceOut, TaskInstanceReview, TaskResponseOut,
     TaskAlertOut,
+    TaskInstanceCommentCreate, TaskInstanceCommentOut,
+    ClientMeResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -183,6 +186,27 @@ def client_self_register(
     return client
 
 
+@router.get("/me", response_model=ClientMeResponse)
+def client_profile(
+    client: ClientAccount = Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    """Get the current client's profile with resolved permissions."""
+    permissions = _get_client_permissions(db, client.client_id)
+    tenant = db.query(Tenant).filter_by(tenant_id=client.tenant_id).first()
+    return ClientMeResponse(
+        client_id=client.client_id,
+        tenant_id=client.tenant_id,
+        tenant_name=tenant.name if tenant else None,
+        name=client.name,
+        email=client.email,
+        phone_number=client.phone_number,
+        status=client.status,
+        permissions=permissions,
+        created_at=client.created_at,
+    )
+
+
 # ══════════════════════════════════════════════
 # CLIENT TASK VIEWS (Tenant-scoped)
 # ══════════════════════════════════════════════
@@ -200,6 +224,7 @@ def client_list_instances(
     db: Session = Depends(get_db),
 ):
     """View task instances scoped to the client's tenant sites."""
+    _check_client_permission(db, client, "tasks.view")
     site_ids = _get_tenant_site_ids(db, client.tenant_id)
     if not site_ids:
         return []
@@ -219,6 +244,7 @@ def client_get_instance(
     db: Session = Depends(get_db),
 ):
     """View a specific task instance (must be in client's sites)."""
+    _check_client_permission(db, client, "tasks.view")
     site_ids = _get_tenant_site_ids(db, client.tenant_id)
     instance = db.query(TaskInstance).filter_by(instance_id=instance_id).first()
     if not instance or instance.site_id not in site_ids:
@@ -262,6 +288,7 @@ def client_alerts(
     db: Session = Depends(get_db),
 ):
     """View alerts for the client's sites."""
+    _check_client_permission(db, client, "alerts.view")
     site_ids = _get_tenant_site_ids(db, client.tenant_id)
     if not site_ids:
         return []
@@ -344,6 +371,7 @@ def client_reports(
     db: Session = Depends(get_db),
 ):
     """Client analytics — task completion stats for their sites."""
+    _check_client_permission(db, client, "reports.view")
     site_ids = _get_tenant_site_ids(db, client.tenant_id)
     if not site_ids:
         return {"total": 0, "completed": 0, "pending": 0, "failed_items": 0, "pass_rate": 0}
@@ -409,6 +437,17 @@ def _check_client_permission(db: Session, client: ClientAccount, permission: str
     raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
 
 
+def _get_client_permissions(db: Session, client_id: str) -> List[str]:
+    """Get all resolved permissions for a client from their role assignments."""
+    assignments = db.query(TaskRoleAssignment).filter_by(client_id=client_id).all()
+    permissions = set()
+    for assignment in assignments:
+        role = db.query(TaskRole).filter_by(role_id=assignment.task_role_id).first()
+        if role and role.permissions:
+            permissions.update(role.permissions)
+    return sorted(permissions)
+
+
 def _load_client_instance(db: Session, instance: TaskInstance) -> TaskInstanceOut:
     """Load instance details for client view."""
     from app.models.user import User
@@ -452,3 +491,85 @@ def _load_client_instance(db: Session, instance: TaskInstance) -> TaskInstanceOu
         created_at=instance.created_at,
         responses=responses_out,
     )
+
+
+# ══════════════════════════════════════════════
+# TASK INSTANCE COMMENTS
+# ══════════════════════════════════════════════
+
+@router.post("/instances/{instance_id}/comments", response_model=TaskInstanceCommentOut, status_code=201)
+def client_add_comment(
+    instance_id: str,
+    body: TaskInstanceCommentCreate,
+    client: ClientAccount = Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    """Add a comment to a task instance (requires comments.create permission)."""
+    _check_client_permission(db, client, "comments.create")
+
+    site_ids = _get_tenant_site_ids(db, client.tenant_id)
+    instance = db.query(TaskInstance).filter_by(instance_id=instance_id).first()
+    if not instance or instance.site_id not in site_ids:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    comment = TaskInstanceComment(
+        comment_id=str(uuid.uuid4()),
+        instance_id=instance_id,
+        client_id=client.client_id,
+        content=body.content,
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+
+    logger.info(f"Client {client.client_id} commented on instance {instance_id}")
+    return TaskInstanceCommentOut(
+        comment_id=comment.comment_id,
+        instance_id=comment.instance_id,
+        client_id=comment.client_id,
+        user_id=comment.user_id,
+        author_name=client.name,
+        content=comment.content,
+        created_at=comment.created_at,
+    )
+
+
+@router.get("/instances/{instance_id}/comments", response_model=List[TaskInstanceCommentOut])
+def client_list_comments(
+    instance_id: str,
+    client: ClientAccount = Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    """List comments on a task instance."""
+    _check_client_permission(db, client, "tasks.view")
+
+    site_ids = _get_tenant_site_ids(db, client.tenant_id)
+    instance = db.query(TaskInstance).filter_by(instance_id=instance_id).first()
+    if not instance or instance.site_id not in site_ids:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    comments = db.query(TaskInstanceComment).filter_by(
+        instance_id=instance_id
+    ).order_by(TaskInstanceComment.created_at.desc()).all()
+
+    results = []
+    for c in comments:
+        author = "Unknown"
+        if c.client_id:
+            ca = db.query(ClientAccount).filter_by(client_id=c.client_id).first()
+            author = ca.name if ca else "Client"
+        elif c.user_id:
+            from app.models.user import User
+            u = db.query(User).filter_by(user_id=c.user_id).first()
+            author = u.name if u else "Staff"
+        results.append(TaskInstanceCommentOut(
+            comment_id=c.comment_id,
+            instance_id=c.instance_id,
+            client_id=c.client_id,
+            user_id=c.user_id,
+            author_name=author,
+            content=c.content,
+            created_at=c.created_at,
+        ))
+    return results
+

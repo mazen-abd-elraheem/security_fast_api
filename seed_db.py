@@ -168,12 +168,31 @@ def _run_seed_migrations():
         "task_templates", "task_sections", "task_items", "task_item_alert_recipients",
         "task_instances", "task_responses",
         "task_alerts", "task_alert_deliveries",
+        "task_instance_comments",
     ]
     for tbl in task_tables:
         if insp.has_table(tbl):
             print(f"  [migration] {tbl} table exists ✓")
         else:
             print(f"  [migration] {tbl} will be created by create_all")
+
+    # ── Tenants: add tenant_code column ──
+    if insp.has_table("tenants"):
+        existing = {c["name"] for c in insp.get_columns("tenants")}
+        if "tenant_code" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE tenants ADD COLUMN tenant_code VARCHAR(20) NULL"))
+                print("  [migration] tenants.tenant_code added")
+                # Back-fill existing tenants with auto-generated codes
+                from app.models.task_models import Tenant
+                rows = conn.execute(sa_text("SELECT tenant_id FROM tenants WHERE tenant_code IS NULL")).fetchall()
+                import random, string
+                for row in rows:
+                    code = 'T-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+                    conn.execute(sa_text(f"UPDATE tenants SET tenant_code = :code WHERE tenant_id = :tid"),
+                                 {"code": code, "tid": row[0]})
+                    print(f"  [migration] tenants back-filled code {code} for {row[0]}")
+
 
 
 def seed():

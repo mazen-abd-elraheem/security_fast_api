@@ -26,6 +26,7 @@ class TenantUpdate(BaseModel):
 class TenantOut(BaseModel):
     tenant_id: str
     name: str
+    tenant_code: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
     status: str
@@ -304,6 +305,66 @@ class TaskAlertOut(BaseModel):
     escalated_at: Optional[datetime] = None
     created_at: datetime
     deliveries: List[TaskAlertDeliveryOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════
+# Comment Schemas
+# ══════════════════════════════════════════════
+
+class TaskInstanceCommentCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=2000)
+
+class TaskInstanceCommentOut(BaseModel):
+    comment_id: str
+    instance_id: str
+    client_id: Optional[str] = None
+    user_id: Optional[str] = None
+    author_name: str = ""
+    content: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════
+# Client Profile Response
+# ══════════════════════════════════════════════
+
+class ClientMeResponse(BaseModel):
+    client_id: str
+    tenant_id: str
+    tenant_name: Optional[str] = None
+    name: str
+    email: str
+    phone_number: Optional[str] = None
+    status: str
+    permissions: List[str] = []
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════
+# Task Instance Comments
+# ══════════════════════════════════════════════
+
+class TaskInstanceCommentCreate(BaseModel):
+    content: str
+
+
+class TaskInstanceCommentOut(BaseModel):
+    comment_id: str
+    instance_id: str
+    client_id: Optional[str] = None
+    user_id: Optional[str] = None
+    author_name: Optional[str] = None
+    content: str
+    created_at: datetime
 
     class Config:
         from_attributes = True

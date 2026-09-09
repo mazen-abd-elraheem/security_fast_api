@@ -4,6 +4,8 @@ Admin + Leader endpoints for template CRUD, instance assignment, and response su
 """
 import uuid
 import logging
+import random
+import string
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -49,9 +51,15 @@ def create_tenant(
     current_user: User = Depends(require_role(UserRole.ADMIN)),
 ):
     """Create a new client tenant (e.g. a bank)."""
+    # Auto-generate a unique tenant code (T-XXXXXX)
+    while True:
+        code = 'T-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        if not db.query(Tenant).filter(Tenant.tenant_code == code).first():
+            break
     tenant = Tenant(
         tenant_id=str(uuid.uuid4()),
         name=body.name,
+        tenant_code=code,
         contact_email=body.contact_email,
         contact_phone=body.contact_phone,
         status="active",
@@ -60,7 +68,7 @@ def create_tenant(
     db.add(tenant)
     db.commit()
     db.refresh(tenant)
-    logger.info(f"Tenant created: {tenant.name} by {current_user.user_id}")
+    logger.info(f"Tenant created: {tenant.name} (code={code}) by {current_user.user_id}")
     return tenant
 
 
@@ -71,6 +79,21 @@ def list_tenants(
 ):
     """List all tenants."""
     return db.query(Tenant).order_by(Tenant.created_at.desc()).all()
+
+
+@router.get("/tenants/lookup")
+def lookup_tenant_by_code(
+    code: str = Query(..., min_length=1, description="Tenant code (e.g. T-AB12CD)"),
+    db: Session = Depends(get_db),
+):
+    """Public endpoint — resolve a tenant code to tenant_id + name for client login."""
+    tenant = db.query(Tenant).filter(
+        Tenant.tenant_code == code.upper().strip(),
+        Tenant.status == "active",
+    ).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Invalid tenant code")
+    return {"tenant_id": tenant.tenant_id, "name": tenant.name}
 
 
 @router.put("/tenants/{tenant_id}", response_model=TenantOut)
