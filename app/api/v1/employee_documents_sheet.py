@@ -175,17 +175,59 @@ def _build_documents_sheet_data(db: Session) -> list[dict]:
 
 @router.get("/report", summary="Employee documents sheet report")
 def get_documents_sheet_report(
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR)),
     db: Session = Depends(get_db),
+    user: User = Depends(require_role([UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER]))
 ):
-    rows = _build_documents_sheet_data(db)
-    return {
-        "total": len(rows),
-        "employees": rows,
-    }
+    """
+    Returns the comprehensive documents tracking sheet for all guards/leaders/supervisors.
+    """
+    data = _build_documents_sheet_data(db)
+    return data
+
+@router.get("/photos", summary="Employee documents photos report")
+def get_documents_photos_report(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role([UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER]))
+):
+    """
+    Returns employees with their actual uploaded document photos.
+    """
+    data = _build_documents_sheet_data(db)
+    
+    # We also need the actual documents
+    employees = (
+        db.query(User)
+        .filter(User.role.in_(DOC_ROLES), User.is_active == True)
+        .all()
+    )
+    employee_ids = [e.user_id for e in employees]
+    documents = (
+        db.query(GuardDocument)
+        .filter(GuardDocument.guard_id.in_(employee_ids))
+        .all()
+    )
+    
+    docs_by_guard = defaultdict(list)
+    for d in documents:
+        if d.file_url:
+            docs_by_guard[d.guard_id].append({
+                "type": d.document_type,
+                "url": d.file_url
+            })
+            
+    # Filter the data to only include employees with at least one document
+    result = []
+    for row in data:
+        eid = row["user_id"]
+        if docs_by_guard[eid]:
+            row_copy = row.copy()
+            row_copy["documents"] = docs_by_guard[eid]
+            result.append(row_copy)
+            
+    return result
 
 
-@router.put("/update-cells", summary="Batch update editable document cells")
+@router.post("/batch-update", summary="Batch update employee documents fields")
 def batch_update_cells(
     data: DocBatchUpdateRequest,
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
