@@ -24,7 +24,7 @@ from app.models.task_models import (
 from app.schemas.task_schemas import (
     TenantCreate, TenantUpdate, TenantOut, TenantSiteAccessCreate,
     ClientAccountCreate, ClientAccountUpdate, ClientAccountOut,
-    TaskRoleCreate, TaskRoleUpdate, TaskRoleOut, TaskRoleAssignmentCreate,
+    TaskRoleCreate, TaskRoleUpdate, TaskRoleOut, TaskRoleAssignmentCreate, TaskRoleAssignmentOut,
     TaskTemplateCreate, TaskTemplateUpdate, TaskTemplateOut,
     TaskSectionCreate, TaskSectionOut,
     TaskItemCreate, TaskItemUpdate, TaskItemOut,
@@ -354,6 +354,38 @@ def assign_task_role(
     db.add(assignment)
     db.commit()
     return {"message": "Task role assigned"}
+
+
+@router.get("/roles/{role_id}/assignments", response_model=List[TaskRoleAssignmentOut])
+def get_task_role_assignments(
+    role_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Get all assignments for a task role."""
+    assignments = db.query(TaskRoleAssignment).filter_by(task_role_id=role_id).all()
+    results = []
+    for a in assignments:
+        name, email = None, None
+        if a.user_id:
+            from app.models.user import User as UserModel
+            u = db.query(UserModel).filter_by(user_id=a.user_id).first()
+            if u:
+                name, email = u.name, u.email
+        elif a.client_id:
+            c = db.query(ClientAccount).filter_by(client_id=a.client_id).first()
+            if c:
+                name, email = c.name, c.email
+        
+        results.append(TaskRoleAssignmentOut(
+            id=a.id,
+            task_role_id=a.task_role_id,
+            user_id=a.user_id,
+            client_id=a.client_id,
+            user_name=name,
+            user_email=email
+        ))
+    return results
 
 
 @router.delete("/roles/{role_id}/unassign", status_code=200)

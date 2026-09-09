@@ -111,6 +111,17 @@ class TaskRoleAssignmentCreate(BaseModel):
     user_id: Optional[str] = None
     client_id: Optional[str] = None
 
+class TaskRoleAssignmentOut(BaseModel):
+    id: int
+    task_role_id: str
+    user_id: Optional[str] = None
+    client_id: Optional[str] = None
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
 
 # ══════════════════════════════════════════════
 # Task Template Schemas
