@@ -55,6 +55,7 @@ from app.api.v1 import (
     tasks,
     tasks_client,
     terminations_report,
+    vacations,
 )
 
 settings = get_settings()
@@ -392,6 +393,7 @@ app.include_router(clothes_inventory.router, prefix="/api/v1/clothes-inventory",
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["Task Inspection"])
 app.include_router(tasks_client.router, prefix="/api/v1/tasks/client", tags=["Task Inspection (Client)"])
 app.include_router(terminations_report.router, prefix="/api/v1/terminations", tags=["Terminations Report"])
+app.include_router(vacations.router, prefix="/api/v1/vacations", tags=["Vacations"])
 
 # ==========================================
 # Static Files (uploaded images) Ã¢â‚¬â€  must be AFTER routers

@@ -58,3 +58,4 @@ from app.models.task_models import (
     TaskInstance, TaskResponse,
     TaskAlert, TaskAlertDelivery,
 )
+from app.models.vacation_request import VacationRequest
