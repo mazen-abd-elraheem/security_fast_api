@@ -176,7 +176,7 @@ def _build_documents_sheet_data(db: Session) -> list[dict]:
 @router.get("/report", summary="Employee documents sheet report")
 def get_documents_sheet_report(
     db: Session = Depends(get_db),
-    user: User = Depends(require_role([UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER]))
+    user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER))
 ):
     """
     Returns the comprehensive documents tracking sheet for all guards/leaders/supervisors.
@@ -187,7 +187,7 @@ def get_documents_sheet_report(
 @router.get("/photos", summary="Employee documents photos report")
 def get_documents_photos_report(
     db: Session = Depends(get_db),
-    user: User = Depends(require_role([UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER]))
+    user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER))
 ):
     """
     Returns employees with their actual uploaded document photos.
