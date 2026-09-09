@@ -9,6 +9,9 @@ from typing import Optional, List
 from datetime import datetime, timezone
 import uuid
 
+
+
+
 from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models.separation_request import SeparationRequest
@@ -101,6 +104,86 @@ def create_separation(
     db.commit()
     db.refresh(separation)
     return separation
+
+
+@router.get("/terminated", summary="List terminated employees")
+def list_terminated_employees(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.PERSONNEL_OFFICER, UserRole.HR))
+):
+    """List all inactive employees with their last supervisor and termination reason."""
+    inactive_users = db.query(User).filter(User.is_active == False).all()
+    
+    clothes_records = db.query(ClothesTermination).all()
+    clothes_map = {c.user_name: c for c in clothes_records if c.user_name}
+    
+    results = []
+    for u in inactive_users:
+        user_id = u.user_id
+        
+        # Last assigned supervisor
+        last_roster = (
+            db.query(GuardRoster)
+            .filter(GuardRoster.guard_id == user_id)
+            .order_by(GuardRoster.shift_date.desc())
+            .first()
+        )
+        
+        last_supervisor = "غير محدد"
+        if last_roster and last_roster.supervisor_id:
+            sup = db.query(User).filter(User.user_id == last_roster.supervisor_id).first()
+            if sup:
+                last_supervisor = sup.name
+                
+        # Termination reason
+        reason = "غير محدد"
+        # First check ClothesTermination
+        c_record = clothes_map.get(u.name)
+        if c_record and c_record.reason:
+            reason = c_record.reason
+        else:
+            # Check SeparationRequest
+            sep = (
+                db.query(SeparationRequest)
+                .filter(SeparationRequest.user_id == user_id)
+                .order_by(SeparationRequest.created_at.desc())
+                .first()
+            )
+            if sep and sep.reason:
+                reason = sep.reason
+                
+        results.append({
+            "user_id": user_id,
+            "employee_code": u.employee_code or "-",
+            "name": u.name,
+            "supervisor": last_supervisor,
+            "reason": reason
+        })
+        
+    return results
+
+
+@router.post("/{user_id}/request-return", summary="Request return for a terminated employee")
+def request_employee_return(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.PERSONNEL_OFFICER))
+):
+    """
+    Sets the user's status back to pending to place them in the activation queue.
+    Keeps them inactive until HR approves.
+    """
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if user.is_active:
+        raise HTTPException(status_code=400, detail="User is already active")
+        
+    user.status = UserStatus.PENDING
+    db.commit()
+    
+    return {"message": "Return requested successfully"}
 
 
 @router.get("/", response_model=List[SeparationResponse])
@@ -224,83 +307,3 @@ def action_separation(
     db.commit()
     db.refresh(sep)
     return sep
-
-
-@router.get("/terminated", summary="List terminated employees")
-def list_terminated_employees(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.PERSONNEL_OFFICER, UserRole.HR))
-):
-    """List all inactive employees with their last supervisor and termination reason."""
-    inactive_users = db.query(User).filter(User.is_active == False).all()
-    
-    clothes_records = db.query(ClothesTermination).all()
-    clothes_map = {c.user_name: c for c in clothes_records if c.user_name}
-    
-    results = []
-    for u in inactive_users:
-        user_id = u.user_id
-        
-        # Last assigned supervisor
-        last_roster = (
-            db.query(GuardRoster)
-            .filter(GuardRoster.guard_id == user_id)
-            .order_by(GuardRoster.shift_date.desc())
-            .first()
-        )
-        
-        last_supervisor = "غير محدد"
-        if last_roster and last_roster.supervisor_id:
-            sup = db.query(User).filter(User.user_id == last_roster.supervisor_id).first()
-            if sup:
-                last_supervisor = sup.name
-                
-        # Termination reason
-        reason = "غير محدد"
-        # First check ClothesTermination
-        c_record = clothes_map.get(u.name)
-        if c_record and c_record.reason:
-            reason = c_record.reason
-        else:
-            # Check SeparationRequest
-            sep = (
-                db.query(SeparationRequest)
-                .filter(SeparationRequest.user_id == user_id)
-                .order_by(SeparationRequest.created_at.desc())
-                .first()
-            )
-            if sep and sep.reason:
-                reason = sep.reason
-                
-        results.append({
-            "user_id": user_id,
-            "employee_code": u.employee_code or "-",
-            "name": u.name,
-            "supervisor": last_supervisor,
-            "reason": reason
-        })
-        
-    return results
-
-
-@router.post("/{user_id}/request-return", summary="Request return for a terminated employee")
-def request_employee_return(
-    user_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.PERSONNEL_OFFICER))
-):
-    """
-    Sets the user's status back to pending to place them in the activation queue.
-    Keeps them inactive until HR approves.
-    """
-    user = db.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-        
-    if user.is_active:
-        raise HTTPException(status_code=400, detail="User is already active")
-        
-    user.status = UserStatus.PENDING
-    db.commit()
-    
-    return {"message": "Return requested successfully"}
