@@ -98,6 +98,25 @@ def get_current_client(
     return _get_current_client(db, payload)
 
 
+@router.get("/verify-tenant", summary="Verify a tenant code")
+def verify_tenant(
+    code: str = Query(..., min_length=1, description="Tenant organisation code"),
+    db: Session = Depends(get_db),
+):
+    """Verify that a tenant_code is valid and return tenant info."""
+    tenant = db.query(Tenant).filter_by(tenant_code=code).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Invalid organisation code")
+    if tenant.status not in ("active", "pending_approval"):
+        raise HTTPException(status_code=403, detail="Organisation is not active")
+    return {
+        "tenant_id": tenant.tenant_id,
+        "name": tenant.name,
+        "logo_url": tenant.logo_url,
+        "status": tenant.status,
+    }
+
+
 @router.post("/login", response_model=ClientLoginResponse)
 def client_login(
     body: ClientLoginRequest,
