@@ -87,13 +87,23 @@ def create_separation(
     if current_user.role not in ("leader", "admin"):
         raise HTTPException(status_code=403, detail="Only Leaders can initiate separation requests")
 
+    actual_site_id = payload.site_id
+    actual_site_name = payload.site_name
+    
+    if actual_site_id == "admin_init":
+        # Find a valid site to satisfy the foreign key constraint
+        fallback_site = db.query(Site).first()
+        if fallback_site:
+            actual_site_id = fallback_site.site_id
+            # Keep actual_site_name as 'Admin Initiated' for UI display
+
     separation = SeparationRequest(
         separation_id=str(uuid.uuid4()),
         user_id=payload.user_id,
         user_name=payload.user_name,
         employee_code=payload.employee_code,
-        site_id=payload.site_id,
-        site_name=payload.site_name,
+        site_id=actual_site_id,
+        site_name=actual_site_name,
         separation_type=payload.separation_type,
         reason=payload.reason,
         status="pending_supervisor",
