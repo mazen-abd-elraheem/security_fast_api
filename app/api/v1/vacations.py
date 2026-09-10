@@ -128,7 +128,7 @@ def action_vacation_request(
     request_id: str,
     action: str = Query(..., description="'approve' or 'reject'"),
     notes: Optional[str] = Query(None),
-    current_user: User = Depends(require_role(UserRole.OPS_MANAGER, UserRole.ADMIN, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.OPERATIONS_MANAGER, UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """Ops Manager approves or rejects the request."""
