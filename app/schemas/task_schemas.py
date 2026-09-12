@@ -50,12 +50,16 @@ class ClientAccountCreate(BaseModel):
     email: str = Field(..., min_length=1, max_length=255)
     phone_number: Optional[str] = None
     password: str = Field(..., min_length=6)
+    site_id: Optional[str] = None
+    role_id: Optional[str] = None
 
 class ClientAccountUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     phone_number: Optional[str] = None
     password: Optional[str] = None
+    site_id: Optional[str] = None
+    role_id: Optional[str] = None
 
 class ClientAccountOut(BaseModel):
     client_id: str
@@ -65,9 +69,17 @@ class ClientAccountOut(BaseModel):
     phone_number: Optional[str] = None
     status: str
     created_at: datetime
+    site_id: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+class ClientAccountDetailOut(ClientAccountOut):
+    site_name: Optional[str] = None
+    tenant_name: str
+    tenant_code: str
+    role_name: Optional[str] = None
+    role_id: Optional[str] = None
 
 class ClientLoginRequest(BaseModel):
     email: str

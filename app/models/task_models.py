@@ -90,6 +90,7 @@ class ClientAccount(Base):
 
     client_id = Column(String(36), primary_key=True, index=True)
     tenant_id = Column(String(36), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False, index=True)
+    site_id = Column(String(36), ForeignKey("sites.site_id", ondelete="SET NULL"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), nullable=False)
     phone_number = Column(String(20), nullable=True)
@@ -104,6 +105,7 @@ class ClientAccount(Base):
 
     # Relationships
     tenant = relationship("Tenant", back_populates="client_accounts")
+    site = relationship("Site")
     role_assignments = relationship("TaskRoleAssignment", back_populates="client_account",
                                     cascade="all, delete-orphan",
                                     foreign_keys="TaskRoleAssignment.client_id")

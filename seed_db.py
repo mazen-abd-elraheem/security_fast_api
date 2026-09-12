@@ -183,6 +183,14 @@ def _run_seed_migrations():
                 conn.execute(sa_text("ALTER TABLE inventory_items ADD COLUMN replacement_cost FLOAT DEFAULT 0"))
                 print("  [migration] inventory_items.replacement_cost added")
 
+    # ── Client Accounts: add site_id ──
+    if insp.has_table("client_accounts"):
+        existing = {c["name"] for c in insp.get_columns("client_accounts")}
+        if "site_id" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE client_accounts ADD COLUMN site_id VARCHAR(36) NULL"))
+                print("  [migration] client_accounts.site_id added")
+
     # ══════════════════════════════════════════════
     # Task Inspection & Alert System tables
     # ══════════════════════════════════════════════

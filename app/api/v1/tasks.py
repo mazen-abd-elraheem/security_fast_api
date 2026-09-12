@@ -25,7 +25,7 @@ from app.models.task_models import (
 )
 from app.schemas.task_schemas import (
     TenantCreate, TenantUpdate, TenantOut, TenantSiteAccessCreate,
-    ClientAccountCreate, ClientAccountUpdate, ClientAccountOut,
+    ClientAccountCreate, ClientAccountUpdate, ClientAccountOut, ClientAccountDetailOut,
     TaskRoleCreate, TaskRoleUpdate, TaskRoleOut, TaskRoleAssignmentCreate, TaskRoleAssignmentOut,
     TaskTemplateCreate, TaskTemplateUpdate, TaskTemplateOut,
     TaskSectionCreate, TaskSectionOut,
@@ -204,8 +204,19 @@ def create_client_account(
         password_hash=hash_password(body.password),
         status="active",
         created_by=current_user.user_id,
+        site_id=body.site_id,
     )
     db.add(client)
+    
+    if body.role_id:
+        role = db.query(TaskRole).filter_by(role_id=body.role_id).first()
+        if role:
+            assignment = TaskRoleAssignment(
+                task_role_id=body.role_id,
+                client_id=client.client_id
+            )
+            db.add(assignment)
+
     db.commit()
     db.refresh(client)
     return client
@@ -219,6 +230,56 @@ def list_client_accounts(
 ):
     """List all client accounts for a tenant."""
     return db.query(ClientAccount).filter_by(tenant_id=tenant_id).order_by(ClientAccount.created_at.desc()).all()
+
+
+@router.get("/tenants/{tenant_id}/clients/detailed", response_model=List[ClientAccountDetailOut])
+def list_client_accounts_detailed(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """List all client accounts for a tenant with detailed relations (Site, Role)."""
+    tenant = db.query(Tenant).filter_by(tenant_id=tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+        
+    clients = db.query(ClientAccount).filter_by(tenant_id=tenant_id).order_by(ClientAccount.created_at.desc()).all()
+    results = []
+    
+    for client in clients:
+        site_name = None
+        if client.site_id:
+            from app.models.site import Site
+            site = db.query(Site).filter_by(site_id=client.site_id).first()
+            if site:
+                site_name = site.name
+                
+        role_name = None
+        role_id = None
+        assignment = db.query(TaskRoleAssignment).filter_by(client_id=client.client_id).first()
+        if assignment:
+            role = db.query(TaskRole).filter_by(role_id=assignment.task_role_id).first()
+            if role:
+                role_name = role.name
+                role_id = role.role_id
+                
+        results.append(ClientAccountDetailOut(
+            client_id=client.client_id,
+            tenant_id=client.tenant_id,
+            name=client.name,
+            email=client.email,
+            phone_number=client.phone_number,
+            status=client.status,
+            created_at=client.created_at,
+            site_id=client.site_id,
+            site_name=site_name,
+            tenant_name=tenant.name,
+            tenant_code=tenant.tenant_code,
+            role_name=role_name,
+            role_id=role_id,
+        ))
+        
+    return results
 
 
 @router.put("/clients/{client_id}/status")
@@ -263,6 +324,21 @@ def update_client_account(
         client.phone_number = update_data.phone_number
     if update_data.password is not None and len(update_data.password) > 0:
         client.password_hash = hash_password(update_data.password)
+    if update_data.site_id is not None:
+        # If passed as empty string, treat as removing site
+        client.site_id = update_data.site_id if update_data.site_id else None
+        
+    if update_data.role_id is not None:
+        # Remove existing assignment
+        db.query(TaskRoleAssignment).filter_by(client_id=client_id).delete()
+        if update_data.role_id:
+            role = db.query(TaskRole).filter_by(role_id=update_data.role_id).first()
+            if role:
+                assignment = TaskRoleAssignment(
+                    task_role_id=update_data.role_id,
+                    client_id=client.client_id
+                )
+                db.add(assignment)
 
     db.commit()
     db.refresh(client)
