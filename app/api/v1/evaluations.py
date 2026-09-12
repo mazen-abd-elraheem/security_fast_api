@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack — Guard Evaluations API
 Supervisors evaluate guards; HR/Admin can view all evaluations.
 """
@@ -116,3 +116,74 @@ def get_evaluation(
     if not ev:
         raise HTTPException(status_code=404, detail="Evaluation not found")
     return _eval_dict(ev)
+
+
+@router.get("/summary/all", summary="Get aggregated evaluations summary for admin/ops")
+def get_evaluations_summary(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role not in ["admin", "operations_manager"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    from app.models.guard_roster import GuardRoster
+    from app.models.daily_attendance_entry import DailyAttendanceEntry
+    from app.models.site import Site
+    from app.models.shift import Shift
+    from sqlalchemy.orm import aliased
+
+    # Target users: guards and supervisors
+    users = db.query(User).filter(User.role.in_(["guard", "supervisor", "lady"]), User.is_active == True).all()
+
+    results = []
+    for u in users:
+        # 1. Latest assigned site
+        latest_roster = db.query(GuardRoster).join(Shift).filter(
+            GuardRoster.guard_id == u.user_id,
+            GuardRoster.status != "canceled"
+        ).order_by(GuardRoster.assigned_date.desc()).first()
+
+        site_name = "N/A"
+        supervisor_name = "N/A"
+
+        if latest_roster and latest_roster.shift:
+            site = db.query(Site).filter(Site.site_id == latest_roster.shift.site_id).first()
+            if site:
+                site_name = site.name
+            
+            # Find the supervisor for this site
+            if u.role in ["guard", "lady"]:
+                # Look up any supervisor assigned to this site
+                sup_roster = db.query(GuardRoster).join(Shift).join(User).filter(
+                    Shift.site_id == latest_roster.shift.site_id,
+                    User.role == "supervisor",
+                    GuardRoster.status != "canceled"
+                ).order_by(GuardRoster.assigned_date.desc()).first()
+                
+                if sup_roster and sup_roster.guard:
+                    supervisor_name = sup_roster.guard.name
+
+        # 2. Absent days (sum of absence_unexcused, absence_excused, annual_leave, sick_leave)
+        absent_days = db.query(DailyAttendanceEntry).filter(
+            DailyAttendanceEntry.employee_id == u.user_id,
+            DailyAttendanceEntry.status.in_(["absence_unexcused", "absence_excused", "annual_leave", "sick_leave"])
+        ).count()
+
+        # 3. Latest evaluation score
+        latest_eval = db.query(GuardEvaluation).filter(
+            GuardEvaluation.guard_id == u.user_id
+        ).order_by(GuardEvaluation.created_at.desc()).first()
+        
+        score = latest_eval.overall_score if latest_eval else 0.0
+
+        results.append({
+            "employee_code": u.employee_code,
+            "name": u.name,
+            "role": u.role,
+            "site_name": site_name,
+            "supervisor_name": supervisor_name,
+            "absent_days": absent_days,
+            "evaluation_score": score,
+        })
+        
+    return results
