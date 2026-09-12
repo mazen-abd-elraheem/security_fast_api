@@ -28,6 +28,7 @@ from app.models.leave_request import LeaveRequest
 from app.models.deduction_rule import DeductionRule
 from app.models.supervisor_visit import SupervisorVisit
 from app.models.travel_fee import TravelFee
+from app.models.separation_request import SeparationRequest
 from app.models.site import Site
 from app.enums import UserRole
 
@@ -244,6 +245,7 @@ def generate_monthly_payroll(
     }
     absent_deduction_amount = rules.get('absent', None)
     late_deduction_rule = rules.get('late', None)
+    resignation_rule = rules.get('resignation_notice_penalty', None)
 
     # Get approved leaves for this month
     approved_leaves = db.query(LeaveRequest).filter(
@@ -271,6 +273,16 @@ def generate_monthly_payroll(
     for adv in advances:
         uid = adv.requester_id
         advance_map[uid] = advance_map.get(uid, 0) + float(adv.amount or 0)
+
+    # Get resignations for this month to check for notice penalty
+    dt_from = datetime.combine(date_from, datetime.min.time()).replace(tzinfo=timezone.utc)
+    dt_to = datetime.combine(date_to, datetime.max.time()).replace(tzinfo=timezone.utc)
+    separations = db.query(SeparationRequest).filter(
+        SeparationRequest.separation_type == 'resignation',
+        SeparationRequest.actual_last_working_day >= dt_from,
+        SeparationRequest.actual_last_working_day <= dt_to
+    ).all()
+    resignation_map = {sep.user_id: sep for sep in separations}
 
     generated = []
 
@@ -341,8 +353,21 @@ def generate_monthly_payroll(
         advance_ded = advance_map.get(emp.user_id, 0.0)
         insurance_ded = insurance_share
         tax_ded = calculate_monthly_tax(gross)
+        other_deductions = 0.0
 
-        total_deductions = round(absence_ded + late_ded + advance_ded + insurance_ded + tax_ded, 2)
+        # Resignation Notice Penalty Check
+        if resignation_rule and emp.user_id in resignation_map:
+            sep = resignation_map[emp.user_id]
+            if sep.actual_last_working_day and sep.created_at:
+                notice_period = (sep.actual_last_working_day - sep.created_at).days
+                required_notice = resignation_rule.notice_period_days
+                if notice_period < required_notice:
+                    if getattr(resignation_rule, 'is_days_multiplier', False):
+                        other_deductions += round(resignation_rule.amount * daily_rate, 2)
+                    else:
+                        other_deductions += round(resignation_rule.amount, 2)
+
+        total_deductions = round(absence_ded + late_ded + advance_ded + insurance_ded + tax_ded + other_deductions, 2)
 
         travel_allowance = 0.0
         if emp.role in ['supervisor', 'leader']:
@@ -409,6 +434,7 @@ def generate_monthly_payroll(
             advance_deduction=advance_ded,
             insurance_deduction=insurance_ded,
             tax_deduction=tax_ded,
+            other_deductions=other_deductions,
             total_deductions=total_deductions,
             incentive=incentive,
             travel_allowance=round(travel_allowance, 2),

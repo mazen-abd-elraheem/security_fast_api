@@ -137,6 +137,32 @@ def _run_seed_migrations():
                 conn.execute(sa_text("ALTER TABLE clothes_requests ADD COLUMN user_id VARCHAR(36) NULL"))
                 print("  [migration] clothes_requests.user_id added")
 
+    # ── Deduction Rules: add notice period and days multiplier ──
+    if insp.has_table("deduction_rules"):
+        existing = {c["name"] for c in insp.get_columns("deduction_rules")}
+        dr_new = {
+            "is_days_multiplier": "BOOLEAN DEFAULT FALSE",
+            "notice_period_days": "INTEGER DEFAULT 0",
+        }
+        for col_name, col_def in dr_new.items():
+            if col_name not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE deduction_rules ADD COLUMN {col_name} {col_def}"))
+                    print(f"  [migration] deduction_rules.{col_name} added")
+
+    # ── Separation Requests: add workflow dates ──
+    if insp.has_table("separation_requests"):
+        existing = {c["name"] for c in insp.get_columns("separation_requests")}
+        sr_new = {
+            "requested_last_working_day": "DATETIME NULL",
+            "actual_last_working_day": "DATETIME NULL",
+        }
+        for col_name, col_def in sr_new.items():
+            if col_name not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE separation_requests ADD COLUMN {col_name} {col_def}"))
+                    print(f"  [migration] separation_requests.{col_name} added")
+
     # ── Clothes Terminations: add workflow columns ──
     if insp.has_table("clothes_terminations"):
         existing = {c["name"] for c in insp.get_columns("clothes_terminations")}

@@ -81,6 +81,18 @@ DEFAULT_RULES = [
         "is_bonus": False,
         "is_days_multiplier": False,
     },
+    {
+        "rule_type": "resignation_notice_penalty",
+        "label": "Resignation Notice Penalty",
+        "description": "Penalty for resigning without sufficient warning (days multiplier or fixed amount).",
+        "amount": 15.0,  # e.g., 15 days deduction
+        "is_per_minute": False,
+        "threshold_minutes": 0,
+        "is_active": True,
+        "is_bonus": False,
+        "is_days_multiplier": True,
+        "notice_period_days": 15,
+    },
 ]
 
 
@@ -109,6 +121,7 @@ class RuleUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_bonus: Optional[bool] = None
     is_days_multiplier: Optional[bool] = None
+    notice_period_days: Optional[int] = None
 
 
 class RuleCreate(BaseModel):
@@ -121,6 +134,7 @@ class RuleCreate(BaseModel):
     is_active: bool = True
     is_bonus: bool = False
     is_days_multiplier: bool = False
+    notice_period_days: int = 0
 
 
 # ── Endpoints ──
@@ -145,6 +159,8 @@ def list_rules(
                 "threshold_minutes": r.threshold_minutes,
                 "is_active": r.is_active,
                 "is_bonus": r.is_bonus,
+                "is_days_multiplier": r.is_days_multiplier,
+                "notice_period_days": r.notice_period_days,
                 "currency": "EGP",
                 "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             }
@@ -190,6 +206,8 @@ def update_rule(
             "threshold_minutes": rule.threshold_minutes,
             "is_active": rule.is_active,
             "is_bonus": rule.is_bonus,
+            "is_days_multiplier": rule.is_days_multiplier,
+            "notice_period_days": rule.notice_period_days,
             "currency": "EGP",
         },
     }
@@ -222,6 +240,9 @@ def create_rule(
             "label": new_rule.label,
             "amount": new_rule.amount,
             "is_active": new_rule.is_active,
+            "is_bonus": new_rule.is_bonus,
+            "is_days_multiplier": new_rule.is_days_multiplier,
+            "notice_period_days": new_rule.notice_period_days,
         },
     }
 

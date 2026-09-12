@@ -36,6 +36,10 @@ class SeparationRequest(Base):
     # Reason
     reason = Column(Text, nullable=False)
 
+    # Resignation workflow dates
+    requested_last_working_day = Column(DateTime, nullable=True)
+    actual_last_working_day = Column(DateTime, nullable=True)
+
     # Multi-step approval status:
     # pending_leader → pending_supervisor → pending_ops_mgr → pending_hr → completed / rejected
     status = Column(String(30), nullable=False, default="pending_leader")

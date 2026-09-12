@@ -34,6 +34,7 @@ class SeparationCreate(BaseModel):
     site_name: str
     separation_type: str  # resignation / termination / exclusion
     reason: str
+    requested_last_working_day: Optional[datetime] = None
 
 
 class SeparationAction(BaseModel):
@@ -41,6 +42,7 @@ class SeparationAction(BaseModel):
     notes: Optional[str] = None
     uniform_returned: Optional[bool] = None  # Only Supervisor sets this
     financial_settlement: Optional[float] = None  # Only HR sets this
+    actual_last_working_day: Optional[datetime] = None  # Set by HR/Manager during approval
 
 
 class SeparationResponse(BaseModel):
@@ -106,6 +108,7 @@ def create_separation(
         site_name=actual_site_name,
         separation_type=payload.separation_type,
         reason=payload.reason,
+        requested_last_working_day=payload.requested_last_working_day,
         status="pending_supervisor",
         initiated_by=current_user.user_id,
         initiated_by_name=current_user.name,
@@ -294,6 +297,8 @@ def action_separation(
             sep.assets_returned = True
             if payload.financial_settlement is not None:
                 sep.financial_settlement = payload.financial_settlement
+            if payload.actual_last_working_day is not None:
+                sep.actual_last_working_day = payload.actual_last_working_day
             sep.status = "completed"
 
             # Deactivate the user account

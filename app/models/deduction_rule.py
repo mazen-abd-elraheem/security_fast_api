@@ -32,6 +32,9 @@ class DeductionRule(Base):
     # If true, the `amount` field represents number of days to multiply by the user's daily rate
     is_days_multiplier = Column(Boolean, nullable=False, default=False)
 
+    # Dynamic notice period penalty threshold (days)
+    notice_period_days = Column(Integer, nullable=False, default=0)
+
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
