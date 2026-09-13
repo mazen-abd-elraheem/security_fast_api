@@ -25,11 +25,9 @@ from app.schemas.task_schemas import (
     ClientLoginRequest, ClientLoginResponse, ClientAccountCreate, ClientAccountOut, ClientAccountUpdate,
     TaskInstanceOut, TaskInstanceReview, TaskAlertOut, ClientMeResponse, TaskInstanceCommentCreate,
     TaskInstanceCommentOut, TaskRoleOut, TaskRoleCreate, TaskRoleUpdate, TaskRoleAssignmentCreate,
-    TaskInstanceAssign, TaskTemplateOut, TaskResponseOut
+    TaskInstanceAssign, TaskTemplateOut, TaskResponseOut, ClientAccountDetailOut
 )
-from app.schemas.site import (SiteOut, SiteCreate, ClientAccountUpdate, ClientAccountDetailOut,
-    TaskRoleCreate, TaskRoleUpdate, TaskRoleOut, TaskRoleAssignmentCreate
-)
+from app.schemas.site import SiteResponse, SiteCreate
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -900,7 +898,7 @@ def remove_role_from_client_user(
 # Client Sites Management
 # ══════════════════════════════════════════════
 
-@router.get("/sites", response_model=List[SiteOut])
+@router.get("/sites", response_model=List[SiteResponse])
 def client_get_sites(
     client: ClientAccount = Depends(require_client_permission("sites.view")),
     db: Session = Depends(get_db)
@@ -911,7 +909,7 @@ def client_get_sites(
     from app.models.site import Site
     return db.query(Site).filter(Site.site_id.in_(site_ids)).all()
 
-@router.post("/sites", response_model=SiteOut, status_code=201)
+@router.post("/sites", response_model=SiteResponse, status_code=201)
 def client_create_site(
     data: SiteCreate,
     client: ClientAccount = Depends(require_client_permission("sites.manage")),
