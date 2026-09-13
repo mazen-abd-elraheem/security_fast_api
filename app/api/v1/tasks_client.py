@@ -27,6 +27,8 @@ from app.schemas.task_schemas import (
     TaskAlertOut,
     TaskInstanceCommentCreate, TaskInstanceCommentOut,
     ClientMeResponse,
+    ClientAccountCreate, ClientAccountUpdate, ClientAccountDetailOut,
+    TaskRoleCreate, TaskRoleUpdate, TaskRoleOut, TaskRoleAssignmentCreate
 )
 
 logger = logging.getLogger(__name__)
@@ -591,4 +593,242 @@ def client_list_comments(
             created_at=c.created_at,
         ))
     return results
+
+
+# ══════════════════════════════════════════════
+# CLIENT SELF-SERVICE MANAGEMENT
+# ══════════════════════════════════════════════
+
+def require_client_permission(permission: str):
+    def permission_checker(current_client: ClientAccount = Depends(get_current_client)) -> ClientAccount:
+        has_permission = False
+        for assignment in current_client.role_assignments:
+            if assignment.role and permission in assignment.role.permissions:
+                has_permission = True
+                break
+        if not has_permission:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing required client permission: {permission}"
+            )
+        return current_client
+    return permission_checker
+
+@router.get("/users", response_model=List[ClientAccountOut])
+def get_client_users(
+    client: ClientAccount = Depends(require_client_permission("view_users")),
+    db: Session = Depends(get_db)
+):
+    users = db.query(ClientAccount).filter(ClientAccount.tenant_id == client.tenant_id).all()
+    return users
+
+@router.post("/users", response_model=ClientAccountOut)
+def create_client_user(
+    data: ClientAccountCreate,
+    client: ClientAccount = Depends(require_client_permission("manage_users")),
+    db: Session = Depends(get_db)
+):
+    # Ensure client is created within the same tenant
+    data.tenant_id = client.tenant_id
+    
+    # Check email exists
+    existing = db.query(ClientAccount).filter(
+        ClientAccount.tenant_id == client.tenant_id,
+        ClientAccount.email == data.email
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered in this tenant")
+
+    from app.core.security import get_password_hash
+    hashed_password = get_password_hash(data.password)
+
+    new_user = ClientAccount(
+        client_id=str(uuid.uuid4()),
+        tenant_id=client.tenant_id,
+        site_id=data.site_id,
+        name=data.name,
+        email=data.email,
+        phone_number=data.phone_number,
+        password_hash=hashed_password,
+        status=data.status,
+        created_by=client.client_id
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+@router.put("/users/{user_id}", response_model=ClientAccountOut)
+def update_client_user(
+    user_id: str,
+    data: ClientAccountUpdate,
+    client: ClientAccount = Depends(require_client_permission("manage_users")),
+    db: Session = Depends(get_db)
+):
+    target_user = db.query(ClientAccount).filter(
+        ClientAccount.tenant_id == client.tenant_id,
+        ClientAccount.client_id == user_id
+    ).first()
+    
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if data.name is not None:
+        target_user.name = data.name
+    if data.phone_number is not None:
+        target_user.phone_number = data.phone_number
+    if data.status is not None:
+        target_user.status = data.status
+    if data.site_id is not None:
+        target_user.site_id = data.site_id
+
+    db.commit()
+    db.refresh(target_user)
+    return target_user
+
+@router.get("/roles", response_model=List[TaskRoleOut])
+def get_client_roles(
+    client: ClientAccount = Depends(require_client_permission("view_roles")),
+    db: Session = Depends(get_db)
+):
+    roles = db.query(TaskRole).filter(
+        (TaskRole.tenant_id == client.tenant_id) | (TaskRole.is_system == True)
+    ).all()
+    return roles
+
+@router.post("/roles", response_model=TaskRoleOut)
+def create_client_role(
+    data: TaskRoleCreate,
+    client: ClientAccount = Depends(require_client_permission("manage_roles")),
+    db: Session = Depends(get_db)
+):
+    new_role = TaskRole(
+        role_id=str(uuid.uuid4()),
+        tenant_id=client.tenant_id,
+        name=data.name,
+        description=data.description,
+        permissions=data.permissions,
+        is_system=False,
+        created_by=client.client_id
+    )
+    db.add(new_role)
+    db.commit()
+    db.refresh(new_role)
+    return new_role
+
+@router.put("/roles/{role_id}", response_model=TaskRoleOut)
+def update_client_role(
+    role_id: str,
+    data: TaskRoleUpdate,
+    client: ClientAccount = Depends(require_client_permission("manage_roles")),
+    db: Session = Depends(get_db)
+):
+    role = db.query(TaskRole).filter(
+        TaskRole.role_id == role_id,
+        TaskRole.tenant_id == client.tenant_id
+    ).first()
+    
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found or cannot be modified")
+    
+    if role.is_system:
+        raise HTTPException(status_code=400, detail="Cannot modify a system role")
+
+    if data.name is not None:
+        role.name = data.name
+    if data.description is not None:
+        role.description = data.description
+    if data.permissions is not None:
+        role.permissions = data.permissions
+
+    db.commit()
+    db.refresh(role)
+    return role
+
+@router.delete("/roles/{role_id}", status_code=204)
+def delete_client_role(
+    role_id: str,
+    client: ClientAccount = Depends(require_client_permission("manage_roles")),
+    db: Session = Depends(get_db)
+):
+    role = db.query(TaskRole).filter(
+        TaskRole.role_id == role_id,
+        TaskRole.tenant_id == client.tenant_id
+    ).first()
+    
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found or cannot be modified")
+        
+    if role.is_system:
+        raise HTTPException(status_code=400, detail="Cannot modify a system role")
+
+    db.delete(role)
+    db.commit()
+    return None
+
+@router.post("/users/{user_id}/roles", status_code=201)
+def assign_role_to_client_user(
+    user_id: str,
+    data: TaskRoleAssignmentCreate,
+    client: ClientAccount = Depends(require_client_permission("manage_users")),
+    db: Session = Depends(get_db)
+):
+    # Verify user exists in tenant
+    target_user = db.query(ClientAccount).filter(
+        ClientAccount.tenant_id == client.tenant_id,
+        ClientAccount.client_id == user_id
+    ).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # Verify role exists and belongs to tenant or is system
+    role = db.query(TaskRole).filter(
+        TaskRole.role_id == data.task_role_id,
+        (TaskRole.tenant_id == client.tenant_id) | (TaskRole.is_system == True)
+    ).first()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+        
+    # Check if already assigned
+    existing = db.query(TaskRoleAssignment).filter(
+        TaskRoleAssignment.client_id == user_id,
+        TaskRoleAssignment.task_role_id == data.task_role_id
+    ).first()
+    if existing:
+        return {"message": "Role already assigned"}
+        
+    assignment = TaskRoleAssignment(
+        task_role_id=data.task_role_id,
+        client_id=user_id
+    )
+    db.add(assignment)
+    db.commit()
+    return {"message": "Role assigned successfully"}
+
+@router.delete("/users/{user_id}/roles/{role_id}", status_code=204)
+def remove_role_from_client_user(
+    user_id: str,
+    role_id: str,
+    client: ClientAccount = Depends(require_client_permission("manage_users")),
+    db: Session = Depends(get_db)
+):
+    # Verify user exists in tenant
+    target_user = db.query(ClientAccount).filter(
+        ClientAccount.tenant_id == client.tenant_id,
+        ClientAccount.client_id == user_id
+    ).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    assignment = db.query(TaskRoleAssignment).filter(
+        TaskRoleAssignment.client_id == user_id,
+        TaskRoleAssignment.task_role_id == role_id
+    ).first()
+    
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+        
+    db.delete(assignment)
+    db.commit()
+    return None
 
