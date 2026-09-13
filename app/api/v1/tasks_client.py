@@ -22,12 +22,12 @@ from app.models.task_models import (
     TaskInstanceComment,
 )
 from app.schemas.task_schemas import (
-    ClientLoginRequest, ClientLoginResponse, ClientAccountOut,
-    TaskInstanceOut, TaskInstanceReview, TaskResponseOut,
-    TaskAlertOut,
-    TaskInstanceCommentCreate, TaskInstanceCommentOut,
-    ClientMeResponse,
-    ClientAccountCreate, ClientAccountUpdate, ClientAccountDetailOut,
+    ClientLoginRequest, ClientLoginResponse, ClientAccountCreate, ClientAccountOut, ClientAccountUpdate,
+    TaskInstanceOut, TaskInstanceReview, TaskAlertOut, ClientMeResponse, TaskInstanceCommentCreate,
+    TaskInstanceCommentOut, TaskRoleOut, TaskRoleCreate, TaskRoleUpdate, TaskRoleAssignmentCreate,
+    TaskInstanceAssign, TaskTemplateOut, TaskResponseOut
+)
+from app.schemas.site import (SiteOut, SiteCreate, ClientAccountUpdate, ClientAccountDetailOut,
     TaskRoleCreate, TaskRoleUpdate, TaskRoleOut, TaskRoleAssignmentCreate
 )
 
@@ -165,10 +165,17 @@ def client_login(
 
     logger.info(f"Client login: {client.email} (tenant: {client.tenant_id})")
 
+    # Get flat list of permissions
+    permissions = []
+    for assignment in client.role_assignments:
+        if assignment.role and assignment.role.permissions:
+            permissions.extend(assignment.role.permissions)
+
     return ClientLoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         client=ClientAccountOut.model_validate(client),
+        permissions=list(set(permissions)),
     )
 
 
@@ -273,6 +280,50 @@ def client_get_instance(
     return _load_client_instance(db, instance)
 
 
+@router.post("/instances", response_model=TaskInstanceOut, status_code=201)
+def client_create_instance(
+    data: TaskInstanceAssign,
+    client: ClientAccount = Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    """Client creates a new task instance (must be in client's sites)."""
+    _check_client_permission(db, client, "tasks.create")
+    site_ids = _get_tenant_site_ids(db, client.tenant_id)
+    if data.site_id and data.site_id not in site_ids:
+        raise HTTPException(status_code=403, detail="Not authorized for this site")
+    
+    # Minimal implementation for stub
+    instance = TaskInstance(
+        instance_id=str(uuid.uuid4()),
+        template_id=data.template_id,
+        assigned_to=data.assigned_to,
+        site_id=data.site_id,
+        due_date=data.due_date,
+        status="pending"
+    )
+    db.add(instance)
+    db.commit()
+    return _load_client_instance(db, instance)
+
+
+@router.delete("/instances/{instance_id}", status_code=204)
+def client_delete_instance(
+    instance_id: str,
+    client: ClientAccount = Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    """Client deletes a task instance (must be in client's sites)."""
+    _check_client_permission(db, client, "tasks.delete")
+    site_ids = _get_tenant_site_ids(db, client.tenant_id)
+    instance = db.query(TaskInstance).filter_by(instance_id=instance_id).first()
+    if not instance or instance.site_id not in site_ids:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    
+    db.delete(instance)
+    db.commit()
+    return None
+
+
 @router.post("/instances/{instance_id}/review")
 def client_review_instance(
     instance_id: str,
@@ -309,7 +360,7 @@ def client_alerts(
     db: Session = Depends(get_db),
 ):
     """View alerts for the client's sites."""
-    _check_client_permission(db, client, "alerts.view")
+    _check_client_permission(db, client, "alerts.receive")
     site_ids = _get_tenant_site_ids(db, client.tenant_id)
     if not site_ids:
         return []
@@ -432,6 +483,18 @@ def client_reports(
     }
 
 
+@router.get("/reports/export")
+def client_reports_export(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    client: ClientAccount = Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    """Export reports as CSV (Stub)."""
+    _check_client_permission(db, client, "reports.export")
+    return {"message": "Export functionality would stream a CSV here"}
+
+
 @router.put("/fcm-token")
 def update_client_fcm_token(
     fcm_token: str = Query(...),
@@ -525,8 +588,8 @@ def client_add_comment(
     client: ClientAccount = Depends(get_current_client),
     db: Session = Depends(get_db),
 ):
-    """Add a comment to a task instance (requires comments.create permission)."""
-    _check_client_permission(db, client, "comments.create")
+    """Add a comment to a task instance (requires tasks.edit permission)."""
+    _check_client_permission(db, client, "tasks.edit")
 
     site_ids = _get_tenant_site_ids(db, client.tenant_id)
     instance = db.query(TaskInstance).filter_by(instance_id=instance_id).first()
@@ -616,7 +679,7 @@ def require_client_permission(permission: str):
 
 @router.get("/users", response_model=List[ClientAccountOut])
 def get_client_users(
-    client: ClientAccount = Depends(require_client_permission("view_users")),
+    client: ClientAccount = Depends(require_client_permission("users.view")),
     db: Session = Depends(get_db)
 ):
     users = db.query(ClientAccount).filter(ClientAccount.tenant_id == client.tenant_id).all()
@@ -625,7 +688,7 @@ def get_client_users(
 @router.post("/users", response_model=ClientAccountOut)
 def create_client_user(
     data: ClientAccountCreate,
-    client: ClientAccount = Depends(require_client_permission("manage_users")),
+    client: ClientAccount = Depends(require_client_permission("users.manage")),
     db: Session = Depends(get_db)
 ):
     # Ensure client is created within the same tenant
@@ -662,7 +725,7 @@ def create_client_user(
 def update_client_user(
     user_id: str,
     data: ClientAccountUpdate,
-    client: ClientAccount = Depends(require_client_permission("manage_users")),
+    client: ClientAccount = Depends(require_client_permission("users.manage")),
     db: Session = Depends(get_db)
 ):
     target_user = db.query(ClientAccount).filter(
@@ -688,7 +751,7 @@ def update_client_user(
 
 @router.get("/roles", response_model=List[TaskRoleOut])
 def get_client_roles(
-    client: ClientAccount = Depends(require_client_permission("view_roles")),
+    client: ClientAccount = Depends(require_client_permission("users.manage")),
     db: Session = Depends(get_db)
 ):
     roles = db.query(TaskRole).filter(
@@ -699,7 +762,7 @@ def get_client_roles(
 @router.post("/roles", response_model=TaskRoleOut)
 def create_client_role(
     data: TaskRoleCreate,
-    client: ClientAccount = Depends(require_client_permission("manage_roles")),
+    client: ClientAccount = Depends(require_client_permission("users.manage")),
     db: Session = Depends(get_db)
 ):
     new_role = TaskRole(
@@ -720,7 +783,7 @@ def create_client_role(
 def update_client_role(
     role_id: str,
     data: TaskRoleUpdate,
-    client: ClientAccount = Depends(require_client_permission("manage_roles")),
+    client: ClientAccount = Depends(require_client_permission("users.manage")),
     db: Session = Depends(get_db)
 ):
     role = db.query(TaskRole).filter(
@@ -748,7 +811,7 @@ def update_client_role(
 @router.delete("/roles/{role_id}", status_code=204)
 def delete_client_role(
     role_id: str,
-    client: ClientAccount = Depends(require_client_permission("manage_roles")),
+    client: ClientAccount = Depends(require_client_permission("users.manage")),
     db: Session = Depends(get_db)
 ):
     role = db.query(TaskRole).filter(
@@ -770,7 +833,7 @@ def delete_client_role(
 def assign_role_to_client_user(
     user_id: str,
     data: TaskRoleAssignmentCreate,
-    client: ClientAccount = Depends(require_client_permission("manage_users")),
+    client: ClientAccount = Depends(require_client_permission("users.manage")),
     db: Session = Depends(get_db)
 ):
     # Verify user exists in tenant
@@ -809,7 +872,7 @@ def assign_role_to_client_user(
 def remove_role_from_client_user(
     user_id: str,
     role_id: str,
-    client: ClientAccount = Depends(require_client_permission("manage_users")),
+    client: ClientAccount = Depends(require_client_permission("users.manage")),
     db: Session = Depends(get_db)
 ):
     # Verify user exists in tenant
@@ -832,3 +895,44 @@ def remove_role_from_client_user(
     db.commit()
     return None
 
+
+# ══════════════════════════════════════════════
+# Client Sites Management
+# ══════════════════════════════════════════════
+
+@router.get("/sites", response_model=List[SiteOut])
+def client_get_sites(
+    client: ClientAccount = Depends(require_client_permission("sites.view")),
+    db: Session = Depends(get_db)
+):
+    site_ids = _get_tenant_site_ids(db, client.tenant_id)
+    if not site_ids:
+        return []
+    from app.models.site import Site
+    return db.query(Site).filter(Site.site_id.in_(site_ids)).all()
+
+@router.post("/sites", response_model=SiteOut, status_code=201)
+def client_create_site(
+    data: SiteCreate,
+    client: ClientAccount = Depends(require_client_permission("sites.manage")),
+    db: Session = Depends(get_db)
+):
+    from app.models.site import Site
+    site = Site(
+        site_id=str(uuid.uuid4()),
+        name=data.name,
+        address=data.address,
+        latitude=data.latitude,
+        longitude=data.longitude,
+        radius_meters=data.radius_meters,
+        region=data.region,
+        is_base=data.is_base
+    )
+    db.add(site)
+    db.commit()
+    
+    # Give tenant access
+    access = TenantSiteAccess(tenant_id=client.tenant_id, site_id=site.site_id)
+    db.add(access)
+    db.commit()
+    return site

@@ -91,6 +91,7 @@ class ClientLoginResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     client: ClientAccountOut
+    permissions: List[str] = []
 
 
 # ══════════════════════════════════════════════
