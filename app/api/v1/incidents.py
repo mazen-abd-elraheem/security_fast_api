@@ -20,7 +20,9 @@ router = APIRouter()
 @router.post("", response_model=IncidentResponse, status_code=201, summary="Report incident")
 def create_incident(
     incident_data: IncidentCreate,
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.GUARD, UserRole.OUTDOOR
+    )),
     db: Session = Depends(get_db),
 ):
     """Report a security incident with optional photo evidence."""
@@ -48,12 +50,16 @@ def list_incidents(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=50),
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR,
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR, UserRole.LEADER
     )),
     db: Session = Depends(get_db),
 ):
     """List all incidents with optional filtering."""
-    result = IncidentService.list_incidents(db, site_id, status, severity, skip, limit)
+    reported_by_id = None
+    if current_user.role == UserRole.LEADER.value:
+        reported_by_id = current_user.user_id
+
+    result = IncidentService.list_incidents(db, site_id, status, severity, reported_by_id, skip, limit)
     items = []
     for i in result["incidents"]:
         items.append(IncidentResponse(

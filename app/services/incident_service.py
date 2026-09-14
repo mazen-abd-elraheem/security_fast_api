@@ -78,6 +78,7 @@ class IncidentService:
         site_id: Optional[str] = None,
         status: Optional[str] = None,
         severity: Optional[str] = None,
+        reported_by_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 20,
     ) -> dict:
@@ -89,6 +90,8 @@ class IncidentService:
             query = query.filter(Incident.status == status)
         if severity:
             query = query.filter(Incident.severity == severity)
+        if reported_by_id:
+            query = query.filter(Incident.reported_by == reported_by_id)
 
         total = query.count()
         incidents = query.order_by(Incident.created_at.desc()).offset(skip).limit(limit).all()
