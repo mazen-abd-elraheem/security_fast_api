@@ -43,22 +43,28 @@ def _get_lockout_duration(fail_count: int) -> timedelta:
 
 def _check_lockout(user: User):
     """Raise 423 Locked if the user is currently locked out."""
-    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
-        remaining = (user.locked_until - datetime.now(timezone.utc)).total_seconds()
-        remaining_min = max(1, int(remaining / 60))
-        raise HTTPException(
-            status_code=423,  # 423 Locked
-            detail=f"Account is temporarily locked due to multiple failed login attempts. "
-                   f"Try again in {remaining_min} minute(s).",
-        )
+    if user.locked_until:
+        locked_until_aware = user.locked_until if user.locked_until.tzinfo else user.locked_until.replace(tzinfo=timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        if locked_until_aware > now_utc:
+            remaining = (locked_until_aware - now_utc).total_seconds()
+            remaining_min = max(1, int(remaining / 60))
+            raise HTTPException(
+                status_code=423,  # 423 Locked
+                detail=f"Account is temporarily locked due to multiple failed login attempts. "
+                       f"Try again in {remaining_min} minute(s).",
+            )
 
 
 def _record_failed_login(user: User, db: Session):
     """Increment failure count and set progressive lockout."""
     user.failed_login_count = (user.failed_login_count or 0) + 1
-    user.last_failed_login = datetime.now(timezone.utc)
+    
+    # Store naive UTC datetime since MySQL drops timezone info
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    user.last_failed_login = now_naive
     lockout_duration = _get_lockout_duration(user.failed_login_count)
-    user.locked_until = datetime.now(timezone.utc) + lockout_duration
+    user.locked_until = now_naive + lockout_duration
     db.commit()
 
 
