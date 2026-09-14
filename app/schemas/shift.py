@@ -39,6 +39,19 @@ class ShiftResponse(BaseModel):
     required_headcount: int
     label: Optional[str] = None
     is_active: bool
+
+    # Tactical Details (Dashboard UI)
+    location_tag: Optional[str] = None
+    checkpoints_scheduled: int
+    compliance_gauge: float
+    armed_standard: Optional[str] = None
+    rfid_perimeter_status: Optional[str] = None
+    vehicles_assigned: int
+    sector_loops: int
+    authorization_protocol: Optional[str] = None
+    compliance_certification: Optional[str] = None
+    shift_status_override: Optional[str] = None
+
     created_at: datetime
     updated_at: datetime
 

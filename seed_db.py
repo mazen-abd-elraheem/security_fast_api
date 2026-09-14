@@ -163,6 +163,44 @@ def _run_seed_migrations():
                     conn.execute(sa_text(f"ALTER TABLE separation_requests ADD COLUMN {col_name} {col_def}"))
                     print(f"  [migration] separation_requests.{col_name} added")
 
+    # ── Sites: add tactical metrics ──
+    if insp.has_table("sites"):
+        existing = {c["name"] for c in insp.get_columns("sites")}
+        site_new = {
+            "defcon_level": "INTEGER DEFAULT 4",
+            "clearance_level": "VARCHAR(50) DEFAULT 'L3 Active'",
+            "last_audit_timestamp": "DATETIME NULL",
+            "perimeter_fill_rate_trend": "FLOAT DEFAULT 0.0",
+            "breach_response_readiness_seconds": "INTEGER DEFAULT 102",
+            "unassigned_standby_pool": "INTEGER DEFAULT 0",
+        }
+        for col_name, col_def in site_new.items():
+            if col_name not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE sites ADD COLUMN {col_name} {col_def}"))
+                    print(f"  [migration] sites.{col_name} added")
+
+    # ── Shifts: add tactical details ──
+    if insp.has_table("shifts"):
+        existing = {c["name"] for c in insp.get_columns("shifts")}
+        shift_new = {
+            "location_tag": "VARCHAR(100) NULL",
+            "checkpoints_scheduled": "INTEGER DEFAULT 0",
+            "compliance_gauge": "FLOAT DEFAULT 100.0",
+            "armed_standard": "VARCHAR(100) NULL",
+            "rfid_perimeter_status": "VARCHAR(100) NULL",
+            "vehicles_assigned": "INTEGER DEFAULT 0",
+            "sector_loops": "INTEGER DEFAULT 0",
+            "authorization_protocol": "VARCHAR(100) NULL",
+            "compliance_certification": "VARCHAR(100) NULL",
+            "shift_status_override": "VARCHAR(50) NULL",
+        }
+        for col_name, col_def in shift_new.items():
+            if col_name not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE shifts ADD COLUMN {col_name} {col_def}"))
+                    print(f"  [migration] shifts.{col_name} added")
+
     # ── Clothes Terminations: add workflow columns ──
     if insp.has_table("clothes_terminations"):
         existing = {c["name"] for c in insp.get_columns("clothes_terminations")}

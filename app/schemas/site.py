@@ -43,6 +43,15 @@ class SiteResponse(BaseModel):
     region: Optional[str] = None
     status: str
     is_base: bool
+
+    # Tactical Metrics (Dashboard UI)
+    defcon_level: int
+    clearance_level: str
+    last_audit_timestamp: Optional[datetime] = None
+    perimeter_fill_rate_trend: float
+    breach_response_readiness_seconds: int
+    unassigned_standby_pool: int
+
     created_at: datetime
     updated_at: datetime
 

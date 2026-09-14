@@ -2,7 +2,7 @@
 SecureTrack Platform — Shift Model
 Time blocks defining when guards are needed at a site.
 """
-from sqlalchemy import Column, String, Integer, Time, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Column, String, Integer, Time, Boolean, DateTime, ForeignKey, Index, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -32,6 +32,18 @@ class Shift(Base):
     label = Column(String(100), nullable=True)
 
     is_active = Column(Boolean, nullable=False, default=True)
+
+    # Tactical Details (Dashboard UI)
+    location_tag = Column(String(100), nullable=True)
+    checkpoints_scheduled = Column(Integer, nullable=False, default=0)
+    compliance_gauge = Column(Float, nullable=False, default=100.0)
+    armed_standard = Column(String(100), nullable=True)
+    rfid_perimeter_status = Column(String(100), nullable=True)
+    vehicles_assigned = Column(Integer, nullable=False, default=0)
+    sector_loops = Column(Integer, nullable=False, default=0)
+    authorization_protocol = Column(String(100), nullable=True)
+    compliance_certification = Column(String(100), nullable=True)
+    shift_status_override = Column(String(50), nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))

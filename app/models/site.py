@@ -32,6 +32,14 @@ class Site(Base):
     # Base identifier for supervisor travel fees calculation
     is_base = Column(Boolean, nullable=False, default=False)
 
+    # Tactical Metrics (Dashboard UI)
+    defcon_level = Column(Integer, nullable=False, default=4)
+    clearance_level = Column(String(50), nullable=False, default="L3 Active")
+    last_audit_timestamp = Column(DateTime, nullable=True)
+    perimeter_fill_rate_trend = Column(Float, nullable=False, default=0.0)
+    breach_response_readiness_seconds = Column(Integer, nullable=False, default=102)
+    unassigned_standby_pool = Column(Integer, nullable=False, default=0)
+
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
