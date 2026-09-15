@@ -318,6 +318,30 @@ def _run_seed_migrations():
                 conn.execute(sa_text("ALTER TABLE supervisor_routes ADD COLUMN shift_id VARCHAR(36) NULL"))
                 print("  Added supervisor_routes.shift_id")
 
+    # ── Transfer Methods: create table and seed defaults ──
+    if not insp.has_table("transfer_methods"):
+        print("  [migration] transfer_methods table will be created by create_all")
+    else:
+        # Seed default transfer methods if table is empty
+        with engine.begin() as conn:
+            count = conn.execute(sa_text("SELECT COUNT(*) FROM transfer_methods")).scalar()
+            if count == 0:
+                defaults = [
+                    ("كويتي باي رول", "Kuwait Payroll", 0),
+                    ("تحويل بنكي", "Bank Transfer", 1),
+                    ("نقدي", "Cash", 2),
+                    ("فودافون كاش", "Vodafone Cash", 3),
+                ]
+                import uuid as _uuid
+                for (name_ar, name_en, order) in defaults:
+                    conn.execute(sa_text(
+                        "INSERT INTO transfer_methods (id, name, name_ar, is_active, sort_order) "
+                        "VALUES (:id, :name, :name_ar, TRUE, :order)"
+                    ), {"id": str(_uuid.uuid4()), "name": name_en, "name_ar": name_ar, "order": order})
+                print("  [migration] Seeded default transfer methods")
+
+
+
 def seed():
     Base.metadata.create_all(bind=engine)
     _run_seed_migrations()

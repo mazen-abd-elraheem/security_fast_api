@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from sqlalchemy import Column, String, Float, Boolean, Date, DateTime, Integer, Text, ForeignKey
 from datetime import datetime, timezone
 from app.core.database import Base
@@ -47,3 +47,14 @@ class Termination(Base):
     status = Column(String(20), default="pending")
     created_by = Column(String(36), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class TransferMethod(Base):
+    __tablename__ = "transfer_methods"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(100), nullable=False)
+    name_ar = Column(String(100), nullable=True)
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
