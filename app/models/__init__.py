@@ -29,6 +29,8 @@ from app.models.guard_evaluation import GuardEvaluation
 from app.models.payroll_sheet_row import PayrollSheetRow, SalaryClassificationConfig
 from app.models.daily_attendance_entry import DailyAttendanceEntry
 from app.models.accountant_models import TaxBracket, EmployeeBonus, Holiday, Termination
+from app.models.payroll_formula_config import PayrollFormulaConfig
+
 
 __all__ = [
     'Base', 'User', 'Site', 'Shift', 'GuardRoster', 'SupervisorRoute',

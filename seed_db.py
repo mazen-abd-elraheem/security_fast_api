@@ -7,9 +7,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from app.core.database import SessionLocal, engine, Base
 from app.models import *  # Import all models so create_all picks them up
 from app.models.user import User
+from app.models.payroll_formula_config import PayrollFormulaConfig, DEFAULT_FORMULA_SEED
 from app.core.security import hash_password
 from sqlalchemy import inspect as sa_inspect, text as sa_text
 import uuid
+
 
 
 def _run_seed_migrations():

@@ -664,7 +664,14 @@ def get_attendance_report(
 ):
     from sqlalchemy.orm import joinedload
     from app.models.daily_attendance_entry import DailyAttendanceEntry
-    from app.api.v1.payroll import LATE_THRESHOLD_MINUTES, LATE_DEDUCTION_PER_MINUTE, ABSENT_DEDUCTION
+    from app.models.payroll_formula_config import PayrollFormulaConfig
+
+    # Load deduction constants from DB (formula configs), fallback to defaults
+    _cfgs = db.query(PayrollFormulaConfig).all()
+    _cfg_map = {c.config_key: float(c.config_value) for c in _cfgs}
+    LATE_THRESHOLD_MINUTES = _cfg_map.get("late_threshold_minutes", 10)
+    LATE_DEDUCTION_PER_MINUTE = _cfg_map.get("late_deduction_per_minute", 1.0)
+    ABSENT_DEDUCTION = _cfg_map.get("absent_day_deduction", 100.0)
 
     # Arabic labels for roles shown in the attendance report
     ROLE_ARABIC_MAP = {
@@ -728,7 +735,33 @@ def get_attendance_report(
             
         shift_label = latest_roster.shift.label if latest_roster and latest_roster.shift else "N/A"
         site_name = latest_roster.shift.site.name if latest_roster and latest_roster.shift and latest_roster.shift.site else "N/A"
-        supervisor_name = "N/A" # Supervisors aren't directly on GuardRoster, but site managers or roll callers are.
+        shift_time = ""
+        if latest_roster and latest_roster.shift:
+            st = latest_roster.shift.start_time
+            et = latest_roster.shift.end_time
+            if st and et:
+                shift_time = f"{st.strftime('%H:%M')} - {et.strftime('%H:%M')}"
+
+        # Find the last supervisor assigned to this site's shift
+        supervisor_name = "N/A"
+        if latest_roster and latest_roster.shift:
+            sup_roster = (
+                db.query(GuardRoster)
+                .join(Shift, GuardRoster.shift_id == Shift.shift_id)
+                .join(User, GuardRoster.guard_id == User.user_id)
+                .filter(
+                    Shift.site_id == latest_roster.shift.site_id,
+                    User.role == "supervisor",
+                    GuardRoster.status != "canceled",
+                )
+                .order_by(GuardRoster.assigned_date.desc())
+                .first()
+            )
+            if sup_roster:
+                sup_user = db.query(User).filter(User.user_id == sup_roster.guard_id).first()
+                if sup_user:
+                    supervisor_name = sup_user.name
+
 
         # Aggregate counts
         days_present = sum(1 for e in user_entry_list if e.status == 'present')
@@ -757,6 +790,7 @@ def get_attendance_report(
             "badge_number": user.employee_code or user.badge_number or "",
             "classification": user.classification if user.classification else ROLE_ARABIC_MAP.get(user.role, user.role or ""),
             "shift_label": shift_label,
+            "shift_time": shift_time,
             "supervisor": supervisor_name,
             "site_name": site_name,
             "hire_date": user.created_at.strftime("%Y-%m-%d") if user.created_at else "",

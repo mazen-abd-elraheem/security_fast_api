@@ -189,6 +189,23 @@ def _run_auto_migrations():
             except Exception:
                 pass
 
+        # ── Auto-seed PayrollFormulaConfig defaults if empty ──
+        try:
+            from app.models.payroll_formula_config import PayrollFormulaConfig, DEFAULT_FORMULA_SEED
+            from app.core.database import SessionLocal as _SL
+            _db = _SL()
+            count = _db.query(PayrollFormulaConfig).count()
+            if count == 0:
+                for cls, key, val in DEFAULT_FORMULA_SEED:
+                    _db.add(PayrollFormulaConfig(
+                        classification=cls, config_key=key, value=val,
+                    ))
+                _db.commit()
+                logger.info(f"Auto-seeded {len(DEFAULT_FORMULA_SEED)} PayrollFormulaConfig defaults")
+            _db.close()
+        except Exception as pfc_e:
+            logger.warning(f"PayrollFormulaConfig seed skipped: {pfc_e}")
+
     except Exception as e:
         logger.warning(f"Ã¢Å¡Â  Auto-migration check failed: {e}")
 
