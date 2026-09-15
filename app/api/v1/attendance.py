@@ -704,6 +704,20 @@ def get_attendance_report(
     for roster in rosters:
         user_rosters[roster.guard_id].append(roster)
 
+    # Also load SupervisorRoutes for supervisor/leader roles
+    from app.models.supervisor_route import SupervisorRoute
+    from app.models.site import Site
+    sup_routes = (
+        db.query(SupervisorRoute)
+        .filter(SupervisorRoute.supervisor_id.in_(user_dict.keys()))
+        .filter(SupervisorRoute.assigned_date >= date_from)
+        .filter(SupervisorRoute.assigned_date <= date_to)
+        .all()
+    )
+    user_sup_routes = {u_id: [] for u_id in user_dict.keys()}
+    for sr in sup_routes:
+        user_sup_routes[sr.supervisor_id].append(sr)
+
     entries = (
         db.query(DailyAttendanceEntry)
         .filter(DailyAttendanceEntry.employee_id.in_(user_dict.keys()))
@@ -721,14 +735,16 @@ def get_attendance_report(
     for user_id, user in user_dict.items():
         user_roster_list = user_rosters[user_id]
         user_entry_list = user_entries[user_id]
+        user_sr_list = user_sup_routes[user_id]
         
         # If site filter is provided, skip users not assigned to this site in this period
         if site_id:
             user_sites = {r.shift.site_id for r in user_roster_list if r.shift}
+            user_sites.update({sr.site_id for sr in user_sr_list})
             if site_id not in user_sites:
                 continue
 
-        # Get latest roster for shift/site/supervisor info
+        # Get latest roster for shift/site info
         latest_roster = None
         if user_roster_list:
             latest_roster = sorted(user_roster_list, key=lambda r: r.assigned_date)[-1]
@@ -742,23 +758,42 @@ def get_attendance_report(
             if st and et:
                 shift_time = f"{st.strftime('%H:%M')} - {et.strftime('%H:%M')}"
 
-        # Find the last supervisor assigned to this site's shift
+        # For supervisor/leader roles: fallback to supervisor_routes if no guard_roster
+        if (shift_label == "N/A" or site_name == "N/A") and user_sr_list:
+            latest_sr = sorted(user_sr_list, key=lambda r: r.assigned_date)[-1]
+            sr_site = db.query(Site).filter(Site.site_id == latest_sr.site_id).first()
+            if sr_site and site_name == "N/A":
+                site_name = sr_site.name
+            if latest_sr.shift_id:
+                sr_shift = db.query(Shift).filter(Shift.shift_id == latest_sr.shift_id).first()
+                if sr_shift:
+                    if shift_label == "N/A":
+                        shift_label = sr_shift.label or "N/A"
+                    if not shift_time and sr_shift.start_time and sr_shift.end_time:
+                        shift_time = f"{sr_shift.start_time.strftime('%H:%M')} - {sr_shift.end_time.strftime('%H:%M')}"
+
+        # Find the supervisor assigned to this user's site via supervisor_routes
         supervisor_name = "N/A"
+        resolved_site_id = None
         if latest_roster and latest_roster.shift:
-            sup_roster = (
-                db.query(GuardRoster)
-                .join(Shift, GuardRoster.shift_id == Shift.shift_id)
-                .join(User, GuardRoster.guard_id == User.user_id)
+            resolved_site_id = latest_roster.shift.site_id
+        elif user_sr_list:
+            latest_sr = sorted(user_sr_list, key=lambda r: r.assigned_date)[-1]
+            resolved_site_id = latest_sr.site_id
+
+        if resolved_site_id:
+            sup_route = (
+                db.query(SupervisorRoute)
+                .join(User, SupervisorRoute.supervisor_id == User.user_id)
                 .filter(
-                    Shift.site_id == latest_roster.shift.site_id,
+                    SupervisorRoute.site_id == resolved_site_id,
                     User.role == "supervisor",
-                    GuardRoster.status != "canceled",
                 )
-                .order_by(GuardRoster.assigned_date.desc())
+                .order_by(SupervisorRoute.assigned_date.desc())
                 .first()
             )
-            if sup_roster:
-                sup_user = db.query(User).filter(User.user_id == sup_roster.guard_id).first()
+            if sup_route:
+                sup_user = db.query(User).filter(User.user_id == sup_route.supervisor_id).first()
                 if sup_user:
                     supervisor_name = sup_user.name
 

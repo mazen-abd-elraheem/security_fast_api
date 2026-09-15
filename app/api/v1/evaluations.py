@@ -130,14 +130,14 @@ def get_evaluations_summary(
     from app.models.daily_attendance_entry import DailyAttendanceEntry
     from app.models.site import Site
     from app.models.shift import Shift
-    from sqlalchemy.orm import aliased
+    from app.models.supervisor_route import SupervisorRoute
 
-    # Target users: guards and supervisors
-    users = db.query(User).filter(User.role.in_(["guard", "supervisor", "lady"]), User.is_active == True).all()
+    # Target users: guards, supervisors, leaders, ladies
+    users = db.query(User).filter(User.role.in_(["guard", "supervisor", "leader", "lady"]), User.is_active == True).all()
 
     results = []
     for u in users:
-        # 1. Latest assigned site
+        # 1. Latest assigned site (from guard_roster)
         latest_roster = db.query(GuardRoster).join(Shift).filter(
             GuardRoster.guard_id == u.user_id,
             GuardRoster.status != "canceled"
@@ -145,25 +145,58 @@ def get_evaluations_summary(
 
         site_name = "N/A"
         supervisor_name = "N/A"
+        shift_label = "N/A"
+        shift_time = ""
+        resolved_site_id = None
 
         if latest_roster and latest_roster.shift:
             site = db.query(Site).filter(Site.site_id == latest_roster.shift.site_id).first()
             if site:
                 site_name = site.name
-            
-            # Find the supervisor for this site
-            if u.role in ["guard", "lady"]:
-                # Look up any supervisor assigned to this site
-                sup_roster = db.query(GuardRoster).join(Shift).join(User).filter(
-                    Shift.site_id == latest_roster.shift.site_id,
-                    User.role == "supervisor",
-                    GuardRoster.status != "canceled"
-                ).order_by(GuardRoster.assigned_date.desc()).first()
-                
-                if sup_roster and sup_roster.guard:
-                    supervisor_name = sup_roster.guard.name
+            resolved_site_id = latest_roster.shift.site_id
+            shift_label = latest_roster.shift.label or "N/A"
+            st = latest_roster.shift.start_time
+            et = latest_roster.shift.end_time
+            if st and et:
+                shift_time = f"{st.strftime('%H:%M')} - {et.strftime('%H:%M')}"
 
-        # 2. Absent days (sum of absence_unexcused, absence_excused, annual_leave, sick_leave)
+        # Fallback: for supervisor/leader, check supervisor_routes
+        if site_name == "N/A" or shift_label == "N/A":
+            latest_sr = db.query(SupervisorRoute).filter(
+                SupervisorRoute.supervisor_id == u.user_id,
+            ).order_by(SupervisorRoute.assigned_date.desc()).first()
+            if latest_sr:
+                if site_name == "N/A":
+                    sr_site = db.query(Site).filter(Site.site_id == latest_sr.site_id).first()
+                    if sr_site:
+                        site_name = sr_site.name
+                if not resolved_site_id:
+                    resolved_site_id = latest_sr.site_id
+                if latest_sr.shift_id and shift_label == "N/A":
+                    sr_shift = db.query(Shift).filter(Shift.shift_id == latest_sr.shift_id).first()
+                    if sr_shift:
+                        shift_label = sr_shift.label or "N/A"
+                        if not shift_time and sr_shift.start_time and sr_shift.end_time:
+                            shift_time = f"{sr_shift.start_time.strftime('%H:%M')} - {sr_shift.end_time.strftime('%H:%M')}"
+
+        # Find supervisor from supervisor_routes
+        if resolved_site_id and u.role in ["guard", "lady", "leader"]:
+            sup_route = (
+                db.query(SupervisorRoute)
+                .join(User, SupervisorRoute.supervisor_id == User.user_id)
+                .filter(
+                    SupervisorRoute.site_id == resolved_site_id,
+                    User.role == "supervisor",
+                )
+                .order_by(SupervisorRoute.assigned_date.desc())
+                .first()
+            )
+            if sup_route:
+                sup_user = db.query(User).filter(User.user_id == sup_route.supervisor_id).first()
+                if sup_user:
+                    supervisor_name = sup_user.name
+
+        # 2. Absent days
         absent_days = db.query(DailyAttendanceEntry).filter(
             DailyAttendanceEntry.employee_id == u.user_id,
             DailyAttendanceEntry.status.in_(["absence_unexcused", "absence_excused", "annual_leave", "sick_leave"])
@@ -181,9 +214,12 @@ def get_evaluations_summary(
             "name": u.name,
             "role": u.role,
             "site_name": site_name,
+            "shift_label": shift_label,
+            "shift_time": shift_time,
             "supervisor_name": supervisor_name,
             "absent_days": absent_days,
             "evaluation_score": score,
         })
         
     return results
+
