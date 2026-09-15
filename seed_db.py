@@ -285,6 +285,39 @@ def _run_seed_migrations():
 
 
 
+    # -- attendance_logs new columns --
+    if insp.has_table("attendance_logs"):
+        existing_att = {c["name"] for c in insp.get_columns("attendance_logs")}
+        att_new_cols = {
+            "absence_type": "VARCHAR(20) NULL",
+            "excused_by": "VARCHAR(100) NULL",
+            "overtime_hours": "FLOAT DEFAULT 0",
+            "overtime_approved_by": "VARCHAR(100) NULL",
+            "overtime_approved": "BOOLEAN DEFAULT FALSE",
+            "is_rest_day": "BOOLEAN DEFAULT FALSE",
+            "is_sick_leave": "BOOLEAN DEFAULT FALSE",
+            "is_annual_leave": "BOOLEAN DEFAULT FALSE",
+        }
+        for col_name, col_def in att_new_cols.items():
+            if col_name not in existing_att:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE attendance_logs ADD COLUMN {col_name} {col_def}"))
+                    print(f"  Added attendance_logs.{col_name}")
+
+    if insp.has_table("daily_attendance_entries"):
+        existing_dae = {c["name"] for c in insp.get_columns("daily_attendance_entries")}
+        if "advance_amount" not in existing_dae:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE daily_attendance_entries ADD COLUMN advance_amount FLOAT DEFAULT 0"))
+                print("  Added daily_attendance_entries.advance_amount")
+
+    if insp.has_table("supervisor_routes"):
+        existing = {c["name"] for c in insp.get_columns("supervisor_routes")}
+        if "shift_id" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE supervisor_routes ADD COLUMN shift_id VARCHAR(36) NULL"))
+                print("  Added supervisor_routes.shift_id")
+
 def seed():
     Base.metadata.create_all(bind=engine)
     _run_seed_migrations()
@@ -419,31 +452,3 @@ def seed():
 
 if __name__ == "__main__":
     seed()
-
-    # -- attendance_logs new columns --
-    from sqlalchemy import inspect as sa_inspect, text as sa_text
-    insp = sa_inspect(engine)
-    if insp.has_table("attendance_logs"):
-        existing_att = {c["name"] for c in insp.get_columns("attendance_logs")}
-        att_new_cols = {
-            "absence_type": "VARCHAR(20) NULL",
-            "excused_by": "VARCHAR(100) NULL",
-            "overtime_hours": "FLOAT DEFAULT 0",
-            "overtime_approved_by": "VARCHAR(100) NULL",
-            "overtime_approved": "BOOLEAN DEFAULT FALSE",
-            "is_rest_day": "BOOLEAN DEFAULT FALSE",
-            "is_sick_leave": "BOOLEAN DEFAULT FALSE",
-            "is_annual_leave": "BOOLEAN DEFAULT FALSE",
-        }
-        for col_name, col_def in att_new_cols.items():
-            if col_name not in existing_att:
-                with engine.begin() as conn:
-                    conn.execute(sa_text(f"ALTER TABLE attendance_logs ADD COLUMN {col_name} {col_def}"))
-                    print(f"  Added attendance_logs.{col_name}")
-
-    if insp.has_table("daily_attendance_entries"):
-        existing_dae = {c["name"] for c in insp.get_columns("daily_attendance_entries")}
-        if "advance_amount" not in existing_dae:
-            with engine.begin() as conn:
-                conn.execute(sa_text("ALTER TABLE daily_attendance_entries ADD COLUMN advance_amount FLOAT DEFAULT 0"))
-                print("  Added daily_attendance_entries.advance_amount")
