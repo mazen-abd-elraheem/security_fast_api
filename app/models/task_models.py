@@ -195,6 +195,7 @@ class TaskTemplate(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     site_id = Column(String(36), ForeignKey("sites.site_id"), nullable=True, index=True)
+    schedule_id = Column(String(36), ForeignKey("task_schedules.schedule_id", ondelete="SET NULL"), nullable=True)
 
     # Recurrence
     is_recurring = Column(Boolean, nullable=False, default=False)
@@ -310,6 +311,22 @@ class TaskItemAlertRecipient(Base):
 # Task Instances & Responses (Execution Layer)
 # ══════════════════════════════════════════════
 
+
+class TaskSchedule(Base):
+    __tablename__ = 'task_schedules'
+    __table_args__ = (
+        Index('ix_ts_site_role', 'site_id', 'target_role'),
+    )
+
+    schedule_id = Column(String(36), primary_key=True, index=True)
+    template_id = Column(String(36), ForeignKey('task_templates.template_id', ondelete='CASCADE'), nullable=False)
+    section_id = Column(String(36), ForeignKey('task_sections.section_id', ondelete='CASCADE'), nullable=True)
+    site_id = Column(String(36), ForeignKey('sites.site_id', ondelete='CASCADE'), nullable=False, index=True)
+    shift_id = Column(String(36), ForeignKey('shifts.shift_id', ondelete='CASCADE'), nullable=True, index=True)
+    target_role = Column(String(30), nullable=False) # e.g. leader, supervisor, guard
+    status = Column(String(20), nullable=False, default='active')
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
 class TaskInstance(Base):
     """
     A specific execution of a template — assigned to a leader, completed on-site.
@@ -323,8 +340,10 @@ class TaskInstance(Base):
     instance_id = Column(String(36), primary_key=True, index=True)
     template_id = Column(String(36), ForeignKey("task_templates.template_id", ondelete="CASCADE"),
                          nullable=False, index=True)
-    assigned_to = Column(String(36), ForeignKey("users.user_id"), nullable=False, index=True)
+    assigned_to = Column(String(36), ForeignKey("users.user_id"), nullable=True, index=True)
     site_id = Column(String(36), ForeignKey("sites.site_id"), nullable=True, index=True)
+    schedule_id = Column(String(36), ForeignKey("task_schedules.schedule_id", ondelete="SET NULL"), nullable=True)
+    section_id = Column(String(36), ForeignKey("task_sections.section_id", ondelete="CASCADE"), nullable=True, index=True)
 
     status = Column(String(30), nullable=False, default="pending")  # TaskInstanceStatus
     due_date = Column(DateTime, nullable=True)

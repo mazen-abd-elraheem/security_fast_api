@@ -12,6 +12,7 @@ class RouteAssignment(BaseModel):
     """Single site in a route."""
     site_id: str
     visit_order: int = Field(1, ge=1)
+    shift_id: Optional[str] = None
 
 
 class RouteCreate(BaseModel):
@@ -35,6 +36,7 @@ class RouteResponse(BaseModel):
     supervisor_id: str
     supervisor_name: Optional[str] = None
     site_id: str
+    shift_id: Optional[str] = None
     site_name: Optional[str] = None
     site_address: Optional[str] = None
     assigned_date: date

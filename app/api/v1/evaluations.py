@@ -1,6 +1,6 @@
 """
 SecureTrack — Guard Evaluations API
-Supervisors evaluate guards; HR/Admin can view all evaluations.
+Supervisors/leaders evaluate guards; HR/Admin can view all evaluations.
 """
 import uuid
 from datetime import datetime, timezone

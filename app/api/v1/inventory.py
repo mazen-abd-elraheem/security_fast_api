@@ -1,5 +1,5 @@
 ﻿"""
-SecureTrack Platform â€” Inventory Routes
+SecureTrack Platform -- Inventory Routes
 Admin manages clothing/uniform stock. Personnel Officer + Admin can view.
 """
 import uuid

@@ -50,6 +50,7 @@ class RouteService:
                 route_id=str(uuid.uuid4()),
                 supervisor_id=route_data.supervisor_id,
                 site_id=site_assignment.site_id,
+                shift_id=site_assignment.shift_id,
                 assigned_date=route_data.assigned_date,
                 visit_order=site_assignment.visit_order,
             )
@@ -92,6 +93,7 @@ class RouteService:
                     route_id=str(uuid.uuid4()),
                     supervisor_id=supervisor_id,
                     site_id=site_assignment.site_id,
+                        shift_id=site_assignment.shift_id,
                     assigned_date=target_date,
                     visit_order=site_assignment.visit_order,
                 )

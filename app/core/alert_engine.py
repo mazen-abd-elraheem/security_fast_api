@@ -141,8 +141,10 @@ def _send_fcm_data_message(token: str, data: dict):
     Falls back gracefully if Firebase is not configured.
     """
     try:
-        import firebase_admin
-        from firebase_admin import messaging
+        from importlib import import_module
+
+        firebase_admin = import_module("firebase_admin")
+        messaging = import_module("firebase_admin.messaging")
 
         if not firebase_admin._apps:
             logger.info("Firebase Admin not initialised — skipping FCM push")

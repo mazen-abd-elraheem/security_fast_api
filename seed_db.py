@@ -237,7 +237,7 @@ def _run_seed_migrations():
     task_tables = [
         "tenants", "tenant_site_access", "client_accounts",
         "task_roles", "task_role_assignments",
-        "task_templates", "task_sections", "task_items", "task_item_alert_recipients",
+        "task_schedules", "task_templates", "task_sections", "task_items", "task_item_alert_recipients",
         "task_instances", "task_responses",
         "task_alerts", "task_alert_deliveries",
         "task_instance_comments",
@@ -247,6 +247,24 @@ def _run_seed_migrations():
             print(f"  [migration] {tbl} table exists ✓")
         else:
             print(f"  [migration] {tbl} will be created by create_all")
+
+    if insp.has_table("task_instances"):
+        existing = {c["name"] for c in insp.get_columns("task_instances")}
+        with engine.begin() as conn:
+            if "schedule_id" not in existing:
+                conn.execute(sa_text("ALTER TABLE task_instances ADD COLUMN schedule_id VARCHAR(36) NULL"))
+                print("  [migration] task_instances.schedule_id added")
+            if "section_id" not in existing:
+                conn.execute(sa_text("ALTER TABLE task_instances ADD COLUMN section_id VARCHAR(36) NULL"))
+                print("  [migration] task_instances.section_id added")
+            
+            # Also modify assigned_to to allow NULL
+            # MySQL syntax for modifying column
+            try:
+                conn.execute(sa_text("ALTER TABLE task_instances MODIFY assigned_to VARCHAR(36) NULL"))
+                print("  [migration] task_instances.assigned_to made nullable")
+            except Exception as e:
+                print(f"  [migration] failed to make assigned_to nullable: {e}")
 
     # ── Tenants: add tenant_code column ──
     if insp.has_table("tenants"):

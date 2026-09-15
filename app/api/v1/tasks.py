@@ -22,6 +22,7 @@ from app.models.task_models import (
     TaskTemplate, TaskSection, TaskItem, TaskItemAlertRecipient,
     TaskInstance, TaskResponse,
     TaskAlert, TaskAlertDelivery,
+    
 )
 from app.schemas.task_schemas import (
     TenantCreate, TenantUpdate, TenantOut, TenantSiteAccessCreate,
@@ -32,7 +33,7 @@ from app.schemas.task_schemas import (
     TaskItemCreate, TaskItemUpdate, TaskItemOut,
     TaskInstanceAssign, TaskInstanceSubmit, TaskInstanceOut, TaskInstanceReview,
     TaskResponseOut,
-    TaskAlertOut,
+    TaskAlertOut, TaskAlertDeliveryOut,
 )
 from app.core.security import hash_password
 
@@ -800,6 +801,7 @@ def assign_task(
         template_id=body.template_id,
         assigned_to=body.assigned_to,
         site_id=body.site_id or template.site_id,
+        section_id=body.section_id,
         status=TaskInstanceStatus.PENDING,
         due_date=body.due_date or template.deadline,
         created_by=current_user.user_id,
@@ -851,7 +853,34 @@ def my_tasks(
     current_user: User = Depends(require_role(UserRole.LEADER)),
 ):
     """Get task instances assigned to the current leader."""
-    q = db.query(TaskInstance).filter(TaskInstance.assigned_to == current_user.user_id)
+    from sqlalchemy import or_
+    from app.models.supervisor_route import SupervisorRoute
+    import datetime
+
+    # Get sites the user is scheduled for today
+    today = datetime.date.today().isoformat()
+    routes = db.query(SupervisorRoute).filter(
+        SupervisorRoute.supervisor_id == current_user.user_id,
+        SupervisorRoute.visit_date == today
+    ).all()
+    user_site_ids = [r.site_id for r in routes if r.site_id]
+    
+    # Or maybe from shifts if the user is a guard? For now, we use SupervisorRoute for leaders
+    # But just in case, we can also check GuardRoster
+    from app.models.guard_roster import GuardRoster
+    rosters = db.query(GuardRoster).filter(
+        GuardRoster.guard_id == current_user.user_id,
+        GuardRoster.date == today
+    ).all()
+    user_site_ids.extend([r.site_id for r in rosters if r.site_id])
+    
+    q = db.query(TaskInstance).filter(
+        or_(
+            TaskInstance.assigned_to == current_user.user_id,
+            (TaskInstance.assigned_to.is_(None)) & (TaskInstance.site_id.in_(user_site_ids)) if user_site_ids else False
+        )
+    )
+    
     if status_filter:
         q = q.filter(TaskInstance.status == status_filter)
     instances = q.order_by(TaskInstance.created_at.desc()).all()
@@ -1165,6 +1194,7 @@ def _load_instance_full(db: Session, instance_id: str) -> Optional[TaskInstanceO
         template_id=instance.template_id,
         template_title=template.title if template else None,
         assigned_to=instance.assigned_to,
+        section_id=instance.section_id,
         assignee_name=assignee.name if assignee else None,
         site_id=instance.site_id,
         site_name=site.name if site else None,

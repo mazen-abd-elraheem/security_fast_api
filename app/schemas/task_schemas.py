@@ -237,8 +237,9 @@ class TaskTemplateOut(BaseModel):
 
 class TaskInstanceAssign(BaseModel):
     template_id: str
-    assigned_to: str  # user_id of leader
+    assigned_to: Optional[str] = None  # user_id of leader (optional for site-wide tasks)
     site_id: Optional[str] = None
+    section_id: Optional[str] = None
     due_date: Optional[datetime] = None
 
 class TaskResponseSubmit(BaseModel):
@@ -268,7 +269,8 @@ class TaskInstanceOut(BaseModel):
     instance_id: str
     template_id: str
     template_title: Optional[str] = None
-    assigned_to: str
+    assigned_to: Optional[str] = None
+    section_id: Optional[str] = None
     assignee_name: Optional[str] = None
     site_id: Optional[str] = None
     site_name: Optional[str] = None
@@ -379,5 +381,25 @@ class TaskInstanceCommentOut(BaseModel):
     content: str
     created_at: datetime
 
+    class Config:
+        from_attributes = True
+
+class TaskScheduleCreate(BaseModel):
+    template_id: str
+    section_id: Optional[str] = None
+    site_id: str
+    shift_id: Optional[str] = None
+    target_role: str
+
+class TaskScheduleOut(BaseModel):
+    schedule_id: str
+    template_id: str
+    section_id: Optional[str] = None
+    site_id: str
+    shift_id: Optional[str] = None
+    target_role: str
+    status: str
+    created_at: datetime
+    
     class Config:
         from_attributes = True

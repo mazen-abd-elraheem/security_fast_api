@@ -18,6 +18,7 @@ class SupervisorRoute(Base):
     route_id = Column(String(36), primary_key=True, index=True)
     supervisor_id = Column(String(36), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
     site_id = Column(String(36), ForeignKey("sites.site_id", ondelete="CASCADE"), nullable=False, index=True)
+    shift_id = Column(String(36), ForeignKey("shifts.shift_id", ondelete="CASCADE"), nullable=True, index=True)
 
     # The date this route assignment is for
     assigned_date = Column(Date, nullable=False, index=True)
