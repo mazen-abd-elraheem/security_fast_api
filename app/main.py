@@ -58,6 +58,7 @@ from app.api.v1 import (
       vacations,
       tax_brackets,
       transfer_methods,
+      deduction_sheet,
 )
 
 settings = get_settings()
@@ -415,6 +416,7 @@ app.include_router(terminations_report.router, prefix="/api/v1/terminations", ta
 app.include_router(vacations.router, prefix="/api/v1/vacations", tags=["Vacations"])
 app.include_router(tax_brackets.router, prefix="/api/v1/tax-brackets", tags=["Tax Brackets"])
 app.include_router(transfer_methods.router, prefix="/api/v1/transfer-methods", tags=["Transfer Methods"])
+app.include_router(deduction_sheet.router, prefix="/api/v1/deduction-sheet", tags=["Deduction Sheet"])
 
 # ==========================================
 # Static Files (uploaded images) Ã¢â‚¬â€  must be AFTER routers
