@@ -21,6 +21,9 @@ from app.schemas.user import UserCreate, UserResponse
 from app.services.user_service import UserService
 from app.api.deps import get_current_user, handle_service_exception
 from app.core.exceptions import SecureTrackException
+from app.core.security import (
+    is_token_revoked, is_user_tokens_revoked,
+)
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -65,7 +68,7 @@ def _record_failed_login(user: User, db: Session):
     user.last_failed_login = now_naive
     lockout_duration = _get_lockout_duration(user.failed_login_count)
     user.locked_until = now_naive + lockout_duration
-    db.commit()
+    db.flush()
 
 
 def _reset_lockout(user: User, db: Session):
@@ -73,7 +76,7 @@ def _reset_lockout(user: User, db: Session):
     user.failed_login_count = 0
     user.locked_until = None
     user.last_failed_login = None
-    db.commit()
+    db.flush()
 
 
 @router.post(
@@ -127,9 +130,13 @@ def login(
     if "@" in form_data.username:
         pending_user = UserService.get_by_email(db, form_data.username)
     else:
-        pending_user = db.query(User).filter(User.badge_number == form_data.username).first()
-        if not pending_user:
-            pending_user = db.query(User).filter(User.employee_code == form_data.username).first()
+        from sqlalchemy import or_
+        pending_user = db.query(User).filter(
+            or_(
+                User.badge_number == form_data.username,
+                User.employee_code == form_data.username,
+            )
+        ).first()
 
     # 2) Check if account is locked out
     if pending_user:
@@ -154,6 +161,7 @@ def login(
         # Record failed attempt for lockout
         if pending_user:
             _record_failed_login(pending_user, db)
+            db.commit()  # commit the lockout state change
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email/badge number or password",
@@ -162,6 +170,7 @@ def login(
 
     # 5) Success — reset lockout counters
     _reset_lockout(user, db)
+    db.commit()  # commit the lockout reset
 
     # 6) Check if MFA is enabled
     if getattr(user, 'totp_enabled', False):
@@ -225,7 +234,6 @@ def refresh_token(
     # Check if this refresh token has been revoked
     jti = payload.get("jti")
     if jti:
-        from app.core.security import is_token_revoked, is_user_tokens_revoked
         if is_token_revoked(jti, db) or is_user_tokens_revoked(user_id, db):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

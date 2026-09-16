@@ -105,7 +105,6 @@ def get_guard_attendance(
     """Get attendance history for a guard. Guards can view their own."""
     user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
     if user_role == "guard" and current_user.user_id != guard_id:
-        from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Guards can only view their own attendance")
 
     records = AttendanceService.get_guard_attendance(db, guard_id, date_from, date_to)
@@ -140,6 +139,7 @@ def supervisor_attendance_dashboard(
     from app.models.shift import Shift
     from app.models.site import Site
     from app.models.attendance_log import AttendanceLog
+    from sqlalchemy.orm import joinedload
 
     if target_date is None:
         target_date = date.today()
@@ -155,61 +155,77 @@ def supervisor_attendance_dashboard(
     if not site_ids:
         return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
 
-    # 2. For each site, get guards rostered today
+    # 2. Bulk-load sites, shifts, and rosters in 3 queries (no N+1)
+    sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
+    site_map = {s.site_id: s for s in sites}
+
+    shifts = db.query(Shift).filter(Shift.site_id.in_(site_ids), Shift.is_active == True).all()
+    shift_map = {s.shift_id: s for s in shifts}
+    # site_id → list of shift_ids
+    site_shift_ids: dict[str, list] = {sid: [] for sid in site_ids}
+    for s in shifts:
+        site_shift_ids[s.site_id].append(s.shift_id)
+
+    all_shift_ids = [s.shift_id for s in shifts]
+    rosters = []
+    if all_shift_ids:
+        rosters = (
+            db.query(GuardRoster)
+            .options(joinedload(GuardRoster.guard))
+            .filter(
+                GuardRoster.shift_id.in_(all_shift_ids),
+                GuardRoster.assigned_date == target_date,
+                GuardRoster.status != "canceled",
+            )
+            .all()
+        )
+
+    # 3. Bulk-load attendance logs for all rosters
+    roster_ids = [r.roster_id for r in rosters]
+    att_logs = []
+    if roster_ids:
+        att_logs = (
+            db.query(AttendanceLog)
+            .filter(
+                AttendanceLog.roster_id.in_(roster_ids),
+                AttendanceLog.supervisor_id == current_user.user_id,
+            )
+            .all()
+        )
+    log_by_roster = {al.roster_id: al for al in att_logs}
+
+    # 4. Group rosters by site
+    roster_by_site: dict[str, list] = {sid: [] for sid in site_ids}
+    for r in rosters:
+        shift_obj = shift_map.get(r.shift_id)
+        if shift_obj:
+            roster_by_site[shift_obj.site_id].append(r)
+
+    # 5. Build response
     sites_data = []
     total_guards = 0
     total_present = 0
 
     for site_id in site_ids:
-        site = db.query(Site).filter(Site.site_id == site_id).first()
+        site = site_map.get(site_id)
         if not site:
             continue
 
-        # Get shifts for this site
-        shifts = db.query(Shift).filter(Shift.site_id == site_id, Shift.is_active == True).all()
-        shift_ids = [s.shift_id for s in shifts]
-
-        if not shift_ids:
-            sites_data.append({
-                "site_id": site_id,
-                "site_name": site.name,
-                "guards": [],
-                "total": 0,
-                "present": 0,
-            })
-            continue
-
-        # Get guard rosters for today at this site (exclude canceled)
-        rosters = (
-            db.query(GuardRoster)
-            .filter(GuardRoster.shift_id.in_(shift_ids))
-            .filter(GuardRoster.assigned_date == target_date)
-            .filter(GuardRoster.status != "canceled")
-            .all()
-        )
-
         guards = []
         site_present = 0
-        seen_guard_ids = set()
-        for roster in rosters:
-            guard = roster.guard
-            shift = roster.shift
+        seen_guard_ids: set = set()
 
-            # Skip duplicate guard entries (same guard on multiple shifts)
+        for roster in roster_by_site[site_id]:
+            guard = roster.guard
+            shift = shift_map.get(roster.shift_id)
+
             if guard and guard.user_id in seen_guard_ids:
                 continue
             if guard:
                 seen_guard_ids.add(guard.user_id)
 
-            # Check if guard has an attendance log for this roster recorded by THIS supervisor
-            att_log = (
-                db.query(AttendanceLog)
-                .filter(AttendanceLog.roster_id == roster.roster_id)
-                .filter(AttendanceLog.supervisor_id == current_user.user_id)
-                .first()
-            )
-
-            status = att_log.status if att_log else "not_recorded"
+            att_log = log_by_roster.get(roster.roster_id)
+            att_status = att_log.status if att_log else "not_recorded"
             if att_log and att_log.status in ("present", "late"):
                 site_present += 1
 
@@ -219,7 +235,7 @@ def supervisor_attendance_dashboard(
                 "roster_id": roster.roster_id,
                 "shift_label": shift.label if shift else None,
                 "shift_time": f"{shift.start_time.strftime('%H:%M')}-{shift.end_time.strftime('%H:%M')}" if shift else None,
-                "status": status,
+                "status": att_status,
                 "recorded_at": att_log.recorded_at.isoformat() if att_log else None,
                 "notes": att_log.notes if att_log else None,
                 "log_id": att_log.log_id if att_log else None,
@@ -293,13 +309,6 @@ def guard_checkin(
         .first()
     )
     if not roster:
-        # Debug: check what rosters exist for this guard
-        all_rosters = db.query(GuardRoster).filter(
-            GuardRoster.guard_id == current_user.user_id
-        ).all()
-        logger.warning(f"[CHECKIN] No roster for today={today}. "
-                       f"Guard has {len(all_rosters)} total rosters: "
-                       f"{[(r.roster_id, str(r.assigned_date)) for r in all_rosters]}")
         return {"status": "no_assignment", "detail": f"No shift assigned for today ({today})"}
 
     logger.info(f"[CHECKIN] Found roster={roster.roster_id}, shift={roster.shift_id}, "
@@ -668,7 +677,7 @@ def get_attendance_report(
 
     # Load deduction constants from DB (formula configs), fallback to defaults
     _cfgs = db.query(PayrollFormulaConfig).all()
-    _cfg_map = {c.config_key: float(c.config_value) for c in _cfgs}
+    _cfg_map = {c.config_key: float(c.value) for c in _cfgs}
     LATE_THRESHOLD_MINUTES = _cfg_map.get("late_threshold_minutes", 10)
     LATE_DEDUCTION_PER_MINUTE = _cfg_map.get("late_deduction_per_minute", 1.0)
     ABSENT_DEDUCTION = _cfg_map.get("absent_day_deduction", 100.0)
@@ -717,6 +726,51 @@ def get_attendance_report(
     user_sup_routes = {u_id: [] for u_id in user_dict.keys()}
     for sr in sup_routes:
         user_sup_routes[sr.supervisor_id].append(sr)
+
+    # Pre-build site_id → supervisor_name map (eliminates per-user N+1)
+    all_site_ids = set()
+    for r_list in user_rosters.values():
+        for r in r_list:
+            if r.shift and r.shift.site_id:
+                all_site_ids.add(r.shift.site_id)
+    for sr_list in user_sup_routes.values():
+        for sr in sr_list:
+            all_site_ids.add(sr.site_id)
+
+    site_supervisor_map: dict[str, str] = {}
+    if all_site_ids:
+        # Get the latest supervisor route per site
+        from sqlalchemy import func as sa_func, and_
+        sup_route_sub = (
+            db.query(
+                SupervisorRoute.site_id,
+                sa_func.max(SupervisorRoute.assigned_date).label("max_date"),
+            )
+            .filter(
+                SupervisorRoute.site_id.in_(all_site_ids),
+            )
+            .group_by(SupervisorRoute.site_id)
+            .subquery()
+        )
+        latest_sup_routes = (
+            db.query(SupervisorRoute)
+            .join(sup_route_sub, and_(
+                SupervisorRoute.site_id == sup_route_sub.c.site_id,
+                SupervisorRoute.assigned_date == sup_route_sub.c.max_date,
+            ))
+            .all()
+        )
+        sup_ids_for_routes = [sr.supervisor_id for sr in latest_sup_routes]
+        if sup_ids_for_routes:
+            sup_users = db.query(User).filter(
+                User.user_id.in_(sup_ids_for_routes),
+                User.role == "supervisor",
+            ).all()
+            sup_user_map = {u.user_id: u.name for u in sup_users}
+            for sr in latest_sup_routes:
+                name = sup_user_map.get(sr.supervisor_id)
+                if name:
+                    site_supervisor_map[sr.site_id] = name
 
     entries = (
         db.query(DailyAttendanceEntry)
@@ -772,7 +826,7 @@ def get_attendance_report(
                     if not shift_time and sr_shift.start_time and sr_shift.end_time:
                         shift_time = f"{sr_shift.start_time.strftime('%H:%M')} - {sr_shift.end_time.strftime('%H:%M')}"
 
-        # Find the supervisor assigned to this user's site via supervisor_routes
+        # Find the supervisor assigned to this user's site — bulk-preloaded
         supervisor_name = "N/A"
         resolved_site_id = None
         if latest_roster and latest_roster.shift:
@@ -781,21 +835,8 @@ def get_attendance_report(
             latest_sr = sorted(user_sr_list, key=lambda r: r.assigned_date)[-1]
             resolved_site_id = latest_sr.site_id
 
-        if resolved_site_id:
-            sup_route = (
-                db.query(SupervisorRoute)
-                .join(User, SupervisorRoute.supervisor_id == User.user_id)
-                .filter(
-                    SupervisorRoute.site_id == resolved_site_id,
-                    User.role == "supervisor",
-                )
-                .order_by(SupervisorRoute.assigned_date.desc())
-                .first()
-            )
-            if sup_route:
-                sup_user = db.query(User).filter(User.user_id == sup_route.supervisor_id).first()
-                if sup_user:
-                    supervisor_name = sup_user.name
+        if resolved_site_id and resolved_site_id in site_supervisor_map:
+            supervisor_name = site_supervisor_map[resolved_site_id]
 
 
         # Aggregate counts
@@ -863,7 +904,6 @@ def export_attendance_report(
     import io
     import csv
     from fastapi.responses import StreamingResponse
-    from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
     
     report = get_attendance_report(date_from=date_from, date_to=date_to, site_id=site_id, current_user=current_user, db=db)
     employees = report["employees"]

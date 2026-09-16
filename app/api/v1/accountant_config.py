@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack - Tax Brackets, Bonuses, Holidays, Terminations CRUD API
 """
 import uuid
@@ -158,7 +158,6 @@ def list_holidays(
     q = db.query(Holiday)
     if year:
         from sqlalchemy import extract
-        from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
         q = q.filter(extract("year", Holiday.date) == year)
     return q.order_by(Holiday.date).all()
 
@@ -223,15 +222,19 @@ def add_termination(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.user_id == data.employee_id).first()
-    if user:
-        user.is_active = False
-        user.status = "terminated"
-    term = Termination(id=str(uuid.uuid4()), created_by=current_user.user_id, **data.model_dump())
-    db.add(term)
-    db.commit()
-    db.refresh(term)
-    return term
+    try:
+        user = db.query(User).filter(User.user_id == data.employee_id).first()
+        if user:
+            user.is_active = False
+            user.status = "terminated"
+        term = Termination(id=str(uuid.uuid4()), created_by=current_user.user_id, **data.model_dump())
+        db.add(term)
+        db.commit()
+        db.refresh(term)
+        return term
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.put("/terminations/{term_id}/approve")

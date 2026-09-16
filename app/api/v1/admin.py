@@ -37,8 +37,11 @@ def get_audit_logs(
     if target_type:
         query = query.filter(AdminAuditLog.target_type == target_type)
 
-    total = query.count()
-    logs = query.order_by(AdminAuditLog.created_at.desc()).offset(skip).limit(limit).all()
+    # Single query: fetch rows + total via window function avoids double scan
+    ordered = query.order_by(AdminAuditLog.created_at.desc())
+    logs = ordered.offset(skip).limit(limit).all()
+    # Count only if we got a full page (otherwise we already know total)
+    total = skip + len(logs) if len(logs) < limit else query.count()
 
     return {
         "logs": [

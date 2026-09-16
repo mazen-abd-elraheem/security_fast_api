@@ -75,7 +75,7 @@ def _build_sheet_data(
 ) -> list[dict]:
     """Build the full sheet data joining all sources."""
 
-    # 1) Get cash advances filtered by tab
+    # 1) Get cash advances filtered by tab AND date range
     if tab == "approved":
         status_filter = ["admin_approved", "ceo_approved", "admin_modified"]
     elif tab == "rejected":
@@ -85,7 +85,11 @@ def _build_sheet_data(
 
     advances = (
         db.query(CashAdvance)
-        .filter(CashAdvance.status.in_(status_filter))
+        .filter(
+            CashAdvance.status.in_(status_filter),
+            CashAdvance.created_at >= datetime.combine(date_from, datetime.min.time()),
+            CashAdvance.created_at <= datetime.combine(date_to, datetime.max.time()),
+        )
         .all()
     )
 
@@ -171,7 +175,7 @@ def _build_sheet_data(
 
     # 5b) Get employee rest allowance overrides
     # Find assignments for these employees that apply to this month or are permanent
-    req_month_year = datetime.strptime(date_from, "%Y-%m-%d").strftime("%Y-%m") if date_from else None
+    req_month_year = date_from.strftime("%Y-%m") if date_from else None
     
     q_overrides = db.query(EmployeeRestAllowance).filter(
         EmployeeRestAllowance.user_id.in_(employee_ids)
@@ -377,10 +381,11 @@ def approve_advance(
     if advance.status not in ("pending", "ops_approved"):
         raise HTTPException(status_code=400, detail=f"Cannot approve advance with status '{advance.status}'")
 
+    now = datetime.now(timezone.utc)
     advance.status = "admin_approved"
     advance.admin_id = current_user.user_id
-    advance.admin_reviewed_at = datetime.now(timezone.utc)
-    advance.updated_at = datetime.now(timezone.utc)
+    advance.admin_reviewed_at = now
+    advance.updated_at = now
 
     db.commit()
     db.refresh(advance)
@@ -403,11 +408,12 @@ def reject_advance(
     if advance.status not in ("pending", "ops_approved"):
         raise HTTPException(status_code=400, detail=f"Cannot reject advance with status '{advance.status}'")
 
+    now = datetime.now(timezone.utc)
     advance.status = "admin_rejected"
     advance.admin_id = current_user.user_id
     advance.admin_notes = data.notes
-    advance.admin_reviewed_at = datetime.now(timezone.utc)
-    advance.updated_at = datetime.now(timezone.utc)
+    advance.admin_reviewed_at = now
+    advance.updated_at = now
 
     db.commit()
     db.refresh(advance)
@@ -422,23 +428,44 @@ def batch_update_cells(
     db: Session = Depends(get_db),
 ):
     """Batch update editable fields (advance amount overrides, deductions, etc.)."""
-    updated = 0
-    for item in data.updates:
-        if item.field == "advance_amount_override":
-            # Find the latest pending/approved advance for this user and update
-            advance = (
-                db.query(CashAdvance)
-                .filter(
-                    CashAdvance.guard_id == item.user_id,
-                    CashAdvance.status.in_(["pending", "ops_approved", "admin_approved"]),
-                )
-                .order_by(CashAdvance.created_at.desc())
-                .first()
+    # Bulk-fetch the latest advance per user to avoid N+1
+    override_items = [i for i in data.updates if i.field == "advance_amount_override"]
+    user_ids = [i.user_id for i in override_items]
+
+    advance_map: dict[str, CashAdvance] = {}
+    if user_ids:
+        from sqlalchemy import func as sa_func
+        # Subquery: latest advance created_at per guard in the relevant statuses
+        sub = (
+            db.query(
+                CashAdvance.guard_id,
+                sa_func.max(CashAdvance.created_at).label("max_created"),
             )
-            if advance:
-                advance.approved_amount = item.value
-                advance.updated_at = datetime.now(timezone.utc)
-                updated += 1
+            .filter(
+                CashAdvance.guard_id.in_(user_ids),
+                CashAdvance.status.in_(["pending", "ops_approved", "admin_approved"]),
+            )
+            .group_by(CashAdvance.guard_id)
+            .subquery()
+        )
+        latest_advances = (
+            db.query(CashAdvance)
+            .join(sub, and_(
+                CashAdvance.guard_id == sub.c.guard_id,
+                CashAdvance.created_at == sub.c.max_created,
+            ))
+            .all()
+        )
+        advance_map = {a.guard_id: a for a in latest_advances}
+
+    now = datetime.now(timezone.utc)
+    updated = 0
+    for item in override_items:
+        advance = advance_map.get(item.user_id)
+        if advance:
+            advance.approved_amount = item.value
+            advance.updated_at = now
+            updated += 1
 
     db.commit()
     return {"message": f"Updated {updated} cells"}

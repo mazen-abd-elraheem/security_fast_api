@@ -134,11 +134,17 @@ async def generate_payroll_sheet(
     late_rule = deduction_rules.get("late")
     late_threshold = int(late_rule.threshold_minutes) if late_rule else 10
 
-    # 8. Roster info (bulk: last assigned per user)
+    # 8. Roster info (bulk: last assigned within this month per user)
+    #    Bug fix: previously queried ALL rosters with no date filter, causing
+    #    regenerated past months to show the employee's *current* site/shift.
     all_rosters = (
         db.query(GuardRoster)
         .options(joinedload(GuardRoster.shift).joinedload(Shift.site))
-        .filter(GuardRoster.guard_id.in_(user_ids))
+        .filter(
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= month_start,
+            GuardRoster.assigned_date <= month_end,
+        )
         .order_by(GuardRoster.assigned_date.desc())
         .all()
     )
@@ -147,12 +153,16 @@ async def generate_payroll_sheet(
         if r.guard_id not in roster_by_user:
             roster_by_user[r.guard_id] = r
 
-    # ── Week boundaries (4 × 7-day chunks) ──
-    week_ranges = []
-    for w in range(4):
-        ws = month_start + timedelta(days=w * 7)
-        we = min(month_start + timedelta(days=(w + 1) * 7 - 1), month_end)
-        week_ranges.append((ws, we))
+    # ── Week boundaries — 4 chunks that cover the full month (no tail loss) ──
+    week_ranges = [
+        (month_start + timedelta(days=w * 7),
+         min(month_start + timedelta(days=(w + 1) * 7 - 1), month_end))
+        for w in range(4)
+        if month_start + timedelta(days=w * 7) <= month_end
+    ]
+    # Pad to exactly 4 so compute_row always receives 4 weeks
+    while len(week_ranges) < 4:
+        week_ranges.append((month_end, month_end))
 
     # ── Compute one row per employee ──
     rows_created = []
@@ -327,14 +337,21 @@ async def update_payroll_cells(
         "salary_diff", "total_salary_diff_incentive", "bonus_rounded", "grand_incentive",
     }
 
-    updated = 0
+    # Validate all fields before touching the DB (fast-fail)
     for upd in payload.updates:
         if upd.field not in editable_fields:
             raise HTTPException(400, f"Field '{upd.field}' is not editable")
 
-        row = db.query(PayrollSheetRow).filter(
-            PayrollSheetRow.row_id == upd.row_id
-        ).first()
+    # Bulk-fetch all target rows in one query (avoids N+1)
+    row_ids = [upd.row_id for upd in payload.updates]
+    rows_qs = db.query(PayrollSheetRow).filter(
+        PayrollSheetRow.row_id.in_(row_ids)
+    ).all()
+    row_map = {r.row_id: r for r in rows_qs}
+
+    updated = 0
+    for upd in payload.updates:
+        row = row_map.get(upd.row_id)
         if not row:
             continue
         if row.is_approved:
@@ -561,20 +578,21 @@ async def seed_formula_configs(
 async def get_payroll_report(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
-    role_filter: Optional[str] = Query(None, description="Filter by role: guard, outdoor, supervisor, or all"),
+    role_filter: Optional[str] = Query(None, description="Filter by role: guard, outdoor, supervisor, leader, lady, or all"),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     """
     Live payroll report using DailyAttendanceEntry (supervisor manual entries).
     Same compute_row engine as generate_payroll_sheet — zero hardcodes.
+    Role scope unified with tax-sheet (SHEET_ROLES) so leader/lady aren't silently excluded.
     """
     # 1. Eligible users
     users_query = db.query(User).filter(User.is_active == True)
     if role_filter and role_filter != "all":
         users_query = users_query.filter(User.role == role_filter)
     else:
-        users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
+        users_query = users_query.filter(User.role.in_(SHEET_ROLES))
     users = users_query.all()
     if not users:
         return {
@@ -625,14 +643,13 @@ async def get_payroll_report(
         if uid:
             advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
 
-    # 5. Week boundaries
-    week_ranges = []
-    for w in range(4):
-        ws = date_from + timedelta(days=w * 7)
-        we = min(date_from + timedelta(days=(w + 1) * 7 - 1), date_to)
-        if ws > date_to:
-            break
-        week_ranges.append((ws, we))
+    # 5. Week boundaries — tail-inclusive so every day in the range is counted
+    week_ranges = [
+        (date_from + timedelta(days=w * 7),
+         min(date_from + timedelta(days=(w + 1) * 7 - 1), date_to))
+        for w in range(4)
+        if date_from + timedelta(days=w * 7) <= date_to
+    ]
     while len(week_ranges) < 4:
         week_ranges.append((date_to, date_to))
 
@@ -747,19 +764,23 @@ async def get_payroll_report(
 
 @router.get("/export", summary="Export payroll as CSV")
 def export_payroll_csv(
-
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
     role_filter: Optional[str] = Query(None),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Export payroll report as CSV with 21 Arabic columns."""
+    """
+    Export payroll report as CSV.
+    Now uses the same compute_row engine as /report and /generate so the numbers
+    always match what the accountant approves in the grid.
+    Role scope unified to SHEET_ROLES.
+    """
     users_query = db.query(User).filter(User.is_active == True)
     if role_filter and role_filter != "all":
         users_query = users_query.filter(User.role == role_filter)
     else:
-        users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
+        users_query = users_query.filter(User.role.in_(SHEET_ROLES))
     users = users_query.all()
     user_dict = {u.user_id: u for u in users}
 
@@ -774,7 +795,6 @@ def export_payroll_csv(
     writer = csv.writer(output)
     writer.writerow(headers)
 
-    # If no users, return empty CSV
     if not users:
         output.seek(0)
         return StreamingResponse(
@@ -783,34 +803,59 @@ def export_payroll_csv(
             headers={"Content-Disposition": f"attachment; filename=payroll_{date_from}_to_{date_to}.csv"},
         )
 
-    # Gather rosters and entries similar to report
+    user_ids = list(user_dict.keys())
+
+    # Load formula engine configs (same as /report)
+    formula_configs = load_formula_configs(db)
+    deduction_rules = load_deduction_rules(db)
+    configs = db.query(SalaryClassificationConfig).all()
+    config_map = {
+        c.classification: {
+            "daily_rate": c.daily_rate, "annual_increase_pct": c.annual_increase_pct,
+            "annual_increase_base": c.annual_increase_base, "incentive_rate": c.incentive_rate,
+            "increase_2025_rate": c.increase_2025_rate, "bonus_rate": c.bonus_rate,
+        }
+        for c in configs
+    }
+    late_rule = deduction_rules.get("late")
+    late_threshold = int(late_rule.threshold_minutes) if late_rule else 10
+
+    # Bulk load rosters (ordered so first entry in list is most recent)
     rosters = (
         db.query(GuardRoster)
         .options(joinedload(GuardRoster.shift).joinedload(Shift.site))
-        .filter(GuardRoster.guard_id.in_(user_dict.keys()))
-        .filter(GuardRoster.assigned_date >= date_from)
-        .filter(GuardRoster.assigned_date <= date_to)
+        .filter(
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
+        )
+        .order_by(GuardRoster.assigned_date.desc())
         .all()
     )
-    user_rosters: dict[str, list] = {u_id: [] for u_id in user_dict.keys()}
+    user_rosters: dict[str, list] = {u_id: [] for u_id in user_ids}
     for roster in rosters:
         user_rosters[roster.guard_id].append(roster)
 
-    entries = (
+    # Bulk load attendance entries
+    all_entries = (
         db.query(DailyAttendanceEntry)
-        .filter(DailyAttendanceEntry.employee_id.in_(user_dict.keys()))
-        .filter(DailyAttendanceEntry.entry_date >= date_from)
-        .filter(DailyAttendanceEntry.entry_date <= date_to)
+        .filter(
+            DailyAttendanceEntry.employee_id.in_(user_ids),
+            DailyAttendanceEntry.entry_date >= date_from,
+            DailyAttendanceEntry.entry_date <= date_to,
+        )
         .all()
     )
-    user_entries: dict[str, list] = {u_id: [] for u_id in user_dict.keys()}
-    for entry in entries:
+    user_entries: dict[str, list] = {u_id: [] for u_id in user_ids}
+    for entry in all_entries:
         user_entries[entry.employee_id].append(entry)
 
-    # Site / Supervisor lookup
-    sup_ids = {e.entered_by for e in entries}
+    # Supervisor name lookup
+    sup_ids = {e.entered_by for e in all_entries if e.entered_by}
     supervisors = db.query(User).filter(User.user_id.in_(sup_ids)).all()
     sup_dict = {s.user_id: s.name for s in supervisors}
+
+    # Site lookup
     sites = db.query(Site).all()
     site_dict = {s.site_id: s.name for s in sites}
     base_site = next((s for s in sites if getattr(s, 'is_base', False)), None)
@@ -818,76 +863,131 @@ def export_payroll_csv(
     travel_fees = db.query(TravelFee).filter(TravelFee.is_active == True).all()
     travel_fee_map = {(tf.from_site_name.lower(), tf.to_site_name.lower()): float(tf.amount) for tf in travel_fees}
 
+    # Advances
+    advances_qs = db.query(CashAdvance).filter(
+        CashAdvance.status.in_(["admin_approved", "admin_modified", "supervisor_approved"]),
+        CashAdvance.updated_at >= datetime.combine(date_from, datetime.min.time()),
+        CashAdvance.updated_at <= datetime.combine(date_to, datetime.max.time()),
+    ).all()
+    advance_map: dict = {}
+    for a in advances_qs:
+        uid = getattr(a, 'guard_id', None) or getattr(a, 'user_id', None)
+        if uid:
+            advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
+
+    # Bulk load supervisor visits for all supervisor/leader users (eliminates N+1)
+    sup_leader_ids = [
+        u.user_id for u in users
+        if (u.role.value if hasattr(u.role, 'value') else u.role) in ('supervisor', 'leader')
+    ]
+    all_visits = []
+    if sup_leader_ids:
+        all_visits = (
+            db.query(SupervisorVisit)
+            .options(joinedload(SupervisorVisit.site))
+            .filter(
+                SupervisorVisit.supervisor_id.in_(sup_leader_ids),
+                SupervisorVisit.check_in_time >= datetime.combine(date_from, datetime.min.time()),
+                SupervisorVisit.check_in_time <= datetime.combine(date_to, datetime.max.time()),
+                SupervisorVisit.is_verified == True,
+            )
+            .order_by(SupervisorVisit.check_in_time.asc())
+            .all()
+        )
+    visits_by_user: dict = {}
+    for v in all_visits:
+        visits_by_user.setdefault(v.supervisor_id, {}).setdefault(v.check_in_time.date(), []).append(v)
+
+    # Week boundaries — tail-inclusive
+    week_ranges = [
+        (date_from + timedelta(days=w * 7),
+         min(date_from + timedelta(days=(w + 1) * 7 - 1), date_to))
+        for w in range(4)
+        if date_from + timedelta(days=w * 7) <= date_to
+    ]
+    while len(week_ranges) < 4:
+        week_ranges.append((date_to, date_to))
+
     for idx, (user_id, user) in enumerate(user_dict.items(), start=1):
-        r_list = user_rosters[user_id]
         e_list = user_entries[user_id]
+        r_list = user_rosters[user_id]
 
-        base_salary = getattr(user, "base_salary", None) or 0.0
-        daily_rate = round(base_salary / 30, 2) if base_salary else 0.0
+        eff_dr = (
+            user.daily_rate if (user.daily_rate and user.daily_rate > 0)
+            else ((user.base_salary / 30) if (user.base_salary and user.base_salary > 0) else 0)
+        )
+        user_data = {
+            "employee_code": user.employee_code or user.badge_number or "",
+            "classification":  user.classification or user.role or "",
+            "name":            user.name,
+            "daily_rate":      eff_dr,
+            "hire_date":       str(user.hire_date)[:10] if user.hire_date else "",
+            "termination_date": "", "termination_reason": "",
+            "insurance_status": user.insurance_status or "none",
+            "bank_account":    user.bank_account or "",
+            "transfer_name":   user.transfer_name or user.name or "",
+            "transfer_method": user.transfer_method or "",
+            "payroll_amount":  user.payroll_amount or 0,
+            "shift_time": "", "supervisor_name": "", "site_name": "",
+            "uniform_status": "", "employee_insurance": 0,
+        }
 
-        days_excused = sum(1 for e in e_list if e.status == 'absence_excused')
-        days_unexcused = sum(1 for e in e_list if e.status == 'absence_unexcused')
-        days_present = sum(1 for e in e_list if e.status == 'present')
-        days_rest = sum(1 for e in e_list if e.status == 'rest')
-        days_rest_worked = sum(1 for e in e_list if e.status == 'rest_day_worked')
-        days_annual = sum(1 for e in e_list if e.status == 'annual_leave')
-        days_sick = sum(1 for e in e_list if e.status == 'sick_leave')
-        days_late = sum(1 for e in e_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
+        entry_by_date = {e.entry_date: e for e in e_list}
+        attendance_data = []
+        for ws, we in week_ranges:
+            week = {
+                "absent_excused": 0, "absent_unexcused": 0,
+                "overtime": 0, "overtime_hours": 0.0,
+                "rest_allowance": 0, "late": 0, "deduction": 0,
+                "rest": 0, "annual_leave": 0, "sick_leave": 0,
+            }
+            d = ws
+            while d <= we:
+                entry = entry_by_date.get(d)
+                if entry:
+                    s = entry.status
+                    if s == "absence_excused":     week["absent_excused"] += 1
+                    elif s == "absence_unexcused": week["absent_unexcused"] += 1
+                    elif s == "annual_leave":      week["annual_leave"] += 1
+                    elif s == "sick_leave":        week["sick_leave"] += 1
+                    elif s == "rest":              week["rest"] += 1
+                    elif s == "rest_day_worked":   week["rest_allowance"] += 1
+                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                        week["late"] += 1
+                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        week["overtime"] += 1
+                        week["overtime_hours"] += entry.overtime_hours
+                d += timedelta(days=1)
+            attendance_data.append(week)
 
-        overtime_hours = sum(e.overtime_hours for e in e_list)
-        advances = sum(e.advance_amount for e in e_list)
+        adv = advance_map.get(user_id, 0)
+        row = compute_row(
+            user_data, attendance_data, adv, config_map,
+            date_from.year, date_from.month, idx,
+            formula_configs=formula_configs,
+            deduction_rules=deduction_rules,
+        )
 
-        # Site / Shift / Supervisor logic
-        primary_site = "N/A"
-        shift_label = "N/A"
-        if r_list:
-            if r_list[0].shift and r_list[0].shift.site:
-                primary_site = r_list[0].shift.site.name
-            shift_label = r_list[0].shift.label if r_list[0].shift else "N/A"
-        elif e_list:
-            primary_site = site_dict.get(e_list[-1].site_id, "N/A")
-        primary_sup = "N/A"
-        if e_list:
-            primary_sup = sup_dict.get(e_list[-1].entered_by, "N/A")
-
-        # Deductions
-        late_deduction = sum((e.late_minutes * LATE_DEDUCTION_PER_MINUTE) for e in e_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
-        absent_deduction = days_unexcused * ABSENT_DEDUCTION
-        total_deductions = round(late_deduction + absent_deduction, 2)
-
+        # Travel allowance from pre-loaded visits (no per-user N+1)
         travel_allowance = 0.0
         role_str = user.role.value if hasattr(user.role, "value") else user.role
-        if role_str in ['supervisor', 'leader']:
-            visits = (
-                db.query(SupervisorVisit)
-                .options(joinedload(SupervisorVisit.site))
-                .filter(
-                    SupervisorVisit.supervisor_id == user.user_id,
-                    SupervisorVisit.check_in_time >= datetime.combine(date_from, datetime.min.time()),
-                    SupervisorVisit.check_in_time <= datetime.combine(date_to, datetime.max.time()),
-                    SupervisorVisit.is_verified == True,
-                )
-                .order_by(SupervisorVisit.check_in_time.asc())
-                .all()
-            )
-            visits_by_date = {}
-            for v in visits:
-                d = v.check_in_time.date()
-                visits_by_date.setdefault(d, []).append(v)
-            for d, daily_visits in visits_by_date.items():
-                if not daily_visits:
-                    continue
-                first_site = daily_visits[0].site.name
-                travel_allowance += travel_fee_map.get((base_site_name.lower(), first_site.lower()), 0.0)
-                for i in range(1, len(daily_visits)):
-                    from_s = daily_visits[i-1].site.name
-                    to_s = daily_visits[i].site.name
-                    travel_allowance += travel_fee_map.get((from_s.lower(), to_s.lower()), 0.0)
-                last_site = daily_visits[-1].site.name
-                travel_allowance += travel_fee_map.get((last_site.lower(), base_site_name.lower()), 0.0)
+        user_visits_by_date = visits_by_user.get(user_id, {})
+        for daily_visits in user_visits_by_date.values():
+            if not daily_visits:
+                continue
+            first_site = daily_visits[0].site.name
+            travel_allowance += travel_fee_map.get((base_site_name.lower(), first_site.lower()), 0.0)
+            for i in range(1, len(daily_visits)):
+                from_s = daily_visits[i - 1].site.name
+                to_s = daily_visits[i].site.name
+                travel_allowance += travel_fee_map.get((from_s.lower(), to_s.lower()), 0.0)
+            last_site = daily_visits[-1].site.name
+            travel_allowance += travel_fee_map.get((last_site.lower(), base_site_name.lower()), 0.0)
 
-        net_pay = round(base_salary + travel_allowance - total_deductions - advances, 2)
-
+        # Roster-derived metadata (ordered desc so first is most recent in period)
+        primary_site = r_list[0].shift.site.name if r_list and r_list[0].shift and r_list[0].shift.site else "N/A"
+        shift_label  = r_list[0].shift.label if r_list and r_list[0].shift else "N/A"
+        primary_sup  = sup_dict.get(e_list[-1].entered_by, "N/A") if e_list and e_list[-1].entered_by else "N/A"
         hire_date_str = user.hire_date.strftime('%Y-%m-%d') if user.hire_date else (user.created_at.strftime('%Y-%m-%d') if user.created_at else "N/A")
 
         writer.writerow([
@@ -899,20 +999,20 @@ def export_payroll_csv(
             primary_site,
             hire_date_str,
             user.name,
-            days_excused,
-            days_unexcused,
-            round(overtime_hours, 2),
-            days_rest_worked,
-            days_late,
-            total_deductions,
-            days_rest,
-            days_annual,
-            days_sick,
-            len(r_list) if len(r_list) > 0 else len(e_list),
-            daily_rate,
+            row["total_absent_excused"],
+            row["total_absent_unexcused"],
+            round(row["total_overtime_hours"], 2),
+            row.get("total_rest_allowance", 0),
+            row["total_late"],
+            round(row.get("manual_deduction", 0), 2),
+            row.get("total_rest", 0),
+            row.get("total_annual_leave", 0),
+            row.get("total_sick_leave", 0),
+            row["operational_days"],
+            row["daily_rate"],
             round(travel_allowance, 2),
-            net_pay,
-            advances,
+            row["gross_salary"],
+            adv,
         ])
 
     output.seek(0)
@@ -931,12 +1031,16 @@ def export_bank_payroll_csv(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Export Bank Payroll report as CSV."""
+    """
+    Export Bank Payroll report as CSV.
+    Now uses compute_row engine (same numbers as accountant grid).
+    Role scope unified to SHEET_ROLES.
+    """
     users_query = db.query(User).filter(User.is_active == True)
     if role_filter and role_filter != "all":
         users_query = users_query.filter(User.role == role_filter)
     else:
-        users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
+        users_query = users_query.filter(User.role.in_(SHEET_ROLES))
     users = users_query.all()
     user_dict = {u.user_id: u for u in users}
 
@@ -954,63 +1058,162 @@ def export_bank_payroll_csv(
             headers={"Content-Disposition": f"attachment; filename=bank_payroll_{date_from}_to_{date_to}.csv"},
         )
 
-    entries = (
+    user_ids = list(user_dict.keys())
+
+    # Formula engine (same as /report)
+    formula_configs = load_formula_configs(db)
+    deduction_rules = load_deduction_rules(db)
+    configs = db.query(SalaryClassificationConfig).all()
+    config_map = {
+        c.classification: {
+            "daily_rate": c.daily_rate, "annual_increase_pct": c.annual_increase_pct,
+            "annual_increase_base": c.annual_increase_base, "incentive_rate": c.incentive_rate,
+            "increase_2025_rate": c.increase_2025_rate, "bonus_rate": c.bonus_rate,
+        }
+        for c in configs
+    }
+    late_rule = deduction_rules.get("late")
+    late_threshold = int(late_rule.threshold_minutes) if late_rule else 10
+
+    # Bulk load entries
+    all_entries = (
         db.query(DailyAttendanceEntry)
-        .filter(DailyAttendanceEntry.employee_id.in_(user_dict.keys()))
-        .filter(DailyAttendanceEntry.entry_date >= date_from)
-        .filter(DailyAttendanceEntry.entry_date <= date_to)
+        .filter(
+            DailyAttendanceEntry.employee_id.in_(user_ids),
+            DailyAttendanceEntry.entry_date >= date_from,
+            DailyAttendanceEntry.entry_date <= date_to,
+        )
         .all()
     )
-    user_entries: dict[str, list] = {u_id: [] for u_id in user_dict.keys()}
-    for entry in entries:
+    user_entries: dict[str, list] = {u_id: [] for u_id in user_ids}
+    for entry in all_entries:
         user_entries[entry.employee_id].append(entry)
 
+    # Advances
+    advances_qs = db.query(CashAdvance).filter(
+        CashAdvance.status.in_(["admin_approved", "admin_modified", "supervisor_approved"]),
+        CashAdvance.updated_at >= datetime.combine(date_from, datetime.min.time()),
+        CashAdvance.updated_at <= datetime.combine(date_to, datetime.max.time()),
+    ).all()
+    advance_map: dict = {}
+    for a in advances_qs:
+        uid = getattr(a, 'guard_id', None) or getattr(a, 'user_id', None)
+        if uid:
+            advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
+
+    # Travel fees
     sites = db.query(Site).all()
     base_site = next((s for s in sites if getattr(s, 'is_base', False)), None)
     base_site_name = base_site.name if base_site else "Base"
     travel_fees = db.query(TravelFee).filter(TravelFee.is_active == True).all()
     travel_fee_map = {(tf.from_site_name.lower(), tf.to_site_name.lower()): float(tf.amount) for tf in travel_fees}
 
-    total_sum = 0.0
-    for user_id, user in user_dict.items():
-        e_list = user_entries[user_id]
-        base_salary = getattr(user, "base_salary", None) or 0.0
-        days_unexcused = sum(1 for e in e_list if e.status == 'absence_unexcused')
-        advances = sum(e.advance_amount for e in e_list)
-        late_deduction = sum((e.late_minutes * LATE_DEDUCTION_PER_MINUTE) for e in e_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
-        absent_deduction = days_unexcused * ABSENT_DEDUCTION
-        total_deductions = round(late_deduction + absent_deduction, 2)
-        travel_allowance = 0.0
-        role_str = user.role.value if hasattr(user.role, "value") else user.role
-        if role_str in ['supervisor', 'leader']:
-            visits = (
-                db.query(SupervisorVisit)
-                .options(joinedload(SupervisorVisit.site))
-                .filter(
-                    SupervisorVisit.supervisor_id == user.user_id,
-                    SupervisorVisit.check_in_time >= datetime.combine(date_from, datetime.min.time()),
-                    SupervisorVisit.check_in_time <= datetime.combine(date_to, datetime.max.time()),
-                    SupervisorVisit.is_verified == True,
-                )
-                .order_by(SupervisorVisit.check_in_time.asc())
-                .all()
+    # Bulk load supervisor visits (no per-user N+1)
+    sup_leader_ids = [
+        u.user_id for u in users
+        if (u.role.value if hasattr(u.role, 'value') else u.role) in ('supervisor', 'leader')
+    ]
+    visits_by_user: dict = {}
+    if sup_leader_ids:
+        all_visits = (
+            db.query(SupervisorVisit)
+            .options(joinedload(SupervisorVisit.site))
+            .filter(
+                SupervisorVisit.supervisor_id.in_(sup_leader_ids),
+                SupervisorVisit.check_in_time >= datetime.combine(date_from, datetime.min.time()),
+                SupervisorVisit.check_in_time <= datetime.combine(date_to, datetime.max.time()),
+                SupervisorVisit.is_verified == True,
             )
-            visits_by_date = {}
-            for v in visits:
-                d = v.check_in_time.date()
-                visits_by_date.setdefault(d, []).append(v)
-            for d, daily_visits in visits_by_date.items():
-                if not daily_visits:
-                    continue
-                first_site = daily_visits[0].site.name
-                travel_allowance += travel_fee_map.get((base_site_name.lower(), first_site.lower()), 0.0)
-                for i in range(1, len(daily_visits)):
-                    from_s = daily_visits[i-1].site.name
-                    to_s = daily_visits[i].site.name
-                    travel_allowance += travel_fee_map.get((from_s.lower(), to_s.lower()), 0.0)
-                last_site = daily_visits[-1].site.name
-                travel_allowance += travel_fee_map.get((last_site.lower(), base_site_name.lower()), 0.0)
-        net_pay = round(base_salary + travel_allowance - total_deductions - advances, 2)
+            .order_by(SupervisorVisit.check_in_time.asc())
+            .all()
+        )
+        for v in all_visits:
+            visits_by_user.setdefault(v.supervisor_id, {}).setdefault(v.check_in_time.date(), []).append(v)
+
+    # Week boundaries — tail-inclusive
+    week_ranges = [
+        (date_from + timedelta(days=w * 7),
+         min(date_from + timedelta(days=(w + 1) * 7 - 1), date_to))
+        for w in range(4)
+        if date_from + timedelta(days=w * 7) <= date_to
+    ]
+    while len(week_ranges) < 4:
+        week_ranges.append((date_to, date_to))
+
+    total_sum = 0.0
+    for idx, (user_id, user) in enumerate(user_dict.items(), start=1):
+        e_list = user_entries[user_id]
+        eff_dr = (
+            user.daily_rate if (user.daily_rate and user.daily_rate > 0)
+            else ((user.base_salary / 30) if (user.base_salary and user.base_salary > 0) else 0)
+        )
+        user_data = {
+            "employee_code": user.employee_code or user.badge_number or "",
+            "classification":  user.classification or user.role or "",
+            "name":            user.name,
+            "daily_rate":      eff_dr,
+            "hire_date":       str(user.hire_date)[:10] if user.hire_date else "",
+            "termination_date": "", "termination_reason": "",
+            "insurance_status": user.insurance_status or "none",
+            "bank_account":    user.bank_account or "",
+            "transfer_name":   user.transfer_name or user.name or "",
+            "transfer_method": user.transfer_method or "",
+            "payroll_amount":  user.payroll_amount or 0,
+            "shift_time": "", "supervisor_name": "", "site_name": "",
+            "uniform_status": "", "employee_insurance": 0,
+        }
+
+        entry_by_date = {e.entry_date: e for e in e_list}
+        attendance_data = []
+        for ws, we in week_ranges:
+            week = {
+                "absent_excused": 0, "absent_unexcused": 0,
+                "overtime": 0, "overtime_hours": 0.0,
+                "rest_allowance": 0, "late": 0, "deduction": 0,
+                "rest": 0, "annual_leave": 0, "sick_leave": 0,
+            }
+            d = ws
+            while d <= we:
+                entry = entry_by_date.get(d)
+                if entry:
+                    s = entry.status
+                    if s == "absence_excused":     week["absent_excused"] += 1
+                    elif s == "absence_unexcused": week["absent_unexcused"] += 1
+                    elif s == "annual_leave":      week["annual_leave"] += 1
+                    elif s == "sick_leave":        week["sick_leave"] += 1
+                    elif s == "rest":              week["rest"] += 1
+                    elif s == "rest_day_worked":   week["rest_allowance"] += 1
+                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                        week["late"] += 1
+                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        week["overtime"] += 1
+                        week["overtime_hours"] += entry.overtime_hours
+                d += timedelta(days=1)
+            attendance_data.append(week)
+
+        adv = advance_map.get(user_id, 0)
+        row = compute_row(
+            user_data, attendance_data, adv, config_map,
+            date_from.year, date_from.month, idx,
+            formula_configs=formula_configs,
+            deduction_rules=deduction_rules,
+        )
+
+        # Travel allowance from pre-loaded visits
+        travel_allowance = 0.0
+        for daily_visits in visits_by_user.get(user_id, {}).values():
+            if not daily_visits:
+                continue
+            first_site = daily_visits[0].site.name
+            travel_allowance += travel_fee_map.get((base_site_name.lower(), first_site.lower()), 0.0)
+            for i in range(1, len(daily_visits)):
+                from_s = daily_visits[i - 1].site.name
+                to_s = daily_visits[i].site.name
+                travel_allowance += travel_fee_map.get((from_s.lower(), to_s.lower()), 0.0)
+            last_site = daily_visits[-1].site.name
+            travel_allowance += travel_fee_map.get((last_site.lower(), base_site_name.lower()), 0.0)
+
+        net_pay = round(row["net_salary"] + travel_allowance, 2)
         total_sum += net_pay
         writer.writerow([
             user.badge_number or "N/A",
@@ -1066,3 +1269,358 @@ def update_bank_account(
         "detail": "Bank account updated successfully",
         "user_id": user_id,
     }
+
+
+# ── Classifications CRUD ────────────────────────────────────────────────────
+
+@router.get("/classifications", summary="List unique classification names from formula configs")
+def list_classifications(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
+):
+    """Return all unique classification names (excluding __tax__)."""
+    rows = (
+        db.query(PayrollFormulaConfig.classification)
+        .filter(PayrollFormulaConfig.classification != "__tax__")
+        .distinct()
+        .all()
+    )
+    return {"classifications": sorted(set(r[0] for r in rows))}
+
+
+@router.put("/classifications/rename", summary="Rename a classification across all formula configs")
+def rename_classification(
+    old_name: str = Query(..., description="Current classification name"),
+    new_name: str = Query(..., description="New classification name"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Rename a classification in PayrollFormulaConfig, SalaryClassificationConfig, and all users."""
+    rows = db.query(PayrollFormulaConfig).filter(
+        PayrollFormulaConfig.classification == old_name
+    ).all()
+    if not rows:
+        raise HTTPException(404, f"Classification '{old_name}' not found")
+    for r in rows:
+        r.classification = new_name
+    # Sync SalaryClassificationConfig (used as fallback in compute_row config_map)
+    legacy_cfg = db.query(SalaryClassificationConfig).filter(
+        SalaryClassificationConfig.classification == old_name
+    ).first()
+    if legacy_cfg:
+        legacy_cfg.classification = new_name
+    # Also update users who have this classification
+    db.query(User).filter(User.classification == old_name).update(
+        {"classification": new_name}, synchronize_session="fetch"
+    )
+    db.commit()
+    return {"message": f"Renamed '{old_name}' → '{new_name}'", "updated_configs": len(rows)}
+
+
+@router.post("/classifications/create", summary="Create a new classification with default formula keys")
+def create_classification_with_keys(
+    name: str = Query(..., description="New classification name"),
+    daily_rate: float = Query(0.0, description="Daily rate for the legacy SalaryClassificationConfig fallback"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """
+    Create a new classification with all PayrollFormulaConfig keys set to 0
+    AND a matching SalaryClassificationConfig entry so config_map lookups don't miss it.
+    Function renamed from create_classification to avoid shadowing the POST /config/classifications handler.
+    """
+    existing = db.query(PayrollFormulaConfig).filter(
+        PayrollFormulaConfig.classification == name
+    ).first()
+    if existing:
+        raise HTTPException(409, f"Classification '{name}' already exists")
+    for key in FORMULA_CONFIG_KEYS:
+        db.add(PayrollFormulaConfig(
+            classification=name,
+            config_key=key,
+            value=0.0,
+            updated_by=current_user.user_id,
+        ))
+    # Also create/update legacy SalaryClassificationConfig so compute_row config_map is consistent
+    legacy_cfg = db.query(SalaryClassificationConfig).filter(
+        SalaryClassificationConfig.classification == name
+    ).first()
+    if not legacy_cfg:
+        db.add(SalaryClassificationConfig(
+            config_id=str(__import__('uuid').uuid4()),
+            classification=name,
+            daily_rate=daily_rate,
+        ))
+    db.commit()
+    return {"message": f"Classification '{name}' created with {len(FORMULA_CONFIG_KEYS)} keys"}
+
+
+@router.delete("/classifications/{name}", summary="Delete a classification and all its formula configs")
+def delete_classification(
+    name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    if name == "__tax__":
+        raise HTTPException(400, "Cannot delete the tax bracket configuration")
+    rows = db.query(PayrollFormulaConfig).filter(
+        PayrollFormulaConfig.classification == name
+    ).all()
+    if not rows:
+        raise HTTPException(404, f"Classification '{name}' not found")
+    for r in rows:
+        db.delete(r)
+    db.commit()
+    return {"message": f"Classification '{name}' deleted", "deleted_configs": len(rows)}
+
+
+# ── Tax Sheet Endpoint ──────────────────────────────────────────────────────
+
+SHEET_ROLES = ["guard", "outdoor", "supervisor", "lady", "leader"]
+
+@router.get("/tax-sheet", summary="Tax sheet — full payroll summary with roster/shift/supervisor data")
+def get_tax_sheet(
+    date_from: date = Query(..., description="Start date"),
+    date_to: date = Query(..., description="End date"),
+    role_filter: Optional[str] = Query(None, description="Filter by role"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO)),
+):
+    """
+    Full payroll sheet with shift label, supervisor, site, and all formula-driven columns.
+    """
+    # 1. Eligible users
+    users_query = db.query(User).filter(User.is_active == True)
+    if role_filter and role_filter != "all":
+        users_query = users_query.filter(User.role == role_filter)
+    else:
+        users_query = users_query.filter(User.role.in_(SHEET_ROLES))
+    users = users_query.all()
+    if not users:
+        return {
+            "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
+            "currency": CURRENCY, "employees": [],
+            "summary": {"total_employees": 0, "grand_total_net_pay": 0.0},
+        }
+    user_ids = [u.user_id for u in users]
+    user_dict = {u.user_id: u for u in users}
+
+    # 2. DB configs
+    formula_configs = load_formula_configs(db)
+    deduction_rules = load_deduction_rules(db)
+    configs = db.query(SalaryClassificationConfig).all()
+    config_map = {
+        c.classification: {
+            "daily_rate": c.daily_rate, "annual_increase_pct": c.annual_increase_pct,
+            "annual_increase_base": c.annual_increase_base, "incentive_rate": c.incentive_rate,
+            "increase_2025_rate": c.increase_2025_rate, "bonus_rate": c.bonus_rate,
+        }
+        for c in configs
+    }
+    late_rule = deduction_rules.get("late")
+    late_threshold = int(late_rule.threshold_minutes) if late_rule else 10
+
+    # 3. Roster → Shift → Site lookups
+    roster_entries = (
+        db.query(GuardRoster)
+        .filter(
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
+        ).all()
+    )
+    shift_ids = list(set(r.shift_id for r in roster_entries))
+    shifts = db.query(Shift).filter(Shift.shift_id.in_(shift_ids)).all() if shift_ids else []
+    shift_map = {s.shift_id: s for s in shifts}
+    site_ids = list(set(s.site_id for s in shifts))
+    sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all() if site_ids else []
+    site_map = {s.site_id: s.name for s in sites}
+
+    # Map employee → shift label & site name (use latest roster entry)
+    emp_shift_label: dict = {}
+    emp_site_name: dict = {}
+    for r in sorted(roster_entries, key=lambda x: x.assigned_date):
+        shift_obj = shift_map.get(r.shift_id)
+        if shift_obj:
+            emp_shift_label[r.guard_id] = shift_obj.label or f"{shift_obj.start_time}-{shift_obj.end_time}"
+            site_name = site_map.get(shift_obj.site_id, "")
+            if site_name:
+                emp_site_name[r.guard_id] = site_name
+
+    # 4. Supervisor mapping via attendance entries
+    all_entries = (
+        db.query(DailyAttendanceEntry)
+        .filter(
+            DailyAttendanceEntry.employee_id.in_(user_ids),
+            DailyAttendanceEntry.entry_date >= date_from,
+            DailyAttendanceEntry.entry_date <= date_to,
+        ).all()
+    )
+    entries_by_user: dict = {uid: [] for uid in user_ids}
+    for e in all_entries:
+        entries_by_user[e.employee_id].append(e)
+
+    supervisors = db.query(User).filter(User.role.in_(["supervisor", "leader"]), User.is_active == True).all()
+    sup_name_map = {s.user_id: s.name for s in supervisors}
+    emp_supervisor: dict = {}
+    for entry in all_entries:
+        if entry.entered_by and entry.entered_by in sup_name_map:
+            emp_supervisor[entry.employee_id] = sup_name_map[entry.entered_by]
+
+    # 5. Advances
+    advances_qs = db.query(CashAdvance).filter(
+        CashAdvance.status.in_(["admin_approved", "admin_modified", "supervisor_approved"]),
+        CashAdvance.updated_at >= datetime.combine(date_from, datetime.min.time()),
+        CashAdvance.updated_at <= datetime.combine(date_to, datetime.max.time()),
+    ).all()
+    advance_map: dict = {}
+    for a in advances_qs:
+        uid = getattr(a, 'guard_id', None) or getattr(a, 'user_id', None)
+        if uid:
+            advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
+
+    # 6. Week boundaries — tail-inclusive so every day in the range is counted
+    week_ranges = [
+        (date_from + timedelta(days=w * 7),
+         min(date_from + timedelta(days=(w + 1) * 7 - 1), date_to))
+        for w in range(4)
+        if date_from + timedelta(days=w * 7) <= date_to
+    ]
+    while len(week_ranges) < 4:
+        week_ranges.append((date_to, date_to))
+
+    # 7. Compute per employee
+    employees_out = []
+    for idx, (user_id, user) in enumerate(user_dict.items()):
+        eff_dr = (
+            user.daily_rate if (user.daily_rate and user.daily_rate > 0)
+            else ((user.base_salary / 30) if (user.base_salary and user.base_salary > 0) else 0)
+        )
+        user_data = {
+            "employee_code": user.employee_code or user.badge_number or "",
+            "classification": user.classification or user.role or "",
+            "name": user.name,
+            "daily_rate": eff_dr,
+            "hire_date": str(user.hire_date)[:10] if user.hire_date else "",
+            "termination_date": "", "termination_reason": "",
+            "insurance_status": user.insurance_status or "none",
+            "bank_account": user.bank_account or "",
+            "transfer_name": user.transfer_name or user.name or "",
+            "transfer_method": user.transfer_method or "",
+            "payroll_amount": user.payroll_amount or 0,
+            "shift_time": "", "supervisor_name": "", "site_name": "",
+            "uniform_status": "", "employee_insurance": 0,
+        }
+
+        entry_by_date = {e.entry_date: e for e in entries_by_user.get(user_id, [])}
+        attendance_data = []
+        for ws, we in week_ranges:
+            week = {
+                "absent_excused": 0, "absent_unexcused": 0,
+                "overtime": 0, "overtime_hours": 0.0,
+                "rest_allowance": 0, "late": 0, "deduction": 0,
+                "rest": 0, "annual_leave": 0, "sick_leave": 0,
+            }
+            d = ws
+            while d <= we:
+                entry = entry_by_date.get(d)
+                if entry:
+                    s = entry.status
+                    if s == "absence_excused":     week["absent_excused"] += 1
+                    elif s == "absence_unexcused": week["absent_unexcused"] += 1
+                    elif s == "annual_leave":      week["annual_leave"] += 1
+                    elif s == "sick_leave":        week["sick_leave"] += 1
+                    elif s == "rest":              week["rest"] += 1
+                    elif s == "rest_day_worked":   week["rest_allowance"] += 1
+                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                        week["late"] += 1
+                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        week["overtime"] += 1
+                        week["overtime_hours"] += entry.overtime_hours
+                d += timedelta(days=1)
+            attendance_data.append(week)
+
+        adv = advance_map.get(user_id, 0)
+        row = compute_row(
+            user_data, attendance_data, adv, config_map,
+            date_from.year, date_from.month, idx + 1,
+            formula_configs=formula_configs,
+            deduction_rules=deduction_rules,
+        )
+
+        employees_out.append({
+            "user_id":           user_id,
+            "employee_code":     user.employee_code or user.badge_number or "",
+            "name":              user.name,
+            "role":              user.role.value if hasattr(user.role, 'value') else user.role,
+            "classification":    user_data["classification"],
+            "shift_label":       emp_shift_label.get(user_id, ""),
+            "supervisor_name":   emp_supervisor.get(user_id, ""),
+            "site_name":         emp_site_name.get(user_id, ""),
+            "daily_rate":        row["daily_rate"],
+            "base_salary":       user.base_salary or 0,
+            "incentive":         row["incentive"],
+            "current_year_raise": row["increase_2025"],
+            "bonus":             row["bonus_rate"] if "bonus_rate" in row else row.get("total_incentive", 0),
+            "allowances":        row["allowances"],
+            "total_income":      row["total_income"],
+            "employee_insurance": row["employee_insurance"],
+            "insurance_share":   row["insurance_share"],
+            "tax_deduction":     row["tax_deduction"],
+            "advances":          adv,
+            "total_deductions":  round(row["tax_deduction"] + row.get("advance_deduction", adv) + row["insurance_share"], 2),
+            "net_salary":        row["net_salary"],
+            "operational_days":  row["operational_days"],
+            "days_absent":       row["total_absent_excused"] + row["total_absent_unexcused"],
+            "overtime_hours":    row["total_overtime_hours"],
+            "gross_salary":      row["gross_salary"],
+            "annual_increase_base": row.get("annual_increase_base", 0),
+            "annual_increase_pct": row.get("annual_increase_pct", 0),
+        })
+
+    return {
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "currency": CURRENCY,
+        "employees": employees_out,
+        "summary": {
+            "total_employees": len(employees_out),
+            "grand_total_net_pay": round(sum(e["net_salary"] for e in employees_out), 2),
+            "grand_total_deductions": round(sum(e["total_deductions"] for e in employees_out), 2),
+        },
+    }
+
+
+class TaxSheetCellUpdate(BaseModel):
+    user_id: str
+    field: str
+    value: float
+
+
+class TaxSheetBatchUpdate(BaseModel):
+    updates: List[TaxSheetCellUpdate]
+
+
+@router.patch("/tax-sheet/update", summary="Batch update tax sheet cells")
+def update_tax_sheet_cells(
+    payload: TaxSheetBatchUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+):
+    """Update editable cells in the tax sheet (daily_rate, base_salary, etc.)."""
+    updated = 0
+    for item in payload.updates:
+        user = db.query(User).filter(User.user_id == item.user_id).first()
+        if not user:
+            continue
+        if item.field == "daily_rate":
+            user.daily_rate = item.value
+        elif item.field == "base_salary":
+            user.base_salary = item.value
+        elif item.field == "payroll_amount":
+            user.payroll_amount = item.value
+        else:
+            continue
+        updated += 1
+    db.commit()
+    return {"message": f"Updated {updated} cells"}

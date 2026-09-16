@@ -1,6 +1,6 @@
 """
 SecureTrack - Daily Attendance Entry Model
-Records one entry per employee per day, entered by a Leader.
+Records one entry per employee per day, entered by a Leader. now not included
 """
 import uuid
 from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, Date, Text, ForeignKey, Index, UniqueConstraint
