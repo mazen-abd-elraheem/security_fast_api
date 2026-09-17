@@ -32,21 +32,21 @@ DOC_ROLES = ["guard", "leader", "supervisor", "lady", "outdoor"]
 
 # Requested Documents
 REQUIRED_DOCS = [
-    "id_front",
-    "id_back",
+    "national_id_front",
+    "national_id_back",
     "military_service",
-    "insurance_print",
-    "work_contract",
+    "educational_qualification",
+    "employment_contract",
     "criminal_record"
 ]
 
 DOC_TRANSLATIONS = {
-    "id_front": "الامام",
-    "id_back": "الخلف",
-    "military_service": "شهاده الخدمه العسكريه",
-    "insurance_print": "البرينت التأميني",
-    "work_contract": "عقد العمل",
-    "criminal_record": "فيش و تشبيه"
+    "national_id_front": "البطاقة (وجه)",
+    "national_id_back": "البطاقة (ظهر)",
+    "military_service": "موقف التجنيد",
+    "educational_qualification": "المؤهل الدراسي",
+    "employment_contract": "عقد العمل",
+    "criminal_record": "فيش جنائي"
 }
 
 
@@ -158,11 +158,11 @@ def _build_documents_sheet_data(db: Session) -> list[dict]:
             "name": emp.name or "",
             "site_name": emp_site_map.get(eid, ""),
             "file_number": emp.file_number or "",
-            "id_front": doc_status["id_front"],
-            "id_back": doc_status["id_back"],
+            "national_id_front": doc_status["national_id_front"],
+            "national_id_back": doc_status["national_id_back"],
             "military_service": doc_status["military_service"],
-            "insurance_print": doc_status["insurance_print"],
-            "work_contract": doc_status["work_contract"],
+            "educational_qualification": doc_status["educational_qualification"],
+            "employment_contract": doc_status["employment_contract"],
             "criminal_record": doc_status["criminal_record"],
             "notes": computed_notes,
         }
@@ -283,8 +283,8 @@ def export_csv(
 
     headers = [
         "مسلسل", "اسم المشرف", "الكود", "الاسم", "الفرع", "رقم الملف",
-        "الامام", "الخلف", "شهاده الخدمه العسكريه", "البرينت التأميني",
-        "عقد العمل", "فيش و تشبيه", "ملاحظات"
+        "البطاقة (وجه)", "البطاقة (ظهر)", "موقف التجنيد", "المؤهل الدراسي",
+        "عقد العمل", "فيش جنائي", "ملاحظات"
     ]
 
     output = io.StringIO()
@@ -300,12 +300,12 @@ def export_csv(
             r["name"],
             r["site_name"],
             r["file_number"],
-            "✔️" if r["id_front"] else "❌",
-            "✔️" if r["id_back"] else "❌",
-            "✔️" if r["military_service"] else "❌",
-            "✔️" if r["insurance_print"] else "❌",
-            "✔️" if r["work_contract"] else "❌",
-            "✔️" if r["criminal_record"] else "❌",
+            "مستوفى" if r["national_id_front"] else "نقص",
+            "مستوفى" if r["national_id_back"] else "نقص",
+            "مستوفى" if r["military_service"] else "نقص",
+            "مستوفى" if r["educational_qualification"] else "نقص",
+            "مستوفى" if r["employment_contract"] else "نقص",
+            "مستوفى" if r["criminal_record"] else "نقص",
             r["notes"],
         ])
 

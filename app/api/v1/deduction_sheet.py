@@ -328,3 +328,81 @@ def export_deduction_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+from pydantic import BaseModel, Field
+
+
+class AddDeductionRequest(BaseModel):
+    employee_id: str = Field(..., description="Target employee user_id")
+    deduction_type: str = Field(..., description="days | amount | percentage")
+    value: float = Field(..., gt=0, description="Number of days, fixed amount in EGP, or percentage (0-100)")
+    reason: str = Field(..., min_length=1, max_length=500, description="Reason for deduction")
+
+
+@router.post("/add", summary="Add manual deduction to an employee")
+def add_manual_deduction(
+    req: AddDeductionRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    """
+    Add a manual deduction to an employee.
+    - type='days': deducts N days × employee's daily_rate
+    - type='amount': deducts a fixed EGP amount
+    - type='percentage': deducts value% of employee's base_salary
+    Creates a DisciplinaryAction record with status='active'.
+    """
+    # Validate employee
+    employee = db.query(User).filter(User.user_id == req.employee_id, User.is_active == True).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    if req.deduction_type not in ("days", "amount", "percentage"):
+        raise HTTPException(status_code=400, detail="deduction_type must be 'days', 'amount', or 'percentage'")
+
+    # Calculate deduction
+    deduction_days = None
+    deduction_amount = 0.0
+    daily_rate = employee.daily_rate or 0.0
+    base_salary = employee.base_salary or 0.0
+
+    if req.deduction_type == "days":
+        deduction_days = int(req.value)
+        deduction_amount = round(deduction_days * daily_rate, 2)
+    elif req.deduction_type == "amount":
+        deduction_amount = round(req.value, 2)
+    elif req.deduction_type == "percentage":
+        if req.value > 100:
+            raise HTTPException(status_code=400, detail="Percentage cannot exceed 100")
+        deduction_amount = round(base_salary * (req.value / 100.0), 2)
+
+    # Build reason with type info
+    type_labels = {"days": "خصم أيام", "amount": "خصم مبلغ", "percentage": "خصم نسبة"}
+    full_reason = f"{type_labels.get(req.deduction_type, 'خصم')}: {req.reason}"
+
+    action = DisciplinaryAction(
+        action_id=str(uuid.uuid4()),
+        guard_id=req.employee_id,
+        guard_name=employee.name or "",
+        guard_code=employee.employee_code or employee.badge_number or "",
+        action_type="deduction",
+        severity="moderate",
+        reason=full_reason,
+        deduction_days=deduction_days,
+        deduction_amount=deduction_amount,
+        status="active",
+        issued_by=current_user.user_id,
+        issued_by_name=current_user.name or "",
+        linked_to_payroll=False,
+    )
+    db.add(action)
+    db.commit()
+
+    return {
+        "success": True,
+        "action_id": action.action_id,
+        "deduction_days": deduction_days,
+        "deduction_amount": deduction_amount,
+        "employee_name": employee.name,
+    }
