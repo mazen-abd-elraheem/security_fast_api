@@ -173,6 +173,15 @@ def _run_auto_migrations():
                     except Exception as e:
                         logger.warning(f"Failed to add schedule_id to task_templates: {e}")
 
+        # payroll_sheet_rows.shift_time
+        if insp.has_table("payroll_sheet_rows"):
+            with engine.begin() as conn:
+                try:
+                    conn.execute(sa_text("ALTER TABLE payroll_sheet_rows MODIFY COLUMN shift_time VARCHAR(50)"))
+                    logger.info("Expanded shift_time in payroll_sheet_rows to VARCHAR(50)")
+                except Exception as e:
+                    logger.warning(f"Failed to expand shift_time in payroll_sheet_rows: {e}")
+
         # rest_allowance_config: rename rate_per_day to value and add is_days_multiplier
         if insp.has_table("rest_allowance_config"):
             existing = {c["name"] for c in insp.get_columns("rest_allowance_config")}
