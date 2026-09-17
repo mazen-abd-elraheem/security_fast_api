@@ -162,6 +162,17 @@ def _run_auto_migrations():
                     except Exception:
                         pass
 
+        # task_templates.schedule_id
+        if insp.has_table("task_templates"):
+            existing = {c["name"] for c in insp.get_columns("task_templates")}
+            if "schedule_id" not in existing:
+                with engine.begin() as conn:
+                    try:
+                        conn.execute(sa_text("ALTER TABLE task_templates ADD COLUMN schedule_id VARCHAR(36) NULL"))
+                        logger.info("Added schedule_id to task_templates")
+                    except Exception as e:
+                        logger.warning(f"Failed to add schedule_id to task_templates: {e}")
+
         # rest_allowance_config: rename rate_per_day to value and add is_days_multiplier
         if insp.has_table("rest_allowance_config"):
             existing = {c["name"] for c in insp.get_columns("rest_allowance_config")}

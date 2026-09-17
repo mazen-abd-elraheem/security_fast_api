@@ -152,6 +152,23 @@ def _run_seed_migrations():
                     conn.execute(sa_text(f"ALTER TABLE deduction_rules ADD COLUMN {col_name} {col_def}"))
                     print(f"  [migration] deduction_rules.{col_name} added")
 
+    # ── Task Templates: add schedule_id ──
+    if insp.has_table("task_templates"):
+        existing = {c["name"] for c in insp.get_columns("task_templates")}
+        if "schedule_id" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE task_templates ADD COLUMN schedule_id VARCHAR(36) NULL"))
+                print("  [migration] task_templates.schedule_id added")
+
+    # ── Payroll Sheet Rows: expand shift_time ──
+    if insp.has_table("payroll_sheet_rows"):
+        with engine.begin() as conn:
+            try:
+                conn.execute(sa_text("ALTER TABLE payroll_sheet_rows MODIFY COLUMN shift_time VARCHAR(50)"))
+                print("  [migration] payroll_sheet_rows.shift_time expanded to VARCHAR(50)")
+            except Exception as e:
+                print(f"  [migration] Error expanding payroll_sheet_rows.shift_time: {e}")
+
     # ── Separation Requests: add workflow dates ──
     if insp.has_table("separation_requests"):
         existing = {c["name"] for c in insp.get_columns("separation_requests")}

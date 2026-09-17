@@ -25,7 +25,7 @@ class PayrollSheetRow(Base):
     employee_code = Column(String(50))
     serial_no = Column(Integer)
     classification = Column(String(50))
-    shift_time = Column(String(10))
+    shift_time = Column(String(50))
     supervisor_name = Column(String(255))
     site_name = Column(String(255))
     hire_date = Column(String(20))

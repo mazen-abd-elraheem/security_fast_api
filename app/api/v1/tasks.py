@@ -874,12 +874,13 @@ def my_tasks(
     ).all()
     user_site_ids.extend([r.site_id for r in rosters if r.site_id])
     
-    q = db.query(TaskInstance).filter(
-        or_(
-            TaskInstance.assigned_to == current_user.user_id,
-            (TaskInstance.assigned_to.is_(None)) & (TaskInstance.site_id.in_(user_site_ids)) if user_site_ids else False
+    condition = TaskInstance.assigned_to == current_user.user_id
+    if user_site_ids:
+        condition = or_(
+            condition,
+            (TaskInstance.assigned_to.is_(None)) & (TaskInstance.site_id.in_(user_site_ids))
         )
-    )
+    q = db.query(TaskInstance).filter(condition)
     
     if status_filter:
         q = q.filter(TaskInstance.status == status_filter)
