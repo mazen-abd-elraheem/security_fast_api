@@ -284,6 +284,8 @@ class TaskInstanceOut(BaseModel):
     completed_at: Optional[datetime] = None
     created_at: datetime
     responses: List[TaskResponseOut] = []
+    sections: List[TaskSectionOut] = []
+    items: List[TaskItemOut] = []
 
     class Config:
         from_attributes = True

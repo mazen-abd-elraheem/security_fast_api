@@ -1190,6 +1190,15 @@ def _load_instance_full(db: Session, instance_id: str) -> Optional[TaskInstanceO
             item_title=item.title if item else None,
         ))
 
+    # Load template sections and items
+    t_sections = []
+    t_items = []
+    if template:
+        t_full = _load_template_full(db, template.template_id)
+        if t_full:
+            t_sections = t_full.sections
+            t_items = t_full.items
+
     return TaskInstanceOut(
         instance_id=instance.instance_id,
         template_id=instance.template_id,
@@ -1209,6 +1218,8 @@ def _load_instance_full(db: Session, instance_id: str) -> Optional[TaskInstanceO
         completed_at=instance.completed_at,
         created_at=instance.created_at,
         responses=responses_out,
+        sections=t_sections,
+        items=t_items,
     )
 
 
