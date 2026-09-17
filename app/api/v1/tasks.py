@@ -20,7 +20,7 @@ from app.models.task_models import (
     Tenant, TenantSiteAccess, ClientAccount,
     TaskRole, TaskRoleAssignment,
     TaskTemplate, TaskSection, TaskItem, TaskItemAlertRecipient,
-    TaskInstance, TaskResponse,
+    TaskInstance, TaskResponse, TaskSchedule,
     TaskAlert, TaskAlertDelivery,
     
 )
@@ -32,7 +32,7 @@ from app.schemas.task_schemas import (
     TaskSectionCreate, TaskSectionOut,
     TaskItemCreate, TaskItemUpdate, TaskItemOut,
     TaskInstanceAssign, TaskInstanceSubmit, TaskInstanceOut, TaskInstanceReview,
-    TaskResponseOut,
+    TaskResponseOut, TaskScheduleCreate, TaskScheduleOut,
     TaskAlertOut, TaskAlertDeliveryOut,
 )
 from app.core.security import hash_password
@@ -784,6 +784,43 @@ def delete_item(
 # ══════════════════════════════════════════════
 # TASK INSTANCE MANAGEMENT (Admin assigns, Leader completes)
 # ══════════════════════════════════════════════
+
+@router.post("/schedules", response_model=TaskScheduleOut, status_code=201)
+def create_schedule(
+    body: TaskScheduleCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Assign a template to a role/site/shift (creating a schedule)."""
+    schedule = TaskSchedule(
+        schedule_id=str(uuid.uuid4()),
+        template_id=body.template_id,
+        section_id=body.section_id,
+        site_id=body.site_id,
+        shift_id=body.shift_id,
+        target_role=body.target_role,
+        status='active'
+    )
+    db.add(schedule)
+
+    # Immediately create an instance for today
+    template = db.query(TaskTemplate).filter_by(template_id=body.template_id).first()
+    instance = TaskInstance(
+        instance_id=str(uuid.uuid4()),
+        template_id=body.template_id,
+        assigned_to=None,
+        site_id=body.site_id,
+        section_id=body.section_id,
+        schedule_id=schedule.schedule_id,
+        status=TaskInstanceStatus.PENDING,
+        due_date=template.deadline if template else None,
+        created_by=current_user.user_id,
+    )
+    db.add(instance)
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
 
 @router.post("/assign", response_model=TaskInstanceOut, status_code=201)
 def assign_task(

@@ -163,6 +163,26 @@ class TaskItemUpdate(BaseModel):
     sort_order: Optional[int] = None
     alert_role_ids: Optional[List[str]] = None
 
+class TaskScheduleCreate(BaseModel):
+    template_id: str
+    site_id: str
+    target_role: str
+    section_id: Optional[str] = None
+    shift_id: Optional[str] = None
+
+class TaskScheduleOut(BaseModel):
+    schedule_id: str
+    template_id: str
+    section_id: Optional[str] = None
+    site_id: str
+    shift_id: Optional[str] = None
+    target_role: str
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class TaskItemOut(BaseModel):
     item_id: str
     template_id: str

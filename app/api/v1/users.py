@@ -48,7 +48,7 @@ def update_my_profile(
 def update_my_location(
     location: UserLocationUpdate,
     current_user: User = Depends(require_role(
-        UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR, UserRole.OPERATIONS_MANAGER, UserRole.LEADER,
+        UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR, UserRole.OPERATIONS_MANAGER, UserRole.LEADER, UserRole.ADMIN
     )),
     db: Session = Depends(get_db),
 ):

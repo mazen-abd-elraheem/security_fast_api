@@ -1,6 +1,7 @@
 """
 SecureTrack Platform — Incident Model
 Field reports for security breaches, equipment damage, and other on-site events.
+Category is now dynamic (FK to incident_categories).
 """
 from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
@@ -21,14 +22,15 @@ class Incident(Base):
     reported_by = Column(String(36), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
     visit_id = Column(String(36), ForeignKey("supervisor_visits.visit_id", ondelete="SET NULL"), nullable=True, index=True)
 
-    # Incident details
+    # Incident details — title is auto-derived from category name
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
 
-    # Category: equipment_damage, security_breach, unauthorized_access, etc.
-    category = Column(String(50), nullable=False, default="other")
+    # Dynamic category: stores category_id (UUID) + denormalized name for fast display
+    category_id = Column(String(36), nullable=True, index=True)   # FK handled via seed (not enforced at DB level for flexibility)
+    category = Column(String(100), nullable=False, default="other")  # denormalized category name
 
-    # Severity: low, medium, high, critical
+    # Severity: low, medium, high, critical — auto-derived from category
     severity = Column(String(20), nullable=False, default="medium")
 
     # Status: open, investigating, resolved, closed

@@ -1,6 +1,6 @@
 """
 SecureTrack Platform — Incident Service
-Manages security incident reports with photo evidence.
+Manages security incident reports with dynamic category lookup and alert notifications.
 """
 import uuid
 from typing import Optional
@@ -9,9 +9,42 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.models.incident import Incident
+from app.models.incident_category import IncidentCategory
 from app.models.site import Site
+from app.models.user import User
 from app.schemas.incident import IncidentCreate, IncidentUpdate
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import NotFoundException, BadRequestException
+
+
+def _send_incident_alerts(db: Session, incident: Incident, category: IncidentCategory):
+    """Create in-app notification records for all alert roles of this category."""
+    try:
+        from app.api.v1.notifications import create_notification
+        alert_roles = category.alert_roles  # list of role strings
+        if not alert_roles:
+            return
+
+        recipients = db.query(User).filter(
+            User.role.in_(alert_roles),
+            User.is_active == True,
+        ).all()
+
+        severity_label = category.severity.upper()
+        for user in recipients:
+            create_notification(
+                db,
+                user_id=user.user_id,
+                notif_type="incident_reported",
+                title=f"🚨 [{severity_label}] {incident.title}",
+                message=f"Incident reported at {incident.site.name if incident.site else 'unknown site'}. Category: {category.name}.",
+                reference_id=incident.incident_id,
+                reference_type="incident",
+            )
+        db.commit()
+    except Exception as e:
+        # Non-fatal — log and continue
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to send incident alerts: {e}")
 
 
 class IncidentService:
@@ -19,25 +52,39 @@ class IncidentService:
 
     @staticmethod
     def create_incident(db: Session, reporter_id: str, incident_data: IncidentCreate) -> Incident:
-        """Create a new incident report."""
+        """Create a new incident report with auto-derived title and severity from category."""
+        # Validate site
         site = db.query(Site).filter(Site.site_id == incident_data.site_id).first()
         if not site:
             raise NotFoundException("Site", incident_data.site_id)
+
+        # Look up the dynamic category
+        category = db.query(IncidentCategory).filter(
+            IncidentCategory.category_id == incident_data.category_id,
+            IncidentCategory.is_active == True,
+        ).first()
+        if not category:
+            raise BadRequestException(f"Incident category '{incident_data.category_id}' not found or inactive.")
 
         db_incident = Incident(
             incident_id=str(uuid.uuid4()),
             site_id=incident_data.site_id,
             reported_by=reporter_id,
             visit_id=incident_data.visit_id,
-            title=incident_data.title,
+            title=category.name,          # auto-derived from category
             description=incident_data.description,
-            category=incident_data.category.value,
-            severity=incident_data.severity.value,
+            category_id=category.category_id,
+            category=category.name,       # denormalized
+            severity=category.severity,   # auto-derived from category
             photo_url=incident_data.photo_url,
         )
         db.add(db_incident)
         db.commit()
         db.refresh(db_incident)
+
+        # Send alert notifications to designated roles
+        _send_incident_alerts(db, db_incident, category)
+
         return db_incident
 
     @staticmethod
@@ -50,20 +97,16 @@ class IncidentService:
 
     @staticmethod
     def update_incident(db: Session, incident_id: str, update_data: IncidentUpdate) -> Incident:
-        """Update incident details."""
+        """Update incident details (admin)."""
         incident = IncidentService.get_incident(db, incident_id)
 
-        if update_data.title is not None:
-            incident.title = update_data.title
         if update_data.description is not None:
             incident.description = update_data.description
-        if update_data.category is not None:
-            incident.category = update_data.category.value
         if update_data.severity is not None:
-            incident.severity = update_data.severity.value
+            incident.severity = update_data.severity
         if update_data.status is not None:
-            incident.status = update_data.status.value
-            if update_data.status.value == "resolved":
+            incident.status = update_data.status
+            if update_data.status == "resolved":
                 incident.resolved_at = datetime.now(timezone.utc)
         if update_data.photo_url is not None:
             incident.photo_url = update_data.photo_url

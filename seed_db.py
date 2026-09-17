@@ -360,16 +360,97 @@ def _run_seed_migrations():
                 print("  [migration] Seeded default transfer methods")
 
 
+    # ── Incident Categories: add category_id to existing incidents ──
+    try:
+        if insp.has_table("incidents"):
+            existing = {c["name"] for c in insp.get_columns("incidents")}
+            if "category_id" not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text("ALTER TABLE incidents ADD COLUMN category_id VARCHAR(36) NULL"))
+                    print("  [migration] incidents.category_id added")
+    except Exception as e:
+        print(f"incidents migration: {e}")
+
+
+def _seed_incident_categories(db):
+    """Seed default incident categories if none exist."""
+    import json as _json
+    from app.models.incident_category import IncidentCategory as IncCat
+    if db.query(IncCat).count() > 0:
+        return
+    import uuid as _uuid2
+    defaults = [
+        {
+            "name": "Security Breach",
+            "severity": "critical",
+            "corrective_action": "Immediately secure the perimeter. Alert the supervisor and do not allow any unauthorized personnel to enter or leave. Document everything and await further instructions.",
+            "alert_roles": _json.dumps(["admin", "supervisor"]),
+        },
+        {
+            "name": "Unauthorized Access",
+            "severity": "high",
+            "corrective_action": "Escort the individual to the gate. Record their details and report to your supervisor immediately. Do not use force unless necessary.",
+            "alert_roles": _json.dumps(["admin", "supervisor"]),
+        },
+        {
+            "name": "Equipment Damage",
+            "severity": "medium",
+            "corrective_action": "Do not touch or move the damaged equipment. Photograph and document the damage. Report to your supervisor and await a maintenance inspection.",
+            "alert_roles": _json.dumps(["admin"]),
+        },
+        {
+            "name": "Property Damage",
+            "severity": "high",
+            "corrective_action": "Secure the area around the damage. Do not allow access until it has been assessed. Document with photos and report immediately.",
+            "alert_roles": _json.dumps(["admin", "supervisor"]),
+        },
+        {
+            "name": "Suspicious Activity",
+            "severity": "medium",
+            "corrective_action": "Observe and document the suspicious activity from a safe distance. Do not confront. Report to supervisor and remain vigilant.",
+            "alert_roles": _json.dumps(["admin", "supervisor"]),
+        },
+        {
+            "name": "Missing Guard",
+            "severity": "high",
+            "corrective_action": "Attempt to contact the guard immediately. If unreachable, report to supervisor and cover the post until a replacement arrives.",
+            "alert_roles": _json.dumps(["admin", "supervisor"]),
+        },
+        {
+            "name": "Other",
+            "severity": "low",
+            "corrective_action": "Document the incident thoroughly. Report to your supervisor and await further guidance.",
+            "alert_roles": _json.dumps(["admin"]),
+        },
+    ]
+    from datetime import datetime, timezone
+    for d in defaults:
+        cat = IncCat(
+            category_id=str(_uuid2.uuid4()),
+            name=d["name"],
+            severity=d["severity"],
+            corrective_action=d["corrective_action"],
+            alert_roles_json=d["alert_roles"],
+            is_active=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(cat)
+    db.commit()
+    print(f"  [seed] Seeded {len(defaults)} default incident categories")
+
 
 def seed():
     Base.metadata.create_all(bind=engine)
     _run_seed_migrations()
 
     db = SessionLocal()
+    _seed_incident_categories(db)
+
     if db.query(User).count() > 0:
         print("Users already exist. Skipping seed.")
         db.close()
         return
+
 
     users_to_create = [
         {

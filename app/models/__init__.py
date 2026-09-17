@@ -8,6 +8,7 @@ from app.models.supervisor_route import SupervisorRoute
 from app.models.supervisor_visit import SupervisorVisit
 from app.models.attendance_log import AttendanceLog
 from app.models.incident import Incident
+from app.models.incident_category import IncidentCategory
 from app.models.device_registry import DeviceRegistry
 from app.models.notification import Notification
 from app.models.admin_audit_log import AdminAuditLog
@@ -34,7 +35,7 @@ from app.models.payroll_formula_config import PayrollFormulaConfig
 
 __all__ = [
     'Base', 'User', 'Site', 'Shift', 'GuardRoster', 'SupervisorRoute',
-    'SupervisorVisit', 'AttendanceLog', 'Incident', 'DeviceRegistry',
+    'SupervisorVisit', 'AttendanceLog', 'Incident', 'IncidentCategory', 'DeviceRegistry',
     'Notification', 'AdminAuditLog', 'GuardPhoto',
     'GpsTrackingPing', 'DeductionRule', 'UniformItem', 'CashAdvance',
     'InventoryItem', 'GuardDocument',
