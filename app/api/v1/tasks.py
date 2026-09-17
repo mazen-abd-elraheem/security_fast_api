@@ -861,7 +861,7 @@ def my_tasks(
     today = datetime.date.today().isoformat()
     routes = db.query(SupervisorRoute).filter(
         SupervisorRoute.supervisor_id == current_user.user_id,
-        SupervisorRoute.visit_date == today
+        SupervisorRoute.assigned_date == today
     ).all()
     user_site_ids = [r.site_id for r in routes if r.site_id]
     
