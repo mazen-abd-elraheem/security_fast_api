@@ -870,7 +870,7 @@ def my_tasks(
     from app.models.guard_roster import GuardRoster
     rosters = db.query(GuardRoster).filter(
         GuardRoster.guard_id == current_user.user_id,
-        GuardRoster.date == today
+        GuardRoster.assigned_date == today
     ).all()
     user_site_ids.extend([r.site_id for r in rosters if r.site_id])
     
