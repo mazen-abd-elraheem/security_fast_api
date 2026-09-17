@@ -67,7 +67,7 @@ def compute_presence_hours_from_pings(pings: list[GpsTrackingPing]) -> float:
 def tracking_ping(
     latitude: float = Query(..., ge=-90, le=90),
     longitude: float = Query(..., ge=-180, le=180),
-    current_user: User = Depends(require_role(UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """

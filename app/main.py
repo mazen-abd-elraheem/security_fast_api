@@ -60,6 +60,7 @@ from app.api.v1 import (
       transfer_methods,
       deduction_sheet,
       incident_categories,
+      emergency,
 )
 
 settings = get_settings()
@@ -397,6 +398,7 @@ app.include_router(routes.router, prefix="/api/v1/routes", tags=["Supervisor Rou
 app.include_router(visits.router, prefix="/api/v1/visits", tags=["Visits (Geofence)"])
 app.include_router(attendance.router, prefix="/api/v1/attendance", tags=["Attendance"])
 app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incidents"])
+app.include_router(emergency.router, prefix="/api/v1/emergency", tags=["Emergency Alerts"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
