@@ -31,6 +31,7 @@ from app.models.payroll_sheet_row import PayrollSheetRow, SalaryClassificationCo
 from app.models.daily_attendance_entry import DailyAttendanceEntry
 from app.models.accountant_models import TaxBracket, EmployeeBonus, Holiday, Termination, TransferMethod
 from app.models.payroll_formula_config import PayrollFormulaConfig
+from app.models.bonus import Bonus
 
 
 __all__ = [
@@ -43,7 +44,7 @@ __all__ = [
     'SalaryConfig', 'MonthlyPayroll', 'DisciplinaryAction', 'GuardEvaluation',
     'PayrollSheetRow', 'SalaryClassificationConfig', 'DailyAttendanceEntry',
     'TaxBracket', 'EmployeeBonus', 'Holiday', 'Termination',
-    'ClothesRequest', 'ClothesTermination',
+    'ClothesRequest', 'ClothesTermination', 'Bonus',
 ]
 
 from app.models.clothes_inventory import ClothesRequest, ClothesTermination

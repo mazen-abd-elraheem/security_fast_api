@@ -154,13 +154,17 @@ def _run_seed_migrations():
                     conn.execute(sa_text(f"ALTER TABLE deduction_rules ADD COLUMN {col_name} {col_def}"))
                     print(f"  [migration] deduction_rules.{col_name} added")
 
-    # ── Task Templates: add schedule_id ──
+    # ── Task Templates: add schedule_id & requires_qr_verification ──
     if insp.has_table("task_templates"):
         existing = {c["name"] for c in insp.get_columns("task_templates")}
         if "schedule_id" not in existing:
             with engine.begin() as conn:
                 conn.execute(sa_text("ALTER TABLE task_templates ADD COLUMN schedule_id VARCHAR(36) NULL"))
                 print("  [migration] task_templates.schedule_id added")
+        if "requires_qr_verification" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE task_templates ADD COLUMN requires_qr_verification BOOLEAN DEFAULT FALSE"))
+                print("  [migration] task_templates.requires_qr_verification added")
 
     # ── Payroll Sheet Rows: expand shift_time ──
     if insp.has_table("payroll_sheet_rows"):

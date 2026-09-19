@@ -115,6 +115,16 @@ async def generate_payroll_sheet(
                 a.approved_amount or a.amount or 0
             )
 
+    # 5b. Bonuses approved THIS month
+    bonuses_qs = db.query(Bonus).filter(
+        Bonus.status == "approved",
+        Bonus.created_at >= datetime.combine(month_start, datetime.min.time()),
+        Bonus.created_at <= datetime.combine(month_end, datetime.max.time()),
+    ).all()
+    bonus_map: dict = {}
+    for b in bonuses_qs:
+        bonus_map[b.guard_id] = bonus_map.get(b.guard_id, 0) + float(b.amount or 0)
+
     # 6. ALL DailyAttendanceEntry for this month (bulk load)
     all_entries = (
         db.query(DailyAttendanceEntry)
@@ -243,12 +253,14 @@ async def generate_payroll_sheet(
             attendance_data.append(week)
 
         adv = advance_map.get(u.user_id, 0)
+        bns = bonus_map.get(u.user_id, 0)
 
         row_data = compute_row(
             user_data, attendance_data, adv, config_map,
             year, month, idx + 1,
             formula_configs=formula_configs,
             deduction_rules=deduction_rules,
+            manual_bonus=bns,
         )
         row_data["user_id"] = u.user_id
         row_data["year"]    = year

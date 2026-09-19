@@ -209,6 +209,9 @@ class TaskTemplate(Base):
     # Deadline for one-time tasks
     deadline = Column(DateTime, nullable=True)
 
+    # QR Code Verification
+    requires_qr_verification = Column(Boolean, nullable=False, default=False)
+
     is_active = Column(Boolean, nullable=False, default=True)
 
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))

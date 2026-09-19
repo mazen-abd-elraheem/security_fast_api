@@ -188,6 +188,7 @@ def compute_row(
     serial_no: int,
     formula_configs: dict = None,   # PayrollFormulaConfig (DB-driven, preferred)
     deduction_rules: dict = None,   # DeductionRule (DB-driven)
+    manual_bonus: float = 0.0,      # Approved bonuses sum
 ) -> dict:
     """
     Compute all payroll columns for one employee.
@@ -282,7 +283,7 @@ def compute_row(
     bu_increase = (bu_rate / 30.0) * op_days
 
     # ── BX: total incentive ──
-    bv_bonus_manual = 0.0
+    bv_bonus_manual = float(manual_bonus or 0)
     bw_bonus_ded    = 0.0
     bx_total_incentive = bt_incentive + bu_increase + bv_bonus_manual - bw_bonus_ded
 

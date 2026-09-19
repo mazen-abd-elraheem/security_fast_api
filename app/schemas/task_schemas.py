@@ -223,6 +223,7 @@ class TaskTemplateCreate(BaseModel):
     is_recurring: bool = False
     recurrence_rule: Optional[str] = None
     deadline: Optional[datetime] = None
+    requires_qr_verification: bool = False
     sections: List[TaskSectionCreate] = []
     items: List[TaskItemCreate] = []  # Flat items (no section)
 
@@ -233,6 +234,7 @@ class TaskTemplateUpdate(BaseModel):
     is_recurring: Optional[bool] = None
     recurrence_rule: Optional[str] = None
     deadline: Optional[datetime] = None
+    requires_qr_verification: Optional[bool] = None
     is_active: Optional[bool] = None
 
 class TaskTemplateOut(BaseModel):
@@ -243,6 +245,7 @@ class TaskTemplateOut(BaseModel):
     is_recurring: bool
     recurrence_rule: Optional[str] = None
     deadline: Optional[datetime] = None
+    requires_qr_verification: bool
     is_active: bool
     created_at: datetime
     sections: List[TaskSectionOut] = []
@@ -297,6 +300,7 @@ class TaskInstanceOut(BaseModel):
     site_name: Optional[str] = None
     status: str
     due_date: Optional[datetime] = None
+    requires_qr_verification: bool = False
     completed_offline: bool = False
     review_status: Optional[str] = None
     reviewed_by: Optional[str] = None
