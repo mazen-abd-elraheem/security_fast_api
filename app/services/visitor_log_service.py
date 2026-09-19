@@ -15,8 +15,10 @@ class VisitorLogService:
     # ── Visit Reasons ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def list_reasons(db: Session, tenant_id: str, include_inactive: bool = False) -> List[VisitReason]:
-        q = db.query(VisitReason).filter(VisitReason.tenant_id == tenant_id)
+    def list_reasons(db: Session, tenant_id: Optional[str] = None, include_inactive: bool = False) -> List[VisitReason]:
+        q = db.query(VisitReason)
+        if tenant_id:
+            q = q.filter(VisitReason.tenant_id.in_([tenant_id, "UNIVERSAL_TENANT"]))
         if not include_inactive:
             q = q.filter(VisitReason.is_active == True)
         return q.order_by(VisitReason.label).all()
@@ -33,11 +35,11 @@ class VisitorLogService:
         return reason
 
     @staticmethod
-    def update_reason(db: Session, reason_id: str, tenant_id: str, data: VisitReasonUpdate) -> Optional[VisitReason]:
-        reason = db.query(VisitReason).filter(
-            VisitReason.reason_id == reason_id,
-            VisitReason.tenant_id == tenant_id,
-        ).first()
+    def update_reason(db: Session, reason_id: str, tenant_id: Optional[str], data: VisitReasonUpdate) -> Optional[VisitReason]:
+        q = db.query(VisitReason).filter(VisitReason.reason_id == reason_id)
+        if tenant_id:
+            q = q.filter(VisitReason.tenant_id == tenant_id)
+        reason = q.first()
         if not reason:
             return None
         if data.label is not None:
@@ -49,11 +51,11 @@ class VisitorLogService:
         return reason
 
     @staticmethod
-    def delete_reason(db: Session, reason_id: str, tenant_id: str) -> bool:
-        reason = db.query(VisitReason).filter(
-            VisitReason.reason_id == reason_id,
-            VisitReason.tenant_id == tenant_id,
-        ).first()
+    def delete_reason(db: Session, reason_id: str, tenant_id: Optional[str]) -> bool:
+        q = db.query(VisitReason).filter(VisitReason.reason_id == reason_id)
+        if tenant_id:
+            q = q.filter(VisitReason.tenant_id == tenant_id)
+        reason = q.first()
         if not reason:
             return False
         db.delete(reason)
@@ -91,7 +93,7 @@ class VisitorLogService:
     @staticmethod
     def list_logs(
         db: Session,
-        tenant_id: str,
+        tenant_id: Optional[str] = None,
         site_id: Optional[str] = None,
         visit_reason: Optional[str] = None,
         date_from: Optional[str] = None,
@@ -100,7 +102,9 @@ class VisitorLogService:
         page: int = 1,
         page_size: int = 20,
     ):
-        q = db.query(VisitorLog).filter(VisitorLog.tenant_id == tenant_id)
+        q = db.query(VisitorLog)
+        if tenant_id:
+            q = q.filter(VisitorLog.tenant_id.in_([tenant_id, "UNIVERSAL_TENANT"]))
 
         if site_id:
             q = q.filter(VisitorLog.site_id == site_id)

@@ -462,8 +462,25 @@ def seed():
     db = SessionLocal()
     _seed_incident_categories(db)
 
+    # ── Ensure Universal Tenant exists ──
+    from app.models.task_models import Tenant
+    uni_tenant = db.query(Tenant).filter_by(tenant_id="UNIVERSAL_TENANT").first()
+    if not uni_tenant:
+        uni_tenant = Tenant(
+            tenant_id="UNIVERSAL_TENANT",
+            tenant_code="UNIV01",
+            name="SecureTrack Global",
+            status="active",
+        )
+        db.add(uni_tenant)
+        db.commit()
+
     if db.query(User).count() > 0:
-        print("Users already exist. Skipping seed.")
+        print("Users already exist. Making sure admin has UNIVERSAL_TENANT...")
+        admin = db.query(User).filter_by(email="admin@securetrack.com").first()
+        if admin and not admin.tenant_id:
+            admin.tenant_id = "UNIVERSAL_TENANT"
+            db.commit()
         db.close()
         return
 
@@ -476,6 +493,7 @@ def seed():
             "password_hash": hash_password("admin123"),
             "role": "admin",
             "badge_number": "ST-ADMIN-01",
+            "tenant_id": "UNIVERSAL_TENANT",
             "is_active": True,
             "status": "active"
         },
@@ -486,6 +504,7 @@ def seed():
             "password_hash": hash_password("ceo123"),
             "role": "ceo",
             "badge_number": "ST-CEO-01",
+            "tenant_id": "UNIVERSAL_TENANT",
             "is_active": True,
             "status": "active"
         },

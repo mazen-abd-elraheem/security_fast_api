@@ -9,6 +9,7 @@ from pydantic import BaseModel
 # ── Visit Reason ──────────────────────────────────────────────────────────────
 
 class VisitReasonCreate(BaseModel):
+    tenant_id: Optional[str] = None
     label: str
 
 
@@ -31,6 +32,7 @@ class VisitReasonResponse(BaseModel):
 # ── Visitor Log ───────────────────────────────────────────────────────────────
 
 class VisitorLogCreate(BaseModel):
+    tenant_id: Optional[str] = None
     site_id: Optional[str] = None
     site_name: Optional[str] = None
     visitor_name: str

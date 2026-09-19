@@ -55,13 +55,14 @@ def _log_to_resp(log) -> VisitorLogResponse:
     summary="List visit reasons for current user's tenant",
 )
 def list_reasons(
+    tenant_id: Optional[str] = Query(None, description="Required for admins not assigned to a tenant"),
     include_inactive: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Any authenticated user can fetch the active visit reasons for their tenant."""
-    tenant_id = getattr(current_user, "tenant_id", None)
-    if not tenant_id:
+    target_tenant = tenant_id or getattr(current_user, "tenant_id", None)
+    if not target_tenant:
         return []
     return [
         _reason_to_resp(r)
@@ -83,7 +84,11 @@ def create_reason(
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
-    reason = VisitorLogService.create_reason(db, current_user.tenant_id, data)
+    target_tenant = data.tenant_id or current_user.tenant_id
+    if not target_tenant:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    reason = VisitorLogService.create_reason(db, target_tenant, data)
     return _reason_to_resp(reason)
 
 
@@ -132,9 +137,14 @@ def create_visitor_log(
     db: Session = Depends(get_db),
 ):
     """Leader submits a visitor log entry for their tenant."""
+    target_tenant = data.tenant_id or current_user.tenant_id
+    if not target_tenant:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    
     log = VisitorLogService.create_log(
         db,
-        tenant_id=current_user.tenant_id,
+        tenant_id=target_tenant,
         leader_id=current_user.user_id,
         leader_name=current_user.full_name or current_user.username,
         data=data,
@@ -148,6 +158,7 @@ def create_visitor_log(
     summary="List visitor logs with filters",
 )
 def list_visitor_logs(
+    tenant_id: Optional[str] = Query(None, description="Required for admins not assigned to a tenant"),
     site_id: Optional[str] = Query(None),
     visit_reason: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
@@ -159,9 +170,13 @@ def list_visitor_logs(
     db: Session = Depends(get_db),
 ):
     """Leader/Client/Admin can list visitor logs for their tenant with optional filters."""
+    target_tenant = tenant_id or current_user.tenant_id
+    if not target_tenant:
+        return VisitorLogListResponse(logs=[], total=0, page=page, page_size=page_size)
+
     logs, total = VisitorLogService.list_logs(
         db,
-        tenant_id=current_user.tenant_id,
+        tenant_id=target_tenant,
         site_id=site_id,
         visit_reason=visit_reason,
         date_from=date_from,
