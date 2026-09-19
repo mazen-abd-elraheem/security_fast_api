@@ -11,6 +11,7 @@ from app.models.payroll_formula_config import PayrollFormulaConfig, DEFAULT_FORM
 from app.core.security import hash_password
 from sqlalchemy import inspect as sa_inspect, text as sa_text
 import uuid
+from datetime import datetime, timezone
 
 
 
@@ -400,8 +401,8 @@ def _run_seed_migrations():
                     if not exists:
                         conn.execute(sa_text(
                             "INSERT INTO transfer_method_credits (id, transfer_method_id, transfer_method_name, balance, total_topped_up, total_deducted, created_at, updated_at) "
-                            "VALUES (:id, :mid, :name, 0.0, 0.0, 0.0, NOW(), NOW())"
-                        ), {"id": str(uuid.uuid4()), "mid": m[0], "name": m[1]})
+                            "VALUES (:id, :mid, :name, 0.0, 0.0, 0.0, :now, :now)"
+                        ), {"id": str(uuid.uuid4()), "mid": m[0], "name": m[1], "now": datetime.now(timezone.utc)})
                         print(f"  [migration] Created credit account for transfer method: {m[1]}")
     except Exception as e:
         print(f"transfer_method_credits migration: {e}")

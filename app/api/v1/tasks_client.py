@@ -31,7 +31,9 @@ from app.schemas.task_schemas import (
     TaskInstanceAssign, TaskTemplateOut, TaskResponseOut, ClientAccountDetailOut
 )
 from app.schemas.site import SiteResponse, SiteCreate
-
+from app.schemas.visitor_log import VisitorLogListResponse, VisitReasonResponse
+from app.services.visitor_log_service import VisitorLogService
+from app.api.v1.visitor_log import _log_to_resp, _reason_to_resp
 logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
