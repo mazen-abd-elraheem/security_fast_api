@@ -67,7 +67,7 @@ def list_reasons(
     return [
         _reason_to_resp(r)
         for r in VisitorLogService.list_reasons(
-            db, tenant_id,
+            db, target_tenant,
             include_inactive=include_inactive and current_user.role == UserRole.ADMIN,
         )
     ]

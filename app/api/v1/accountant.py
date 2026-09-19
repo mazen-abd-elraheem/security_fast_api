@@ -377,7 +377,13 @@ async def approve_payroll(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ACCOUNTANT, UserRole.CEO)),
 ):
-    """Lock and approve the payroll sheet. No more edits after this."""
+    """Lock and approve the payroll sheet.
+    Blocks if any transfer method has insufficient credit to cover net salaries.
+    Deducts from TransferMethodCredit on successful approval.
+    """
+    from app.models.transfer_method_credit import TransferMethodCredit, TransferMethodCreditLog
+    from app.models.notification import Notification
+
     rows = db.query(PayrollSheetRow).filter(
         and_(PayrollSheetRow.year == year, PayrollSheetRow.month == month)
     ).all()
@@ -388,14 +394,102 @@ async def approve_payroll(
     if rows[0].is_approved:
         raise HTTPException(400, "Already approved")
 
+    # ── Group net_salary by transfer_method ──
+    method_totals: Dict[str, float] = {}
+    for r in rows:
+        user = db.query(User).filter(User.user_id == r.user_id).first()
+        method = (user.transfer_method or "").strip() if user else ""
+        if not method:
+            continue
+        method_totals[method] = method_totals.get(method, 0.0) + float(r.net_salary or 0)
+
+    # ── Check credits: block if any method is overdrawn ──
+    reference = f"Payroll {year}-{month:02d}"
+    shortfalls: List[Dict[str, Any]] = []
+    credit_objects: Dict[str, Any] = {}
+
+    for method_name, total_needed in method_totals.items():
+        credit = db.query(TransferMethodCredit).filter(
+            TransferMethodCredit.transfer_method_name == method_name
+        ).first()
+        if credit is None:
+            # Try fuzzy match via method ID
+            from app.models.accountant_models import TransferMethod as TM
+            tm = db.query(TM).filter(TM.name == method_name).first()
+            if tm:
+                credit = db.query(TransferMethodCredit).filter(
+                    TransferMethodCredit.transfer_method_id == tm.id
+                ).first()
+
+        if credit is None or credit.balance < total_needed:
+            available = credit.balance if credit else 0.0
+            shortfalls.append({
+                "method": method_name,
+                "needed": round(total_needed, 2),
+                "available": round(available, 2),
+                "shortfall": round(total_needed - available, 2),
+            })
+        else:
+            credit_objects[method_name] = (credit, total_needed)
+
+    if shortfalls:
+        # Send admin notification for each shortfall
+        admin_users = db.query(User).filter(User.role == "admin", User.is_active == True).all()
+        for admin in admin_users:
+            msg = f"Payroll {year}-{month:02d} BLOCKED: Insufficient credit. "
+            for s in shortfalls:
+                msg += f"{s['method']}: needs {s['needed']} EGP, available {s['available']} EGP (short {s['shortfall']} EGP). "
+            notif = Notification(
+                notification_id=str(uuid.uuid4()),
+                user_id=admin.user_id,
+                title=f"Payroll {year}-{month:02d} Blocked — Insufficient Credit",
+                body=msg.strip(),
+                type="payroll_credit_shortfall",
+            )
+            db.add(notif)
+        db.commit()
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "message": "Payroll approval blocked: insufficient transfer method credit.",
+                "shortfalls": shortfalls,
+            }
+        )
+
+    # ── Approve and deduct credits ──
     now = datetime.now(timezone.utc)
     for r in rows:
         r.is_approved = True
         r.approved_by = current_user.user_id
         r.approved_at = now
 
+    for method_name, (credit, total_deducted) in credit_objects.items():
+        credit.balance = round(credit.balance - total_deducted, 2)
+        credit.total_deducted = round(credit.total_deducted + total_deducted, 2)
+        credit.updated_at = now
+        log = TransferMethodCreditLog(
+            id=str(uuid.uuid4()),
+            credit_id=credit.id,
+            operation="deduct",
+            amount=total_deducted,
+            balance_after=credit.balance,
+            reference=reference,
+            actor_id=current_user.user_id,
+            actor_name=current_user.name,
+            created_at=now,
+        )
+        db.add(log)
+
     db.commit()
-    return {"message": f"Payroll for {year}/{month} approved", "approved_by": current_user.name, "rows": len(rows)}
+    return {
+        "message": f"Payroll for {year}/{month} approved",
+        "approved_by": current_user.name,
+        "rows": len(rows),
+        "credits_deducted": [
+            {"method": k, "amount_deducted": round(v[1], 2), "balance_after": round(v[0].balance, 2)}
+            for k, v in credit_objects.items()
+        ],
+    }
 
 
 # -- Salary Classification Config CRUD --
@@ -1624,3 +1718,298 @@ def update_tax_sheet_cells(
         updated += 1
     db.commit()
     return {"message": f"Updated {updated} cells"}
+
+
+# ══════════════════════════════════════════════════════════
+#  Transfer Method Credit Management
+# ══════════════════════════════════════════════════════════
+
+from app.models.transfer_method_credit import (
+    TransferMethodCredit, TransferMethodCreditLog, TransferMethodTopUpRequest
+)
+from app.models.accountant_models import TransferMethod as TransferMethodModel
+
+
+class TopUpDirectPayload(BaseModel):
+    amount: float
+    reference: Optional[str] = None
+
+
+class TopUpRequestPayload(BaseModel):
+    amount: float
+    reference: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ReviewTopUpPayload(BaseModel):
+    approve: bool
+    review_notes: Optional[str] = None
+
+
+@router.get("/transfer-credits", summary="List all transfer methods with current credit balances")
+def list_transfer_credits(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
+):
+    """Returns every transfer method alongside its credit balance and stats."""
+    methods = db.query(TransferMethodModel).order_by(TransferMethodModel.sort_order).all()
+    result = []
+    for m in methods:
+        credit = db.query(TransferMethodCredit).filter(
+            TransferMethodCredit.transfer_method_id == m.id
+        ).first()
+        pending_requests = 0
+        if credit:
+            pending_requests = db.query(TransferMethodTopUpRequest).filter(
+                TransferMethodTopUpRequest.credit_id == credit.id,
+                TransferMethodTopUpRequest.status == "pending",
+            ).count()
+        result.append({
+            "method_id": m.id,
+            "name": m.name,
+            "name_ar": m.name_ar,
+            "is_active": m.is_active,
+            "credit_id": credit.id if credit else None,
+            "balance": round(credit.balance, 2) if credit else 0.0,
+            "total_topped_up": round(credit.total_topped_up, 2) if credit else 0.0,
+            "total_deducted": round(credit.total_deducted, 2) if credit else 0.0,
+            "pending_top_up_requests": pending_requests,
+            "updated_at": credit.updated_at.isoformat() if credit and credit.updated_at else None,
+        })
+    return {"credits": result}
+
+
+@router.post("/transfer-credits/{method_id}/top-up", summary="Admin: directly top up a transfer method credit")
+def admin_top_up_credit(
+    method_id: str,
+    payload: TopUpDirectPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Admin directly adds credit to a transfer method."""
+    if payload.amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+
+    method = db.query(TransferMethodModel).filter(TransferMethodModel.id == method_id).first()
+    if not method:
+        raise HTTPException(404, "Transfer method not found")
+
+    credit = db.query(TransferMethodCredit).filter(
+        TransferMethodCredit.transfer_method_id == method_id
+    ).first()
+    if not credit:
+        credit = TransferMethodCredit(
+            id=str(uuid.uuid4()),
+            transfer_method_id=method_id,
+            transfer_method_name=method.name,
+            balance=0.0,
+            total_topped_up=0.0,
+            total_deducted=0.0,
+        )
+        db.add(credit)
+        db.flush()
+
+    now = datetime.now(timezone.utc)
+    credit.balance = round(credit.balance + payload.amount, 2)
+    credit.total_topped_up = round(credit.total_topped_up + payload.amount, 2)
+    credit.updated_at = now
+
+    log = TransferMethodCreditLog(
+        id=str(uuid.uuid4()),
+        credit_id=credit.id,
+        operation="admin_top_up",
+        amount=payload.amount,
+        balance_after=credit.balance,
+        reference=payload.reference or "Admin direct top-up",
+        actor_id=current_user.user_id,
+        actor_name=current_user.name,
+        created_at=now,
+    )
+    db.add(log)
+    db.commit()
+    return {
+        "message": f"Topped up {method.name} by {payload.amount} EGP",
+        "new_balance": credit.balance,
+        "method": method.name,
+    }
+
+
+@router.post("/transfer-credits/{method_id}/request-top-up", status_code=201,
+             summary="Accountant: submit a top-up request for admin approval")
+def request_top_up(
+    method_id: str,
+    payload: TopUpRequestPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ACCOUNTANT, UserRole.ADMIN)),
+):
+    """Accountant submits a credit top-up request; Admin must approve it."""
+    if payload.amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+
+    method = db.query(TransferMethodModel).filter(TransferMethodModel.id == method_id).first()
+    if not method:
+        raise HTTPException(404, "Transfer method not found")
+
+    credit = db.query(TransferMethodCredit).filter(
+        TransferMethodCredit.transfer_method_id == method_id
+    ).first()
+    if not credit:
+        credit = TransferMethodCredit(
+            id=str(uuid.uuid4()),
+            transfer_method_id=method_id,
+            transfer_method_name=method.name,
+            balance=0.0, total_topped_up=0.0, total_deducted=0.0,
+        )
+        db.add(credit)
+        db.flush()
+
+    req = TransferMethodTopUpRequest(
+        id=str(uuid.uuid4()),
+        credit_id=credit.id,
+        requested_amount=payload.amount,
+        reference=payload.reference,
+        notes=payload.notes,
+        status="pending",
+        requested_by=current_user.user_id,
+        requested_by_name=current_user.name,
+    )
+    db.add(req)
+
+    # Notify all admins
+    from app.models.notification import Notification
+    admins = db.query(User).filter(User.role == "admin", User.is_active == True).all()
+    for admin in admins:
+        notif = Notification(
+            notification_id=str(uuid.uuid4()),
+            user_id=admin.user_id,
+            title=f"Top-Up Request: {method.name}",
+            body=f"{current_user.name} requested a credit top-up of {payload.amount:,.0f} EGP for {method.name}. Reference: {payload.reference or 'N/A'}",
+            type="top_up_request",
+        )
+        db.add(notif)
+
+    db.commit()
+    return {"message": "Top-up request submitted", "request_id": req.id, "status": "pending"}
+
+
+@router.get("/transfer-credits/top-up-requests", summary="Admin: list all pending top-up requests")
+def list_top_up_requests(
+    status: Optional[str] = Query(None, description="Filter: pending | approved | rejected"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO)),
+):
+    q = db.query(TransferMethodTopUpRequest)
+    if status:
+        q = q.filter(TransferMethodTopUpRequest.status == status)
+    else:
+        q = q.filter(TransferMethodTopUpRequest.status == "pending")
+    requests = q.order_by(TransferMethodTopUpRequest.requested_at.desc()).all()
+    result = []
+    for r in requests:
+        result.append({
+            "id": r.id,
+            "credit_id": r.credit_id,
+            "transfer_method": r.credit.transfer_method_name if r.credit else "",
+            "requested_amount": r.requested_amount,
+            "reference": r.reference,
+            "notes": r.notes,
+            "status": r.status,
+            "requested_by": r.requested_by_name,
+            "requested_at": r.requested_at.isoformat() if r.requested_at else None,
+            "reviewed_by": r.reviewed_by_name,
+            "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+            "review_notes": r.review_notes,
+        })
+    return {"requests": result}
+
+
+@router.post("/transfer-credits/top-up-requests/{request_id}/review",
+             summary="Admin: approve or reject a top-up request")
+def review_top_up_request(
+    request_id: str,
+    payload: ReviewTopUpPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    req = db.query(TransferMethodTopUpRequest).filter(
+        TransferMethodTopUpRequest.id == request_id
+    ).first()
+    if not req:
+        raise HTTPException(404, "Request not found")
+    if req.status != "pending":
+        raise HTTPException(400, f"Request is already {req.status}")
+
+    now = datetime.now(timezone.utc)
+    req.reviewed_by = current_user.user_id
+    req.reviewed_by_name = current_user.name
+    req.reviewed_at = now
+    req.review_notes = payload.review_notes
+
+    if payload.approve:
+        req.status = "approved"
+        credit = db.query(TransferMethodCredit).filter(
+            TransferMethodCredit.id == req.credit_id
+        ).first()
+        if credit:
+            credit.balance = round(credit.balance + req.requested_amount, 2)
+            credit.total_topped_up = round(credit.total_topped_up + req.requested_amount, 2)
+            credit.updated_at = now
+            log = TransferMethodCreditLog(
+                id=str(uuid.uuid4()),
+                credit_id=credit.id,
+                operation="top_up",
+                amount=req.requested_amount,
+                balance_after=credit.balance,
+                reference=req.reference or f"Approved request #{req.id[:8]}",
+                actor_id=current_user.user_id,
+                actor_name=current_user.name,
+                created_at=now,
+            )
+            db.add(log)
+        db.commit()
+        return {
+            "message": "Request approved and credit applied",
+            "new_balance": credit.balance if credit else None,
+        }
+    else:
+        req.status = "rejected"
+        db.commit()
+        return {"message": "Request rejected"}
+
+
+@router.get("/transfer-credits/{credit_id}/logs", summary="Get audit log for a transfer method credit")
+def get_credit_logs(
+    credit_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
+):
+    total = db.query(TransferMethodCreditLog).filter(
+        TransferMethodCreditLog.credit_id == credit_id
+    ).count()
+    logs = (
+        db.query(TransferMethodCreditLog)
+        .filter(TransferMethodCreditLog.credit_id == credit_id)
+        .order_by(TransferMethodCreditLog.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "logs": [
+            {
+                "id": l.id,
+                "operation": l.operation,
+                "amount": l.amount,
+                "balance_after": l.balance_after,
+                "reference": l.reference,
+                "actor": l.actor_name,
+                "created_at": l.created_at.isoformat() if l.created_at else None,
+            }
+            for l in logs
+        ],
+    }

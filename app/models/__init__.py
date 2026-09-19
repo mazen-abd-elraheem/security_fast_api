@@ -29,7 +29,7 @@ from app.models.disciplinary_action import DisciplinaryAction
 from app.models.guard_evaluation import GuardEvaluation
 from app.models.payroll_sheet_row import PayrollSheetRow, SalaryClassificationConfig
 from app.models.daily_attendance_entry import DailyAttendanceEntry
-from app.models.accountant_models import TaxBracket, EmployeeBonus, Holiday, Termination
+from app.models.accountant_models import TaxBracket, EmployeeBonus, Holiday, Termination, TransferMethod
 from app.models.payroll_formula_config import PayrollFormulaConfig
 
 
@@ -63,3 +63,6 @@ from app.models.task_models import (
 )
 from app.models.vacation_request import VacationRequest
 from app.models.visitor_log import VisitorLog, VisitReason
+from app.models.transfer_method_credit import (
+    TransferMethodCredit, TransferMethodCreditLog, TransferMethodTopUpRequest
+)

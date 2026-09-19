@@ -387,6 +387,25 @@ def _run_seed_migrations():
     except Exception as e:
         print(f"incidents migration: {e}")
 
+    # ── Transfer Method Credits: seed one credit row per transfer method ──
+    try:
+        if insp.has_table("transfer_methods") and insp.has_table("transfer_method_credits"):
+            with engine.begin() as conn:
+                methods = conn.execute(sa_text("SELECT id, name FROM transfer_methods")).fetchall()
+                for m in methods:
+                    exists = conn.execute(
+                        sa_text("SELECT COUNT(*) FROM transfer_method_credits WHERE transfer_method_id = :mid"),
+                        {"mid": m[0]}
+                    ).scalar()
+                    if not exists:
+                        conn.execute(sa_text(
+                            "INSERT INTO transfer_method_credits (id, transfer_method_id, transfer_method_name, balance, total_topped_up, total_deducted, created_at, updated_at) "
+                            "VALUES (:id, :mid, :name, 0.0, 0.0, 0.0, NOW(), NOW())"
+                        ), {"id": str(uuid.uuid4()), "mid": m[0], "name": m[1]})
+                        print(f"  [migration] Created credit account for transfer method: {m[1]}")
+    except Exception as e:
+        print(f"transfer_method_credits migration: {e}")
+
 
 def _seed_incident_categories(db):
     """Seed default incident categories if none exist."""
