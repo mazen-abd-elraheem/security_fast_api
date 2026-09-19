@@ -2,7 +2,7 @@
 SecureTrack Platform User Model
 Centralized identity for Admins, Supervisors, Guards, Outdoor personnel, and Clients.
 """
-from sqlalchemy import Column, String, Float, DateTime, Boolean, Integer, Numeric, Index
+from sqlalchemy import Column, String, Float, DateTime, Boolean, Integer, Numeric, Index, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -22,6 +22,7 @@ class User(Base):
     phone_number = Column(String(20), nullable=True)
     password_hash = Column(String(255), nullable=False)
     role = Column(String(30), nullable=False, default="guard")
+    tenant_id = Column(String(36), ForeignKey("tenants.tenant_id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Badge / employee number (unique within company)
     badge_number = Column(String(50), nullable=True, unique=True, index=True)

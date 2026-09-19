@@ -20,6 +20,7 @@ def _run_seed_migrations():
         if insp.has_table("users"):
             existing = {c["name"] for c in insp.get_columns("users")}
             new_cols = {
+                "tenant_id": "VARCHAR(36) NULL",
                 "employee_code": "VARCHAR(50) NULL",
                 "region": "VARCHAR(100) NULL",
                 "requested_role": "VARCHAR(30) NULL",
@@ -182,6 +183,21 @@ def _run_seed_migrations():
                     conn.execute(sa_text(f"ALTER TABLE separation_requests ADD COLUMN {col_name} {col_def}"))
                     print(f"  [migration] separation_requests.{col_name} added")
 
+    # ── Client Accounts: add security/lockout fields ──
+    if insp.has_table("client_accounts"):
+        existing = {c["name"] for c in insp.get_columns("client_accounts")}
+        client_new = {
+            "failed_login_attempts": "INTEGER DEFAULT 0",
+            "locked_until": "DATETIME NULL",
+            "totp_secret": "VARCHAR(32) NULL",
+            "totp_enabled": "BOOLEAN DEFAULT FALSE",
+        }
+        for col_name, col_def in client_new.items():
+            if col_name not in existing:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE client_accounts ADD COLUMN {col_name} {col_def}"))
+                    print(f"  [migration] client_accounts.{col_name} added")
+
     # ── Sites: add tactical metrics ──
     if insp.has_table("sites"):
         existing = {c["name"] for c in insp.get_columns("sites")}
@@ -263,7 +279,7 @@ def _run_seed_migrations():
     ]
     for tbl in task_tables:
         if insp.has_table(tbl):
-            print(f"  [migration] {tbl} table exists ✓")
+            print(f"  [migration] {tbl} table exists OK")
         else:
             print(f"  [migration] {tbl} will be created by create_all")
 

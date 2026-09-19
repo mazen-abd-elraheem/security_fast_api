@@ -92,6 +92,7 @@ class ClientLoginResponse(BaseModel):
     token_type: str = "bearer"
     client: ClientAccountOut
     permissions: List[str] = []
+    mfa_required: bool = False
 
 
 # ══════════════════════════════════════════════

@@ -8,8 +8,11 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.database import get_db
 from app.core.security import create_access_token, create_refresh_token, verify_password
@@ -31,6 +34,36 @@ from app.schemas.site import SiteResponse, SiteCreate
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
+
+# ── Progressive Lockout Delays ──
+LOCKOUT_DELAYS = {
+    1: timedelta(minutes=1),
+    2: timedelta(minutes=5),
+    3: timedelta(minutes=15),
+}
+DEFAULT_LOCKOUT = timedelta(hours=1)
+
+def _check_lockout_client(client: ClientAccount):
+    if client.locked_until:
+        locked_until_aware = client.locked_until if client.locked_until.tzinfo else client.locked_until.replace(tzinfo=timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        if locked_until_aware > now_utc:
+            remaining = (locked_until_aware - now_utc).total_seconds()
+            remaining_min = max(1, int(remaining / 60))
+            raise HTTPException(
+                status_code=423,
+                detail=f"Account is temporarily locked due to multiple failed login attempts. Try again in {remaining_min} minute(s)."
+            )
+
+def _record_failed_login_client(client: ClientAccount, db: Session):
+    client.failed_login_attempts += 1
+    delay = LOCKOUT_DELAYS.get(client.failed_login_attempts, DEFAULT_LOCKOUT)
+    client.locked_until = datetime.now(timezone.utc) + delay
+
+def _reset_lockout_client(client: ClientAccount, db: Session):
+    client.failed_login_attempts = 0
+    client.locked_until = None
 
 
 # ══════════════════════════════════════════════
@@ -99,7 +132,9 @@ def get_current_client(
 
 
 @router.get("/verify-tenant", summary="Verify a tenant code")
+@limiter.limit("5/minute; 15/hour; 50/day")
 def verify_tenant(
+    request: Request,
     code: str = Query(..., min_length=1, description="Tenant organisation code"),
     db: Session = Depends(get_db),
 ):
@@ -118,7 +153,9 @@ def verify_tenant(
 
 
 @router.post("/login", response_model=ClientLoginResponse)
+@limiter.limit("10/minute")
 def client_login(
+    request: Request,
     body: ClientLoginRequest,
     db: Session = Depends(get_db),
 ):
@@ -126,16 +163,41 @@ def client_login(
     client = db.query(ClientAccount).filter_by(
         email=body.email, tenant_id=body.tenant_id
     ).first()
-    if not client:
-        raise HTTPException(status_code=401, detail="Invalid email or tenant")
+    
+    if client:
+        _check_lockout_client(client)
 
-    if not verify_password(body.password, client.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-    if client.status == "pending_approval":
-        raise HTTPException(status_code=403, detail="Account pending admin approval")
-    if client.status != "active":
+    if client and not client.status == "active":
+        if client.status == "pending_approval":
+            raise HTTPException(status_code=403, detail="Account pending admin approval")
         raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    # Anti-enumeration and auth
+    is_valid = False
+    if client:
+        is_valid = verify_password(body.password, client.password_hash)
+    else:
+        # Dummy verification to prevent timing attacks
+        verify_password("dummy", "$2b$12$LJ3m4ys3Lg2Rz6YsAnPWvOcPgYb3BYfNn.F3YX1sT9xR5dF5Q8W2y")
+        
+    if not client or not is_valid:
+        if client:
+            _record_failed_login_client(client, db)
+            db.commit()
+        raise HTTPException(status_code=401, detail="Invalid email/tenant or password")
+        
+    _reset_lockout_client(client, db)
+    db.commit()
+
+    if getattr(client, 'totp_enabled', False):
+        return ClientLoginResponse(
+            access_token="",
+            refresh_token="",
+            token_type="bearer",
+            client=ClientAccountOut.model_validate(client),
+            permissions=[],
+            mfa_required=True
+        )
 
     # Create client-specific JWT tokens
     token_data = {

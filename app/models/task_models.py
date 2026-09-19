@@ -98,6 +98,11 @@ class ClientAccount(Base):
     status = Column(String(30), nullable=False, default="pending_approval")
     fcm_token = Column(String(500), nullable=True)
 
+    failed_login_attempts = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
+    totp_secret = Column(String(32), nullable=True)
+    totp_enabled = Column(Boolean, nullable=False, default=False)
+
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc))
