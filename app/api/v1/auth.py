@@ -6,6 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -14,6 +17,7 @@ from app.core.database import get_db
 from app.core.security import (
     create_access_token, create_refresh_token, verify_token,
     revoke_token, revoke_all_user_tokens,
+    is_token_revoked, is_user_tokens_revoked,
 )
 from app.models.user import User
 from app.enums import UserRole
@@ -21,9 +25,6 @@ from app.schemas.user import UserCreate, UserResponse
 from app.services.user_service import UserService
 from app.api.deps import get_current_user, handle_service_exception
 from app.core.exceptions import SecureTrackException
-from app.core.security import (
-    is_token_revoked, is_user_tokens_revoked,
-)
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -162,6 +163,13 @@ def login(
         if pending_user:
             _record_failed_login(pending_user, db)
             db.commit()  # commit the lockout state change
+        else:
+            # SECURITY (Gap 13.10): Anti-enumeration — perform a dummy bcrypt
+            # comparison so the response timing is identical whether the user
+            # exists or not. Without this, an attacker can detect valid emails
+            # by measuring response latency.
+            from app.core.security import verify_password
+            verify_password("dummy", "$2b$12$LJ3m4ys3Lg2Rz6YsAnPWvOcPgYb3BYfNn.F3YX1sT9xR5dF5Q8W2y")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email/badge number or password",
@@ -203,7 +211,7 @@ def login(
 
 @router.post(
     "/refresh",
-    summary="Refresh access token",
+    summary="Refresh access token (with token rotation)",
 )
 @limiter.limit("20/minute")
 def refresh_token(
@@ -211,7 +219,15 @@ def refresh_token(
     refresh_token: str,
     db: Session = Depends(get_db),
 ):
-    """Exchange a valid refresh token for a new access token."""
+    """
+    Exchange a valid refresh token for a new access + refresh token pair.
+    
+    SECURITY (Gap 13.2): Implements refresh-token rotation:
+    - Each refresh token can only be used ONCE
+    - On use, the old refresh token is revoked and a new one is issued
+    - If a revoked refresh token is reused, it signals token theft:
+      ALL tokens for that user are revoked, forcing full re-authentication
+    """
     payload = verify_token(refresh_token, expected_type="refresh")
     if payload is None:
         raise HTTPException(
@@ -220,34 +236,59 @@ def refresh_token(
         )
 
     user_id = payload.get("sub")
+    jti = payload.get("jti")
+
+    # ── Reuse Detection (Gap 13.2) ──
+    # If this refresh token was already used (revoked), it means someone
+    # stole the old token and is replaying it. Revoke ALL tokens for safety.
+    if jti and is_token_revoked(jti, db):
+        logger.warning(
+            "SECURITY: Refresh token reuse detected for user %s (jti=%s). "
+            "Revoking all tokens — possible token theft.",
+            user_id, jti,
+        )
+        revoke_all_user_tokens(user_id, reason="refresh_token_reuse_detected", db=db)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Security alert: session compromised. All sessions revoked. Please log in again.",
+        )
+
+    # Check if all user tokens were bulk-revoked
+    if is_user_tokens_revoked(user_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="All sessions have been revoked. Please log in again.",
+        )
+
     user = UserService.get_by_id(db, user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # SECURITY FIX: Check if user is still active before issuing new token
+    # SECURITY: Check if user is still active before issuing new token
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account has been deactivated. Please contact your administrator.",
         )
 
-    # Check if this refresh token has been revoked
-    jti = payload.get("jti")
+    # ── Rotate: revoke old refresh token, issue new pair ──
     if jti:
-        if is_token_revoked(jti, db) or is_user_tokens_revoked(user_id, db):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Refresh token has been revoked. Please log in again.",
-            )
+        exp = payload.get("exp")
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc) if exp else (
+            datetime.now(timezone.utc) + timedelta(days=7)
+        )
+        revoke_token(jti, user_id, expires_at, reason="refresh_rotation", db=db)
 
     token_data = {
         "sub": user.user_id,
         "role": user.role.value if hasattr(user.role, 'value') else user.role,
     }
     new_access_token = create_access_token(data=token_data)
+    new_refresh_token = create_refresh_token(data=token_data)
 
     return {
         "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
         "token_type": "bearer",
     }
 

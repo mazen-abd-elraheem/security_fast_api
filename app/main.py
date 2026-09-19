@@ -61,6 +61,7 @@ from app.api.v1 import (
       deduction_sheet,
       incident_categories,
       emergency,
+      visitor_log,
 )
 
 settings = get_settings()
@@ -337,18 +338,49 @@ app.add_middleware(
 
 
 # ==========================================
+# Sensitive-Data Log Redaction Filter (Gap 13.7)
+# ==========================================
+import re
+
+_SENSITIVE_PATTERNS = re.compile(
+    r'(password|token|secret|authorization|refresh_token|access_token|totp)'
+    r'\s*[=:]\s*\S+',
+    re.IGNORECASE,
+)
+_SENSITIVE_PATHS = {"/auth/login", "/auth/refresh", "/auth/register", "/mfa/verify"}
+
+
+class LogRedactionFilter(logging.Filter):
+    """Strip sensitive data from log records before they reach any handler."""
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = _SENSITIVE_PATTERNS.sub(
+                lambda m: m.group().split('=')[0].split(':')[0] + '=***REDACTED***',
+                record.msg,
+            )
+        return True
+
+
+# Apply redaction filter to root logger so ALL loggers inherit it
+logging.getLogger().addFilter(LogRedactionFilter())
+
+
+# ==========================================
 # Request Logging Middleware
 # ==========================================
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log every request with method, path, duration, and status."""
+    """Log every request with method, path, duration, and status.
+    SECURITY (Gap 13.7): Redacts query params on sensitive endpoints."""
     start_time = time.time()
     response = await call_next(request)
     duration = time.time() - start_time
 
+    log_path = request.url.path
+
     if not request.url.path.startswith("/static"):
         logger.info(
-            "%s %s Ã¢â€ â€™ %s (%.2fs)",
+            "%s %s -> %s (%.2fs)",
             request.method,
             request.url.path,
             response.status_code,
@@ -356,6 +388,25 @@ async def log_requests(request: Request, call_next):
         )
     else:
         response.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+
+    # ── Security Response Headers (Gap 13.6) ──
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    # HSTS: enforce HTTPS for 1 year with subdomains
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # CSP: restrict to self + allow inline styles for docs page
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https:; "
+        "frame-ancestors 'none'"
+    )
+
     return response
 
 
@@ -441,6 +492,7 @@ app.include_router(tax_brackets.router, prefix="/api/v1/tax-brackets", tags=["Ta
 app.include_router(transfer_methods.router, prefix="/api/v1/transfer-methods", tags=["Transfer Methods"])
 app.include_router(deduction_sheet.router, prefix="/api/v1/deduction-sheet", tags=["Deduction Sheet"])
 app.include_router(incident_categories.router, prefix="/api/v1/incident-categories", tags=["Incident Categories"])
+app.include_router(visitor_log.router, prefix="/api/v1/visitor-logs", tags=["Visitor Logs"])
 
 # ==========================================
 # Static Files (uploaded images) Ã¢â‚¬â€  must be AFTER routers

@@ -62,3 +62,4 @@ from app.models.task_models import (
     TaskAlert, TaskAlertDelivery,
 )
 from app.models.vacation_request import VacationRequest
+from app.models.visitor_log import VisitorLog, VisitReason
