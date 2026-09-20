@@ -275,6 +275,7 @@ class TaskItem(Base):
     # Response configuration
     response_type = Column(String(30), nullable=False, default="right_wrong")  # TaskItemResponseType
     requires_photo = Column(Boolean, nullable=False, default=False)
+    requires_qr_verification = Column(Boolean, nullable=False, default=False)
 
     # Alert configuration
     alert_on_wrong = Column(Boolean, nullable=False, default=True)

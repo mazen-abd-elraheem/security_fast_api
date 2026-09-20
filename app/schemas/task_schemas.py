@@ -148,6 +148,7 @@ class TaskItemCreate(BaseModel):
     section_id: Optional[str] = None
     response_type: str = "right_wrong"
     requires_photo: bool = False
+    requires_qr_verification: bool = False
     alert_on_wrong: bool = True
     alert_on_note: bool = False
     sort_order: int = 0
@@ -159,6 +160,7 @@ class TaskItemUpdate(BaseModel):
     section_id: Optional[str] = None
     response_type: Optional[str] = None
     requires_photo: Optional[bool] = None
+    requires_qr_verification: Optional[bool] = None
     alert_on_wrong: Optional[bool] = None
     alert_on_note: Optional[bool] = None
     sort_order: Optional[int] = None
@@ -192,6 +194,7 @@ class TaskItemOut(BaseModel):
     description: Optional[str] = None
     response_type: str
     requires_photo: bool
+    requires_qr_verification: bool
     alert_on_wrong: bool
     alert_on_note: bool
     sort_order: int

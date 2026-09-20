@@ -161,10 +161,14 @@ def _run_seed_migrations():
             with engine.begin() as conn:
                 conn.execute(sa_text("ALTER TABLE task_templates ADD COLUMN schedule_id VARCHAR(36) NULL"))
                 print("  [migration] task_templates.schedule_id added")
+
+    # ── Task Items: add requires_qr_verification ──
+    if insp.has_table("task_items"):
+        existing = {c["name"] for c in insp.get_columns("task_items")}
         if "requires_qr_verification" not in existing:
             with engine.begin() as conn:
-                conn.execute(sa_text("ALTER TABLE task_templates ADD COLUMN requires_qr_verification BOOLEAN DEFAULT FALSE"))
-                print("  [migration] task_templates.requires_qr_verification added")
+                conn.execute(sa_text("ALTER TABLE task_items ADD COLUMN requires_qr_verification BOOLEAN DEFAULT FALSE"))
+                print("  [migration] task_items.requires_qr_verification added")
 
     # ── Payroll Sheet Rows: expand shift_time ──
     if insp.has_table("payroll_sheet_rows"):
