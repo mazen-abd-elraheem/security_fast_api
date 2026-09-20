@@ -497,6 +497,9 @@ app.include_router(deduction_sheet.router, prefix="/api/v1/deduction-sheet", tag
 app.include_router(incident_categories.router, prefix="/api/v1/incident-categories", tags=["Incident Categories"])
 app.include_router(visitor_log.router, prefix="/api/v1/visitor-logs", tags=["Visitor Logs"])
 
+from app.api.v1 import annual_leave
+app.include_router(annual_leave.router, prefix="/api/v1/annual-leave", tags=["Annual Leave"])
+
 # ==========================================
 # Static Files (uploaded images) Ã¢â‚¬â€  must be AFTER routers
 # ==========================================

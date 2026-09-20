@@ -67,3 +67,4 @@ from app.models.visitor_log import VisitorLog, VisitReason
 from app.models.transfer_method_credit import (
     TransferMethodCredit, TransferMethodCreditLog, TransferMethodTopUpRequest
 )
+from app.models.annual_leave_balance import AnnualLeaveBalance

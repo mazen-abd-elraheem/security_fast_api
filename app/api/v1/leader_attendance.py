@@ -17,6 +17,7 @@ from app.models.site import Site
 from app.models.daily_attendance_entry import DailyAttendanceEntry
 from app.models.guard_roster import GuardRoster
 from app.models.shift import Shift
+from app.models.annual_leave_balance import AnnualLeaveBalance
 from app.enums import UserRole
 
 router = APIRouter()
@@ -104,11 +105,31 @@ def get_site_guards_for_attendance(
 
     result = []
     seen_guards = set()
+    current_year = target_date.year
+
     for roster, guard in rosters:
         if guard.user_id in seen_guards:
             continue
         seen_guards.add(guard.user_id)
         entry = existing.get(guard.user_id)
+
+        # Annual leave balance
+        leave_bal = db.query(AnnualLeaveBalance).filter(
+            AnnualLeaveBalance.employee_id == guard.user_id,
+            AnnualLeaveBalance.year == current_year,
+        ).first()
+
+        # If no balance yet, compute from hire_date
+        if not leave_bal:
+            from app.api.v1.annual_leave import _get_or_create_balance
+            leave_bal = _get_or_create_balance(db, guard.user_id, current_year,
+                                               hire_date=guard.hire_date or guard.created_at)
+
+        # Eligible if today >= hire_date + 3 months
+        eligible_from = leave_bal.eligible_from
+        is_eligible = bool(eligible_from and target_date >= eligible_from)
+        remaining = max(0, leave_bal.total_days - leave_bal.used_days)
+
         result.append({
             "employee_id": guard.user_id,
             "employee_name": guard.name,
@@ -116,6 +137,8 @@ def get_site_guards_for_attendance(
             "classification": guard.classification,
             "roster_id": roster.roster_id,
             "has_entry": entry is not None,
+            "annual_leave_eligible": is_eligible,
+            "annual_leave_remaining": remaining,
             "entry": {
                 "id": entry.id,
                 "status": entry.status,
@@ -128,6 +151,9 @@ def get_site_guards_for_attendance(
                 "locked": entry.locked,
             } if entry else None,
         })
+
+    # Flush any newly created leave balances
+    db.commit()
 
     # Get site info
     site = db.query(Site).filter(Site.site_id == site_id).first()
@@ -156,6 +182,7 @@ def bulk_save_attendance(
     Rejects writes to locked days unless caller has override permission.
     """
     target_date = date.fromisoformat(payload.entry_date)
+    current_year = target_date.year
     results = []
 
     # Deduplicate entries by employee_id — keep last entry per employee
@@ -166,6 +193,27 @@ def bulk_save_attendance(
             seen_emp.add(record.employee_id)
             unique_entries.append(record)
     unique_entries.reverse()
+
+    def _adjust_leave_balance(emp_id: str, old_status: Optional[str], new_status: str):
+        """Deduct 1 day if new_status is annual_leave; credit back if old was annual_leave."""
+        was_annual = old_status == 'annual_leave'
+        is_annual = new_status == 'annual_leave'
+        if was_annual == is_annual:
+            return  # no change needed
+
+        bal = db.query(AnnualLeaveBalance).filter(
+            AnnualLeaveBalance.employee_id == emp_id,
+            AnnualLeaveBalance.year == current_year,
+        ).first()
+        if not bal:
+            emp_obj = db.query(User).filter(User.user_id == emp_id).first()
+            from app.api.v1.annual_leave import _get_or_create_balance
+            bal = _get_or_create_balance(db, emp_id, current_year,
+                                         hire_date=emp_obj.hire_date if emp_obj else None)
+        if is_annual:
+            bal.used_days = max(0, bal.used_days) + 1
+        else:  # crediting back
+            bal.used_days = max(0, bal.used_days - 1)
 
     for record in unique_entries:
         # Check if entry exists
@@ -190,6 +238,9 @@ def bulk_save_attendance(
                 existing.overridden_by = current_user.user_id
                 existing.overridden_at = datetime.now(timezone.utc)
 
+            # Adjust annual leave balance before updating status
+            _adjust_leave_balance(record.employee_id, existing.status, record.status)
+
             existing.status = record.status
             existing.late_minutes = record.late_minutes
             existing.overtime_hours = record.overtime_hours
@@ -200,6 +251,9 @@ def bulk_save_attendance(
             existing.site_id = payload.site_id
             results.append({"employee_id": record.employee_id, "status": "updated", "id": existing.id})
         else:
+            # Adjust annual leave balance for new entry
+            _adjust_leave_balance(record.employee_id, None, record.status)
+
             entry = DailyAttendanceEntry(
                 id=str(uuid.uuid4()),
                 employee_id=record.employee_id,
