@@ -15,6 +15,7 @@ from app.models.guard_roster import GuardRoster
 from app.models.site import Site
 from app.models.daily_attendance_entry import DailyAttendanceEntry
 from app.models.disciplinary_action import DisciplinaryAction
+from app.models.separation_request import SeparationRequest
 
 router = APIRouter()
 
@@ -35,8 +36,20 @@ def get_terminations_sheet(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
 
-    # 1. Fetch all inactive users (terminated)
+    # 1. Fetch all inactive users (terminated) OR users with pending separation
     inactive_users = db.query(User).filter(User.is_active == False).all()
+    
+    pending_sep_users = (
+        db.query(User)
+        .join(SeparationRequest, User.user_id == SeparationRequest.user_id)
+        .filter(User.is_active == True)
+        .filter(SeparationRequest.status != "rejected")
+        .filter(SeparationRequest.status != "completed")
+        .all()
+    )
+    
+    # Combine and deduplicate
+    all_term_users = list({u.user_id: u for u in (inactive_users + pending_sep_users)}.values())
 
     # 2. Fetch Clothes Terminations mapped by user name / user id
     clothes_records = db.query(ClothesTermination).all()
@@ -44,7 +57,7 @@ def get_terminations_sheet(
 
     results = []
     
-    for u in inactive_users:
+    for u in all_term_users:
         user_id = u.user_id
         
         # Last assigned project & supervisor

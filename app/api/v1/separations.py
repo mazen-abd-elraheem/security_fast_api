@@ -114,6 +114,22 @@ def create_separation(
         initiated_by_name=current_user.name,
     )
     db.add(separation)
+    
+    # Auto-create clothes termination record so HR can clear custody
+    existing_clothes = db.query(ClothesTermination).filter(ClothesTermination.user_id == payload.user_id).first()
+    if not existing_clothes:
+        clothes_record = ClothesTermination(
+            user_id=payload.user_id,
+            user_name=payload.user_name,
+            site_name=actual_site_name,
+            supervisor_name=current_user.name,
+            reason=f"Auto-generated from {payload.separation_type} request",
+            clothes_status="لم يسلم",
+            notes="Pending HR clearing custody",
+            termination_date=datetime.utcnow()
+        )
+        db.add(clothes_record)
+        
     db.commit()
     db.refresh(separation)
     return separation
