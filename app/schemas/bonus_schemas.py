@@ -13,6 +13,7 @@ class BonusCreate(BaseModel):
     amount: float = Field(..., gt=0)
     photo_url: Optional[str] = None
     notes: Optional[str] = None
+    date: Optional[datetime] = None
 
 class BonusUpdate(BaseModel):
     amount: Optional[float] = None

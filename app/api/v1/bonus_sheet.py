@@ -23,6 +23,28 @@ from app.enums import UserRole
 
 router = APIRouter()
 
+@router.get("/eligible-users", summary="Get users eligible for bonuses")
+def get_eligible_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR, UserRole.OPERATIONS_MANAGER))
+):
+    """Get active users in field roles eligible for a bonus."""
+    eligible_roles = ["guard", "lady", "supervisor", "outdoor"]
+    users = db.query(User).filter(
+        User.role.in_(eligible_roles),
+        User.is_active == True
+    ).all()
+    
+    return [
+        {
+            "guard_id": u.user_id,
+            "guard_name": u.name,
+            "badge_number": u.badge_number,
+            "role": u.role,
+        }
+        for u in users
+    ]
+
 @router.post("/", response_model=BonusOut, summary="Create a new bonus request")
 def create_bonus(
     payload: BonusCreate,
@@ -45,7 +67,8 @@ def create_bonus(
         amount=payload.amount,
         photo_url=payload.photo_url,
         notes=payload.notes,
-        status="pending"
+        status="pending",
+        created_at=payload.date if payload.date else func.now()
     )
 
     db.add(new_bonus)
