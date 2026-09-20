@@ -532,6 +532,7 @@ def create_template(
         is_recurring=body.is_recurring,
         recurrence_rule=body.recurrence_rule,
         deadline=body.deadline,
+        requires_qr_verification=body.requires_qr_verification,
         created_by=current_user.user_id,
     )
     db.add(template)
@@ -1193,6 +1194,7 @@ def _load_template_full(db: Session, template_id: str) -> Optional[TaskTemplateO
         is_recurring=template.is_recurring,
         recurrence_rule=template.recurrence_rule,
         deadline=template.deadline,
+        requires_qr_verification=template.requires_qr_verification,
         is_active=template.is_active,
         created_at=template.created_at,
         sections=sections_out,
