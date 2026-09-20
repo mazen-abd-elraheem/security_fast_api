@@ -180,7 +180,7 @@ def get_terminations_sheet(
             "classification": u.classification or "-",
             "project": last_project,
             "supervisor": last_supervisor,
-            "hire_date": u.hire_date.strftime("%Y-%m-%d") if u.hire_date else u.created_at.strftime("%Y-%m-%d"),
+            "hire_date": (u.hire_date or u.created_at or datetime.utcnow()).strftime("%Y-%m-%d"),
             "termination_date": term_date,
             "reason": reason,
             "uniform_status": uniform_status,

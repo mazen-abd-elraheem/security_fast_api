@@ -53,6 +53,8 @@ def _run_seed_migrations():
                 # Employee Documents Sheet
                 "file_number": "VARCHAR(100) NULL",
                 "documents_notes": "VARCHAR(500) NULL",
+                # Timestamps — backfill old rows with current datetime
+                "created_at": "DATETIME NOT NULL DEFAULT NOW()",
             }
             with engine.begin() as conn:
                 for col_name, col_def in new_cols.items():

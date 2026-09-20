@@ -347,6 +347,13 @@ def action_separation(
             sep.hr_notes = payload.notes
             sep.hr_reviewed_at = now
             sep.status = "completed"
+            # Deactivate the user — same as HR final step
+            user = db.query(User).filter(User.user_id == sep.user_id).first()
+            if user:
+                user.is_active = False
+                user.status = "separated"
+                from app.core.security import revoke_all_user_tokens
+                revoke_all_user_tokens(user.user_id, "separation", db)
         else:
             raise HTTPException(status_code=400, detail="Cannot approve at this stage with your role")
 

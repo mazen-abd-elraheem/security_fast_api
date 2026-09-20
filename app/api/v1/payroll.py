@@ -24,6 +24,7 @@ from app.models.supervisor_visit import SupervisorVisit
 from app.models.travel_fee import TravelFee
 from app.enums import UserRole
 from app.api.v1.tracking import compute_presence_hours_from_pings
+from app.models.separation_request import SeparationRequest
 
 router = APIRouter()
 
@@ -172,6 +173,14 @@ def get_payroll_report(
         users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
     
     users = users_query.all()
+    
+    # Exclude users with an active/pending separation request
+    pending_sep_user_ids = {
+        row[0] for row in db.query(SeparationRequest.user_id)
+        .filter(SeparationRequest.status.notin_(["completed", "rejected"]))
+        .all()
+    }
+    users = [u for u in users if u.user_id not in pending_sep_user_ids]
     user_dict = {u.user_id: u for u in users}
 
     if not users:
@@ -296,6 +305,14 @@ def export_payroll_csv(
         users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
     
     users = users_query.all()
+    
+    # Exclude users with an active/pending separation request
+    pending_sep_user_ids = {
+        row[0] for row in db.query(SeparationRequest.user_id)
+        .filter(SeparationRequest.status.notin_(["completed", "rejected"]))
+        .all()
+    }
+    users = [u for u in users if u.user_id not in pending_sep_user_ids]
     user_dict = {u.user_id: u for u in users}
 
     headers = [
@@ -504,6 +521,14 @@ def export_bank_payroll_csv(
         users_query = users_query.filter(User.role.in_(["guard", "outdoor", "supervisor"]))
     
     users = users_query.all()
+    
+    # Exclude users with an active/pending separation request
+    pending_sep_user_ids = {
+        row[0] for row in db.query(SeparationRequest.user_id)
+        .filter(SeparationRequest.status.notin_(["completed", "rejected"]))
+        .all()
+    }
+    users = [u for u in users if u.user_id not in pending_sep_user_ids]
     user_dict = {u.user_id: u for u in users}
 
     # As requested by the user:
