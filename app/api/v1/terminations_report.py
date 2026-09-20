@@ -12,6 +12,7 @@ from app.enums import UserRole
 from app.models.user import User
 from app.models.clothes_inventory import ClothesTermination
 from app.models.guard_roster import GuardRoster
+from app.models.shift import Shift
 from app.models.site import Site
 from app.models.daily_attendance_entry import DailyAttendanceEntry
 from app.models.disciplinary_action import DisciplinaryAction
@@ -71,14 +72,26 @@ def get_terminations_sheet(
         last_project = "غير محدد"
         last_supervisor = "غير محدد"
         if last_roster:
-            from app.models.shift import Shift
             shift = db.query(Shift).filter(Shift.shift_id == last_roster.shift_id).first()
             if shift:
                 site = db.query(Site).filter(Site.site_id == shift.site_id).first()
                 if site:
                     last_project = site.name
-            
-            # Since supervisor_id doesn't exist on GuardRoster, we leave it as default
+        
+        # Resolve last supervisor from latest separation request (supervisor who reviewed it)
+        last_sep = (
+            db.query(SeparationRequest)
+            .filter(SeparationRequest.user_id == user_id)
+            .order_by(SeparationRequest.created_at.desc())
+            .first()
+        )
+        if last_sep:
+            # Prefer the supervisor who reviewed it
+            sup_id = last_sep.supervisor_id or last_sep.initiated_by
+            if sup_id:
+                sup = db.query(User).filter(User.user_id == sup_id).first()
+                if sup:
+                    last_supervisor = sup.name
 
         # Uniform status & actual termination date
         c_record = clothes_map.get(u.name)
@@ -167,7 +180,7 @@ def get_terminations_sheet(
             "classification": u.classification or "-",
             "project": last_project,
             "supervisor": last_supervisor,
-            "hire_date": u.hire_date.strftime("%Y-%m-%d") if u.hire_date else "-",
+            "hire_date": u.hire_date.strftime("%Y-%m-%d") if u.hire_date else u.created_at.strftime("%Y-%m-%d"),
             "termination_date": term_date,
             "reason": reason,
             "uniform_status": uniform_status,

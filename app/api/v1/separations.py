@@ -17,6 +17,7 @@ from app.api.deps import get_current_user
 from app.models.separation_request import SeparationRequest
 from app.models.user import User
 from app.models.guard_roster import GuardRoster
+from app.models.shift import Shift
 from app.models.site import Site
 from app.models.clothes_inventory import ClothesTermination
 from app.enums import UserRole, UserStatus
@@ -92,12 +93,29 @@ def create_separation(
     actual_site_id = payload.site_id
     actual_site_name = payload.site_name
     
-    if actual_site_id == "admin_init":
+    # If supervisor is initiating, auto-detect their assigned site from the last roster entry
+    if current_user.role == "supervisor" and actual_site_id == "auto":
+        last_roster = (
+            db.query(GuardRoster)
+            .join(Shift, GuardRoster.shift_id == Shift.shift_id)
+            .filter(Shift.site_id != None)
+            .order_by(GuardRoster.assigned_date.desc())
+            .first()
+        )
+        if last_roster:
+            shift = db.query(Shift).filter(Shift.shift_id == last_roster.shift_id).first()
+            if shift:
+                site = db.query(Site).filter(Site.site_id == shift.site_id).first()
+                if site:
+                    actual_site_id = site.site_id
+                    actual_site_name = site.name
+    
+    if actual_site_id in ("admin_init", "auto", ""):
         # Find a valid site to satisfy the foreign key constraint
         fallback_site = db.query(Site).first()
         if fallback_site:
             actual_site_id = fallback_site.site_id
-            # Keep actual_site_name as 'Admin Initiated' for UI display
+            # Keep actual_site_name for UI display
 
     separation = SeparationRequest(
         separation_id=str(uuid.uuid4()),
