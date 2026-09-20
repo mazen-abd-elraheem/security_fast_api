@@ -154,15 +154,12 @@ def list_terminated_employees(
         last_roster = (
             db.query(GuardRoster)
             .filter(GuardRoster.guard_id == user_id)
-            .order_by(GuardRoster.shift_date.desc())
+            .order_by(GuardRoster.assigned_date.desc())
             .first()
         )
         
         last_supervisor = "غير محدد"
-        if last_roster and last_roster.supervisor_id:
-            sup = db.query(User).filter(User.user_id == last_roster.supervisor_id).first()
-            if sup:
-                last_supervisor = sup.name
+        # GuardRoster has no supervisor_id
                 
         # Termination reason
         reason = "غير محدد"

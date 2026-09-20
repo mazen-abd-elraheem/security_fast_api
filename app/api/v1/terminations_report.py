@@ -64,20 +64,21 @@ def get_terminations_sheet(
         last_roster = (
             db.query(GuardRoster)
             .filter(GuardRoster.guard_id == user_id)
-            .order_by(GuardRoster.shift_date.desc())
+            .order_by(GuardRoster.assigned_date.desc())
             .first()
         )
         
         last_project = "غير محدد"
         last_supervisor = "غير محدد"
         if last_roster:
-            site = db.query(Site).filter(Site.site_id == last_roster.site_id).first()
-            if site:
-                last_project = site.name
-            if last_roster.supervisor_id:
-                sup = db.query(User).filter(User.user_id == last_roster.supervisor_id).first()
-                if sup:
-                    last_supervisor = sup.name
+            from app.models.shift import Shift
+            shift = db.query(Shift).filter(Shift.shift_id == last_roster.shift_id).first()
+            if shift:
+                site = db.query(Site).filter(Site.site_id == shift.site_id).first()
+                if site:
+                    last_project = site.name
+            
+            # Since supervisor_id doesn't exist on GuardRoster, we leave it as default
 
         # Uniform status & actual termination date
         c_record = clothes_map.get(u.name)
