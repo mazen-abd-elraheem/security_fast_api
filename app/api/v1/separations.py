@@ -85,9 +85,9 @@ def create_separation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Leader initiates a separation request."""
-    if current_user.role not in ("leader", "admin"):
-        raise HTTPException(status_code=403, detail="Only Leaders can initiate separation requests")
+    """Leader or Supervisor initiates a separation request."""
+    if current_user.role not in ("leader", "supervisor", "admin"):
+        raise HTTPException(status_code=403, detail="Only Leaders and Supervisors can initiate separation requests")
 
     actual_site_id = payload.site_id
     actual_site_name = payload.site_name
