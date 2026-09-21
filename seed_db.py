@@ -143,6 +143,14 @@ def _run_seed_migrations():
                 conn.execute(sa_text("ALTER TABLE clothes_requests ADD COLUMN user_id VARCHAR(36) NULL"))
                 print("  [migration] clothes_requests.user_id added")
 
+    # ── Incident Categories: add name_ar ──
+    if insp.has_table("incident_categories"):
+        existing = {c["name"] for c in insp.get_columns("incident_categories")}
+        if "name_ar" not in existing:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE incident_categories ADD COLUMN name_ar VARCHAR(100) NULL"))
+                print("  [migration] incident_categories.name_ar added")
+
     # ── Deduction Rules: add notice period and days multiplier ──
     if insp.has_table("deduction_rules"):
         existing = {c["name"] for c in insp.get_columns("deduction_rules")}

@@ -14,6 +14,7 @@ class IncidentCategory(Base):
 
     category_id = Column(String(36), primary_key=True, index=True)
     name = Column(String(100), nullable=False)
+    name_ar = Column(String(100), nullable=True)
 
     # Severity assigned to this category: low / medium / high / critical
     severity = Column(String(20), nullable=False, default="medium")

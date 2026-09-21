@@ -13,7 +13,7 @@ from app.enums import UserRole
 
 class UserCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
-    email: EmailStr
+    email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
     role: UserRole = UserRole.GUARD
     phone_number: Optional[str] = Field(None, pattern=r'^\+?[0-9]{7,15}$')
@@ -37,7 +37,7 @@ class UserCreate(BaseModel):
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: str = Field(..., max_length=255)
     password: str
 
 
