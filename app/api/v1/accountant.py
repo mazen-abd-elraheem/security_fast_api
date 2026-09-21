@@ -125,24 +125,20 @@ async def generate_payroll_sheet(
     for b in bonuses_qs:
         bonus_map[b.guard_id] = bonus_map.get(b.guard_id, 0) + float(b.amount or 0)
 
-    from app.models.attendance_log import AttendanceLog
-    from sqlalchemy import func
-
-    # 6. ALL AttendanceLog for this month (bulk load)
+    # 6. ALL DailyAttendanceEntry for this month (bulk load)
     all_entries = (
-        db.query(AttendanceLog, GuardRoster.guard_id)
-        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
+        db.query(DailyAttendanceEntry)
         .filter(
-            GuardRoster.guard_id.in_(user_ids),
-            func.date(AttendanceLog.recorded_at) >= month_start,
-            func.date(AttendanceLog.recorded_at) <= month_end,
+            DailyAttendanceEntry.employee_id.in_(user_ids),
+            DailyAttendanceEntry.entry_date >= month_start,
+            DailyAttendanceEntry.entry_date <= month_end,
         )
         .all()
     )
     # Group by employee_id
     entries_by_user: dict = {uid: [] for uid in user_ids}
-    for log, guard_id in all_entries:
-        entries_by_user[guard_id].append(log)
+    for e in all_entries:
+        entries_by_user[e.employee_id].append(e)
 
     # 7. Late threshold from DeductionRule (or 10 min default)
     late_rule = deduction_rules.get("late")
@@ -168,12 +164,16 @@ async def generate_payroll_sheet(
             roster_by_user[r.guard_id] = r
 
     # ── Week boundaries — 4 chunks that cover the full month (no tail loss) ──
-    week_ranges = [
-        (month_start + timedelta(days=w * 7),
-         min(month_start + timedelta(days=(w + 1) * 7 - 1), month_end))
-        for w in range(4)
-        if month_start + timedelta(days=w * 7) <= month_end
-    ]
+    week_ranges = []
+    for w in range(4):
+        ws = month_start + timedelta(days=w * 7)
+        if w == 3:
+            we = month_end
+        else:
+            we = ws + timedelta(days=6)
+        if ws <= month_end:
+            week_ranges.append((ws, we))
+
     # Pad to exactly 4 so compute_row always receives 4 weeks
     while len(week_ranges) < 4:
         week_ranges.append((month_end, month_end))
@@ -216,42 +216,39 @@ async def generate_payroll_sheet(
             "employee_insurance": 0,
         }
 
-        # ── Map AttendanceLog → 4-week attendance dicts ──
+        # ── Map DailyAttendanceEntry → 4-week attendance dicts ──
         user_entries = entries_by_user.get(u.user_id, [])
-        entry_by_date: dict = {e.recorded_at.date(): e for e in user_entries}
+        entry_by_date: dict = {e.entry_date: e for e in user_entries}
 
         attendance_data = []
         for ws, we in week_ranges:
             week = {
-                "absent_excused":   0, "absent_unexcused": 0,
-                "overtime":         0, "overtime_hours":   0.0,
-                "rest_allowance":   0,
-                "late":             0, "deduction":        0,
-                "rest":             0, "annual_leave":     0,
-                "sick_leave":       0,
+                "absent_excused": 0, "absent_unexcused": 0,
+                "overtime": 0, "rest_allowance": 0,
+                "late": 0, "deduction": 0,
+                "rest": 0, "annual_leave": 0, "sick_leave": 0,
+                "overtime_hours": 0.0,
             }
             d = ws
             while d <= we:
                 entry = entry_by_date.get(d)
                 if entry:
                     s = entry.status
-                    if entry.is_annual_leave:
+                    if s == "absence_excused":
+                        week["absent_excused"] += 1
+                    elif s == "absence_unexcused":
+                        week["absent_unexcused"] += 1
+                    elif s == "annual_leave":
                         week["annual_leave"] += 1
-                    elif entry.is_sick_leave:
+                    elif s == "sick_leave":
                         week["sick_leave"] += 1
-                    elif entry.is_rest_day and s != "present":
+                    elif s == "rest":
                         week["rest"] += 1
-                    elif entry.is_rest_day and s == "present":
+                    elif s == "rest_day_worked":
                         week["rest_allowance"] += 1
-                    elif s == "absent":
-                        if entry.absence_type == "excused":
-                            week["absent_excused"] += 1
-                        else:
-                            week["absent_unexcused"] += 1
-                    
-                    if s == "late":
+                    # present = default, no change
+                    if entry.late_minutes and entry.late_minutes > late_threshold:
                         week["late"] += 1
-                        
                     if entry.overtime_hours and entry.overtime_hours > 0:
                         week["overtime"] += 1
                         week["overtime_hours"] += entry.overtime_hours
