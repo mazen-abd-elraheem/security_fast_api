@@ -232,6 +232,7 @@ def supervisor_attendance_dashboard(
             guards.append({
                 "guard_id": guard.user_id if guard else None,
                 "guard_name": guard.name if guard else "Unknown",
+                "guard_code": guard.employee_code if guard else None,
                 "roster_id": roster.roster_id,
                 "shift_label": shift.label if shift else None,
                 "shift_time": f"{shift.start_time.strftime('%H:%M')}-{shift.end_time.strftime('%H:%M')}" if shift else None,
