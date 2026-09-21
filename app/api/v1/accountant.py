@@ -46,7 +46,7 @@ router = APIRouter()
 
 
 # -- Generate & Get Excel View --
-@router.post("/generate/{year}/{month}", summary="Generate payroll sheet for a month")
+@router.post("/generate/{year:int}/{month:int}", summary="Generate payroll sheet for a month")
 async def generate_payroll_sheet(
     year: int,
     month: int,
@@ -288,7 +288,7 @@ async def generate_payroll_sheet(
 
 
 
-@router.get("/{year}/{month}", summary="Get payroll spreadsheet data")
+@router.get("/{year:int}/{month:int}", summary="Get payroll spreadsheet data")
 async def get_payroll_sheet(
     year: int,
     month: int,
@@ -328,7 +328,7 @@ class BatchUpdate(BaseModel):
     updates: List[CellUpdate]
 
 
-@router.put("/{year}/{month}", summary="Accountant edits cells in the payroll sheet")
+@router.put("/{year:int}/{month:int}", summary="Accountant edits cells in the payroll sheet")
 async def update_payroll_cells(
     year: int,
     month: int,
@@ -388,7 +388,7 @@ async def update_payroll_cells(
     return {"message": f"Updated {updated} cells", "updated": updated}
 
 
-@router.put("/{year}/{month}/approve", summary="Approve the monthly payroll")
+@router.put("/{year:int}/{month:int}/approve", summary="Approve the monthly payroll")
 async def approve_payroll(
     year: int,
     month: int,
