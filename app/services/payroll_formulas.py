@@ -228,14 +228,6 @@ def compute_row(
     # ── AW: work days ──
     work_days = calc_work_days(hire, term, year, month)
 
-    # ── BG: operational days ──
-    op_days = calc_operational_days(
-        work_days, t_absent_exc, t_absent_unexc,
-        t_overtime, t_rest_allow, t_late, t_deduction,
-        t_rest, t_annual_lv, t_sick_lv, term_reason,
-        deduction_rules,
-    )
-
     # ── BH: daily rate ──
     user_dr = float(user.get("daily_rate", 0) or 0)
     dr = calc_daily_rate(cls, formula_configs, user_daily_rate=user_dr)
@@ -243,8 +235,35 @@ def compute_row(
     if dr == 0 and config_overrides and cls in config_overrides:
         dr = config_overrides[cls].get("daily_rate", 0.0)
 
-    # ── BI: salary from ops ──
-    salary_ops = op_days * dr
+    # ── BG: gross days ──
+    gross_days = work_days - t_absent_exc + t_overtime + t_rest_allow
+
+    # ── BI: gross salary (ops) ──
+    salary_ops = gross_days * dr
+
+    # ── Monetary Penalties from Deduction Rules ──
+    absent_unexc_mult = 3.0
+    r_absent = deduction_rules.get("absence_unexcused")
+    if r_absent and r_absent.is_days_multiplier:
+        absent_unexc_mult = r_absent.amount
+
+    late_mult = 0.5
+    r_late = deduction_rules.get("late")
+    if r_late and r_late.is_days_multiplier:
+        late_mult = r_late.amount
+
+    sick_grace = 2
+
+    ded_absence = t_absent_unexc * absent_unexc_mult * dr
+    ded_late = t_late * late_mult * dr
+    ded_other = t_deduction * dr
+    ded_sick = max(0.0, t_sick_lv - sick_grace) * late_mult * dr
+    ded_term = (t_rest + t_annual_lv) * dr if term_reason in ("انقطاع", "استقاله فوريه") else 0.0
+
+    total_attendance_penalties = ded_absence + ded_late + ded_other + ded_sick + ded_term
+
+    # For operational days tracking in DB (purely for records)
+    op_days = max(0.0, gross_days - (total_attendance_penalties / dr if dr > 0 else 0))
 
     # ── BJ: annual increase current year ──
     cls_cfg = formula_configs.get(cls, {})
@@ -316,8 +335,8 @@ def compute_row(
     overtime_pay = calc_overtime_pay(t_ot_hours, dr, deduction_rules)
 
     # ── BQ: net salary ──
-    bq_net = round(salary_ops + annual_inc_current + annual_inc_prev
-                   - adv_ded - ins_share - bp_tax, 0)
+    total_deductions_monetary = total_attendance_penalties + adv_ded + ins_share + bp_tax
+    bq_net = round(salary_ops + annual_inc_current + annual_inc_prev - total_deductions_monetary, 0)
 
     # ── BS: salary diff ──
     bs_diff = bq_net - by_payroll
@@ -391,10 +410,9 @@ def compute_row(
         "advance_deduction":        adv_ded,
         "insurance_share":          ins_share,
         "tax_deduction":            round(bp_tax, 2),
+        "other_deductions":         round(total_attendance_penalties, 2),
         "net_salary":               bq_net,
         "overtime_pay":             overtime_pay,
-        # Bonus
-        "other_deductions":         0,
         "salary_diff":              round(bs_diff, 2),
         "incentive":                round(bt_incentive, 2),
         "increase_2025":            round(bu_increase, 2),

@@ -114,6 +114,10 @@ class UserResponse(BaseModel):
     bank_account: Optional[str] = None
     transfer_name: Optional[str] = None
     transfer_method: Optional[str] = None
+    insurance_status: Optional[str] = None
+    insurance_number: Optional[str] = None
+    insurance_date: Optional[datetime] = None
+    insurable_wage: Optional[float] = 0.0
     created_at: datetime
     updated_at: datetime
 
