@@ -21,13 +21,13 @@ from app.api.deps import require_role, get_current_user
 from app.models.user import User
 from app.models.payroll_sheet_row import PayrollSheetRow, SalaryClassificationConfig
 from app.models.cash_advance import CashAdvance
-from app.models.attendance_log import AttendanceLog
 from app.models.guard_roster import GuardRoster
 from app.models.daily_attendance_entry import DailyAttendanceEntry
 from app.models.site import Site
 from app.models.shift import Shift
 from app.models.supervisor_visit import SupervisorVisit
 from app.models.travel_fee import TravelFee
+from app.models.bonus import Bonus
 from app.models.payroll_formula_config import PayrollFormulaConfig, DEFAULT_FORMULA_SEED, FORMULA_CONFIG_KEYS
 from app.enums import UserRole
 from app.services.payroll_formulas import (
@@ -37,12 +37,45 @@ from app.services.payroll_formulas import (
 
 CURRENCY = "EGP"
 
-# Payroll deduction constants
-LATE_THRESHOLD_MINUTES = 10          # Grace period before counted as "late"
-LATE_DEDUCTION_PER_MINUTE = 1.0      # EGP deducted per minute of lateness
-ABSENT_DEDUCTION = 100.0             # EGP deducted per unexcused absent day
-
 router = APIRouter()
+
+
+# ─────────────────────────────────────────────────────────
+#  Bonus lookup helpers
+# ─────────────────────────────────────────────────────────
+# The bonuses that should feed payroll are the ones from the dedicated
+# Bonus Sheet (app.models.bonus.Bonus) — guard-level, approval-gated
+# (status: pending/approved/rejected), the same model the bonus-sheet
+# router creates/approves against. Only "approved" bonuses count.
+#
+# (Note: app.models.accountant_models.EmployeeBonus is a separate,
+# classification-level bonus table with its own CRUD in the tax-brackets
+# router — it has no approval workflow and isn't guard-scoped, so it is
+# NOT what payroll's manual_bonus should sum. Don't conflate the two.)
+#
+# The previous code in generate_payroll_sheet() referenced this correct
+# model/shape (`status`, `guard_id`, `created_at`) but never imported
+# `Bonus`, which raised NameError on every call. That's the only bug —
+# fixed here by importing the real model; the query shape below matches
+# what was originally intended.
+
+def _bonus_map_for_range(db: Session, date_from: date, date_to: date) -> dict:
+    rows = db.query(Bonus).filter(
+        Bonus.status == "approved",
+        Bonus.created_at >= datetime.combine(date_from, datetime.min.time()),
+        Bonus.created_at <= datetime.combine(date_to, datetime.max.time()),
+    ).all()
+    result: dict = {}
+    for b in rows:
+        result[b.guard_id] = result.get(b.guard_id, 0) + float(b.amount or 0)
+    return result
+
+
+def _bonus_map_for_month(db: Session, year: int, month: int) -> dict:
+    _, days_in_month = monthrange(year, month)
+    month_start = date(year, month, 1)
+    month_end = date(year, month, days_in_month)
+    return _bonus_map_for_range(db, month_start, month_end)
 
 
 # -- Generate & Get Excel View --
@@ -101,7 +134,6 @@ async def generate_payroll_sheet(
     user_ids = [u.user_id for u in users]
 
     # 5. Cash advances approved THIS month
-    from sqlalchemy import func
     advances_qs = db.query(CashAdvance).filter(
         CashAdvance.status.in_(["admin_approved", "admin_modified", "supervisor_approved"]),
         CashAdvance.updated_at >= datetime.combine(month_start, datetime.min.time()),
@@ -115,15 +147,8 @@ async def generate_payroll_sheet(
                 a.approved_amount or a.amount or 0
             )
 
-    # 5b. Bonuses approved THIS month
-    bonuses_qs = db.query(Bonus).filter(
-        Bonus.status == "approved",
-        Bonus.created_at >= datetime.combine(month_start, datetime.min.time()),
-        Bonus.created_at <= datetime.combine(month_end, datetime.max.time()),
-    ).all()
-    bonus_map: dict = {}
-    for b in bonuses_qs:
-        bonus_map[b.guard_id] = bonus_map.get(b.guard_id, 0) + float(b.amount or 0)
+    # 5b. Approved bonuses for this month (Bonus Sheet — see helper above)
+    bonus_map = _bonus_map_for_month(db, year, month)
 
     # 6. ALL DailyAttendanceEntry for this month (bulk load)
     all_entries = (
@@ -225,7 +250,7 @@ async def generate_payroll_sheet(
             week = {
                 "absent_excused": 0, "absent_unexcused": 0,
                 "overtime": 0, "rest_allowance": 0,
-                "late": 0, "deduction": 0,
+                "late": 0, "late_minutes": 0.0, "deduction": 0,
                 "rest": 0, "annual_leave": 0, "sick_leave": 0,
                 "overtime_hours": 0.0,
             }
@@ -249,6 +274,11 @@ async def generate_payroll_sheet(
                     # present = default, no change
                     if entry.late_minutes and entry.late_minutes > late_threshold:
                         week["late"] += 1
+                        # Excess minutes past the grace threshold — feeds
+                        # per-minute late deduction rules in compute_row.
+                        # Previously this was computed and then discarded;
+                        # per-minute DeductionRule configs were a silent no-op.
+                        week["late_minutes"] += (entry.late_minutes - late_threshold)
                     if entry.overtime_hours and entry.overtime_hours > 0:
                         week["overtime"] += 1
                         week["overtime_hours"] += entry.overtime_hours
@@ -410,9 +440,17 @@ async def approve_payroll(
         raise HTTPException(400, "Already approved")
 
     # ── Group net_salary by transfer_method ──
+    # Bulk-fetch users instead of one query per row (previously N+1: one
+    # SELECT per payroll row inside the loop).
+    row_user_ids = {r.user_id for r in rows if r.user_id}
+    users_by_id = {
+        u.user_id: u
+        for u in db.query(User).filter(User.user_id.in_(row_user_ids)).all()
+    } if row_user_ids else {}
+
     method_totals: Dict[str, float] = {}
     for r in rows:
-        user = db.query(User).filter(User.user_id == r.user_id).first()
+        user = users_by_id.get(r.user_id)
         method = (user.transfer_method or "").strip() if user else ""
         if not method:
             continue
@@ -752,6 +790,11 @@ async def get_payroll_report(
         if uid:
             advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
 
+    # 4b. Bonuses in date range — previously missing entirely from /report,
+    # so net_salary here could differ from the approved /generate sheet for
+    # any employee with a bonus. Now uses the same shared helper.
+    bonus_map = _bonus_map_for_range(db, date_from, date_to)
+
     # 5. Week boundaries — tail-inclusive so every day in the range is counted
     week_ranges = [
         (date_from + timedelta(days=w * 7),
@@ -791,7 +834,7 @@ async def get_payroll_report(
             week = {
                 "absent_excused": 0, "absent_unexcused": 0,
                 "overtime": 0, "overtime_hours": 0.0,
-                "rest_allowance": 0, "late": 0, "deduction": 0,
+                "rest_allowance": 0, "late": 0, "late_minutes": 0.0, "deduction": 0,
                 "rest": 0, "annual_leave": 0, "sick_leave": 0,
             }
             d = ws
@@ -807,6 +850,7 @@ async def get_payroll_report(
                     elif s == "rest_day_worked":   week["rest_allowance"] += 1
                     if entry.late_minutes and entry.late_minutes > late_threshold:
                         week["late"] += 1
+                        week["late_minutes"] += (entry.late_minutes - late_threshold)
                     if entry.overtime_hours and entry.overtime_hours > 0:
                         week["overtime"] += 1
                         week["overtime_hours"] += entry.overtime_hours
@@ -814,11 +858,13 @@ async def get_payroll_report(
             attendance_data.append(week)
 
         adv = advance_map.get(user_id, 0)
+        bns = bonus_map.get(user_id, 0)
         row = compute_row(
             user_data, attendance_data, adv, config_map,
             date_from.year, date_from.month, idx + 1,
             formula_configs=formula_configs,
             deduction_rules=deduction_rules,
+            manual_bonus=bns,
         )
 
         employees_out.append({
@@ -836,7 +882,9 @@ async def get_payroll_report(
             "days_absent":       row["total_absent_excused"] + row["total_absent_unexcused"],
             "days_late":         row["total_late"],
             "overtime_hours":    row["total_overtime_hours"],
+            "overtime_pay":      row["overtime_pay"],
             "advances":          adv,
+            "bonus":             bns,
             "gross_salary":      row["gross_salary"],
             "incentive":         row["incentive"],
             "increase_2025":     row["increase_2025"],
@@ -881,7 +929,7 @@ def export_payroll_csv(
 ):
     """
     Export payroll report as CSV.
-    Now uses the same compute_row engine as /report and /generate so the numbers
+    Uses the same compute_row engine as /report and /generate so the numbers
     always match what the accountant approves in the grid.
     Role scope unified to SHEET_ROLES.
     """
@@ -984,6 +1032,9 @@ def export_payroll_csv(
         if uid:
             advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
 
+    # Bonuses — kept consistent with /report and /generate
+    bonus_map = _bonus_map_for_range(db, date_from, date_to)
+
     # Bulk load supervisor visits for all supervisor/leader users (eliminates N+1)
     sup_leader_ids = [
         u.user_id for u in users
@@ -1018,7 +1069,10 @@ def export_payroll_csv(
         week_ranges.append((date_to, date_to))
 
     for idx, (user_id, user) in enumerate(user_dict.items(), start=1):
-        e_list = user_entries[user_id]
+        # Sorted by date (ascending) so "most recent supervisor" below is
+        # actually the most recent entry, not whatever order the bulk query
+        # happened to return rows in.
+        e_list = sorted(user_entries[user_id], key=lambda e: e.entry_date)
         r_list = user_rosters[user_id]
 
         eff_dr = (
@@ -1047,7 +1101,7 @@ def export_payroll_csv(
             week = {
                 "absent_excused": 0, "absent_unexcused": 0,
                 "overtime": 0, "overtime_hours": 0.0,
-                "rest_allowance": 0, "late": 0, "deduction": 0,
+                "rest_allowance": 0, "late": 0, "late_minutes": 0.0, "deduction": 0,
                 "rest": 0, "annual_leave": 0, "sick_leave": 0,
             }
             d = ws
@@ -1063,6 +1117,7 @@ def export_payroll_csv(
                     elif s == "rest_day_worked":   week["rest_allowance"] += 1
                     if entry.late_minutes and entry.late_minutes > late_threshold:
                         week["late"] += 1
+                        week["late_minutes"] += (entry.late_minutes - late_threshold)
                     if entry.overtime_hours and entry.overtime_hours > 0:
                         week["overtime"] += 1
                         week["overtime_hours"] += entry.overtime_hours
@@ -1070,11 +1125,13 @@ def export_payroll_csv(
             attendance_data.append(week)
 
         adv = advance_map.get(user_id, 0)
+        bns = bonus_map.get(user_id, 0)
         row = compute_row(
             user_data, attendance_data, adv, config_map,
             date_from.year, date_from.month, idx,
             formula_configs=formula_configs,
             deduction_rules=deduction_rules,
+            manual_bonus=bns,
         )
 
         # Travel allowance from pre-loaded visits (no per-user N+1)
@@ -1142,7 +1199,7 @@ def export_bank_payroll_csv(
 ):
     """
     Export Bank Payroll report as CSV.
-    Now uses compute_row engine (same numbers as accountant grid).
+    Uses compute_row engine (same numbers as accountant grid).
     Role scope unified to SHEET_ROLES.
     """
     users_query = db.query(User).filter(User.is_active == True)
@@ -1210,6 +1267,9 @@ def export_bank_payroll_csv(
         if uid:
             advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
 
+    # Bonuses — kept consistent with /report and /generate
+    bonus_map = _bonus_map_for_range(db, date_from, date_to)
+
     # Travel fees
     sites = db.query(Site).all()
     base_site = next((s for s in sites if getattr(s, 'is_base', False)), None)
@@ -1251,7 +1311,7 @@ def export_bank_payroll_csv(
 
     total_sum = 0.0
     for idx, (user_id, user) in enumerate(user_dict.items(), start=1):
-        e_list = user_entries[user_id]
+        e_list = sorted(user_entries[user_id], key=lambda e: e.entry_date)
         eff_dr = (
             user.daily_rate if (user.daily_rate and user.daily_rate > 0)
             else ((user.base_salary / 30) if (user.base_salary and user.base_salary > 0) else 0)
@@ -1278,7 +1338,7 @@ def export_bank_payroll_csv(
             week = {
                 "absent_excused": 0, "absent_unexcused": 0,
                 "overtime": 0, "overtime_hours": 0.0,
-                "rest_allowance": 0, "late": 0, "deduction": 0,
+                "rest_allowance": 0, "late": 0, "late_minutes": 0.0, "deduction": 0,
                 "rest": 0, "annual_leave": 0, "sick_leave": 0,
             }
             d = ws
@@ -1294,6 +1354,7 @@ def export_bank_payroll_csv(
                     elif s == "rest_day_worked":   week["rest_allowance"] += 1
                     if entry.late_minutes and entry.late_minutes > late_threshold:
                         week["late"] += 1
+                        week["late_minutes"] += (entry.late_minutes - late_threshold)
                     if entry.overtime_hours and entry.overtime_hours > 0:
                         week["overtime"] += 1
                         week["overtime_hours"] += entry.overtime_hours
@@ -1301,11 +1362,13 @@ def export_bank_payroll_csv(
             attendance_data.append(week)
 
         adv = advance_map.get(user_id, 0)
+        bns = bonus_map.get(user_id, 0)
         row = compute_row(
             user_data, attendance_data, adv, config_map,
             date_from.year, date_from.month, idx,
             formula_configs=formula_configs,
             deduction_rules=deduction_rules,
+            manual_bonus=bns,
         )
 
         # Travel allowance from pre-loaded visits
@@ -1350,7 +1413,6 @@ def update_salary(
     """Update a user's base salary."""
     user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="User not found")
     user.base_salary = base_salary
     db.commit()
@@ -1370,7 +1432,6 @@ def update_bank_account(
     """Update a user's bank account number."""
     user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="User not found")
     user.bank_account = bank_account
     db.commit()
@@ -1456,7 +1517,7 @@ def create_classification_with_keys(
     ).first()
     if not legacy_cfg:
         db.add(SalaryClassificationConfig(
-            config_id=str(__import__('uuid').uuid4()),
+            config_id=str(uuid.uuid4()),
             classification=name,
             daily_rate=daily_rate,
         ))
@@ -1588,6 +1649,10 @@ def get_tax_sheet(
         if uid:
             advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
 
+    # 5b. Bonuses — previously missing from tax-sheet too, so net_salary here
+    # could also disagree with /generate for anyone with a bonus.
+    bonus_map = _bonus_map_for_range(db, date_from, date_to)
+
     # 6. Week boundaries — tail-inclusive so every day in the range is counted
     week_ranges = [
         (date_from + timedelta(days=w * 7),
@@ -1627,7 +1692,7 @@ def get_tax_sheet(
             week = {
                 "absent_excused": 0, "absent_unexcused": 0,
                 "overtime": 0, "overtime_hours": 0.0,
-                "rest_allowance": 0, "late": 0, "deduction": 0,
+                "rest_allowance": 0, "late": 0, "late_minutes": 0.0, "deduction": 0,
                 "rest": 0, "annual_leave": 0, "sick_leave": 0,
             }
             d = ws
@@ -1643,6 +1708,7 @@ def get_tax_sheet(
                     elif s == "rest_day_worked":   week["rest_allowance"] += 1
                     if entry.late_minutes and entry.late_minutes > late_threshold:
                         week["late"] += 1
+                        week["late_minutes"] += (entry.late_minutes - late_threshold)
                     if entry.overtime_hours and entry.overtime_hours > 0:
                         week["overtime"] += 1
                         week["overtime_hours"] += entry.overtime_hours
@@ -1650,11 +1716,13 @@ def get_tax_sheet(
             attendance_data.append(week)
 
         adv = advance_map.get(user_id, 0)
+        bns = bonus_map.get(user_id, 0)
         row = compute_row(
             user_data, attendance_data, adv, config_map,
             date_from.year, date_from.month, idx + 1,
             formula_configs=formula_configs,
             deduction_rules=deduction_rules,
+            manual_bonus=bns,
         )
 
         employees_out.append({
@@ -1670,7 +1738,11 @@ def get_tax_sheet(
             "base_salary":       user.base_salary or 0,
             "incentive":         row["incentive"],
             "current_year_raise": row["increase_2025"],
-            "bonus":             row["bonus_rate"] if "bonus_rate" in row else row.get("total_incentive", 0),
+            # Fixed: previously "bonus_rate" is never a key on the computed
+            # row, so this always fell through to total_incentive. It now
+            # reports the classification bonus (bonus_rounded), with the
+            # manual/approved bonus already folded into total_incentive.
+            "bonus":             row.get("bonus_rounded", 0),
             "allowances":        row["allowances"],
             "total_income":      row["total_income"],
             "employee_insurance": row["employee_insurance"],
@@ -1682,6 +1754,7 @@ def get_tax_sheet(
             "operational_days":  row["operational_days"],
             "days_absent":       row["total_absent_excused"] + row["total_absent_unexcused"],
             "overtime_hours":    row["total_overtime_hours"],
+            "overtime_pay":      row["overtime_pay"],
             "gross_salary":      row["gross_salary"],
             "annual_increase_base": row.get("annual_increase_base", 0),
             "annual_increase_pct": row.get("annual_increase_pct", 0),
