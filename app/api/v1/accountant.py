@@ -1685,6 +1685,12 @@ def get_tax_sheet(
             "gross_salary":      row["gross_salary"],
             "annual_increase_base": row.get("annual_increase_base", 0),
             "annual_increase_pct": row.get("annual_increase_pct", 0),
+            "monthly_salary":    row.get("monthly_salary", 0),
+            "actual_salary":     row.get("actual_salary", 0),
+            "annual_personal_exemption": row.get("annual_personal_exemption", 0),
+            "net_after_insurance": row.get("net_after_insurance", 0),
+            "annual_taxable":    row.get("annual_taxable", 0),
+            "annual_tax":        row.get("annual_tax", 0),
         })
 
     return {
