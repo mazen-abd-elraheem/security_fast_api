@@ -28,6 +28,7 @@ from app.models.shift import Shift
 from app.models.supervisor_visit import SupervisorVisit
 from app.models.travel_fee import TravelFee
 from app.models.bonus import Bonus
+from app.models.attendance_log import AttendanceLog
 from app.models.payroll_formula_config import PayrollFormulaConfig, DEFAULT_FORMULA_SEED, FORMULA_CONFIG_KEYS
 from app.enums import UserRole
 from app.services.payroll_formulas import (
@@ -150,20 +151,22 @@ async def generate_payroll_sheet(
     # 5b. Approved bonuses for this month (Bonus Sheet — see helper above)
     bonus_map = _bonus_map_for_month(db, year, month)
 
-    # 6. ALL DailyAttendanceEntry for this month (bulk load)
+    # 6. ALL AttendanceLog for this month (bulk load)
     all_entries = (
-        db.query(DailyAttendanceEntry)
+        db.query(AttendanceLog, GuardRoster.guard_id, GuardRoster.assigned_date)
+        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
         .filter(
-            DailyAttendanceEntry.employee_id.in_(user_ids),
-            DailyAttendanceEntry.entry_date >= month_start,
-            DailyAttendanceEntry.entry_date <= month_end,
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= month_start,
+            GuardRoster.assigned_date <= month_end,
         )
         .all()
     )
     # Group by employee_id
     entries_by_user: dict = {uid: [] for uid in user_ids}
-    for e in all_entries:
-        entries_by_user[e.employee_id].append(e)
+    for log, guard_id, assigned_date in all_entries:
+        log._entry_date = assigned_date
+        entries_by_user[guard_id].append(log)
 
     # 7. Late threshold from DeductionRule (or 10 min default)
     late_rule = deduction_rules.get("late")
@@ -241,9 +244,9 @@ async def generate_payroll_sheet(
             "employee_insurance": 0,
         }
 
-        # ── Map DailyAttendanceEntry → 4-week attendance dicts ──
+        # ── Map AttendanceLog → 4-week attendance dicts ──
         user_entries = entries_by_user.get(u.user_id, [])
-        entry_by_date: dict = {e.entry_date: e for e in user_entries}
+        entry_by_date: dict = {getattr(e, "_entry_date", None): e for e in user_entries if getattr(e, "_entry_date", None)}
 
         attendance_data = []
         for ws, we in week_ranges:
@@ -259,29 +262,38 @@ async def generate_payroll_sheet(
                 entry = entry_by_date.get(d)
                 if entry:
                     s = entry.status
-                    if s == "absence_excused":
-                        week["absent_excused"] += 1
-                    elif s == "absence_unexcused":
-                        week["absent_unexcused"] += 1
-                    elif s == "annual_leave":
+                    if getattr(entry, "is_annual_leave", False) or s == "annual_leave":
                         week["annual_leave"] += 1
-                    elif s == "sick_leave":
+                    elif getattr(entry, "is_sick_leave", False) or s == "sick_leave":
                         week["sick_leave"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s != "present":
+                        week["rest"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s == "present":
+                        week["rest_allowance"] += 1
                     elif s == "rest":
                         week["rest"] += 1
                     elif s == "rest_day_worked":
                         week["rest_allowance"] += 1
-                    # present = default, no change
-                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                    elif s == "absent":
+                        if getattr(entry, "absence_type", "") == "excused":
+                            week["absent_excused"] += 1
+                        else:
+                            week["absent_unexcused"] += 1
+                    elif s == "absence_excused":
+                        week["absent_excused"] += 1
+                    elif s == "absence_unexcused":
+                        week["absent_unexcused"] += 1
+                    
+                    if s == "late":
                         week["late"] += 1
-                        # Excess minutes past the grace threshold — feeds
-                        # per-minute late deduction rules in compute_row.
-                        # Previously this was computed and then discarded;
-                        # per-minute DeductionRule configs were a silent no-op.
-                        week["late_minutes"] += (entry.late_minutes - late_threshold)
-                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        late_mins = getattr(entry, "late_minutes", 0)
+                        if late_mins and late_mins > late_threshold:
+                            week["late_minutes"] += (late_mins - late_threshold)
+                    
+                    ot = getattr(entry, "overtime_hours", 0)
+                    if ot and ot > 0:
                         week["overtime"] += 1
-                        week["overtime_hours"] += entry.overtime_hours
+                        week["overtime_hours"] += ot
                 d += timedelta(days=1)
             attendance_data.append(week)
 
@@ -767,16 +779,18 @@ async def get_payroll_report(
 
     # 3. Bulk load entries
     all_entries = (
-        db.query(DailyAttendanceEntry)
+        db.query(AttendanceLog, GuardRoster.guard_id, GuardRoster.assigned_date)
+        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
         .filter(
-            DailyAttendanceEntry.employee_id.in_(user_ids),
-            DailyAttendanceEntry.entry_date >= date_from,
-            DailyAttendanceEntry.entry_date <= date_to,
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
         ).all()
     )
     entries_by_user: dict = {uid: [] for uid in user_ids}
-    for e in all_entries:
-        entries_by_user[e.employee_id].append(e)
+    for log, guard_id, assigned_date in all_entries:
+        log._entry_date = assigned_date
+        entries_by_user[guard_id].append(log)
 
     # 4. Advances in date range
     advances_qs = db.query(CashAdvance).filter(
@@ -828,7 +842,8 @@ async def get_payroll_report(
             "uniform_status": "", "employee_insurance": 0,
         }
 
-        entry_by_date = {e.entry_date: e for e in entries_by_user.get(user_id, [])}
+        user_entries = entries_by_user.get(user_id, [])
+        entry_by_date: dict = {getattr(e, "_entry_date", None): e for e in user_entries if getattr(e, "_entry_date", None)}
         attendance_data = []
         for ws, we in week_ranges:
             week = {
@@ -842,18 +857,38 @@ async def get_payroll_report(
                 entry = entry_by_date.get(d)
                 if entry:
                     s = entry.status
-                    if s == "absence_excused":     week["absent_excused"] += 1
-                    elif s == "absence_unexcused": week["absent_unexcused"] += 1
-                    elif s == "annual_leave":      week["annual_leave"] += 1
-                    elif s == "sick_leave":        week["sick_leave"] += 1
-                    elif s == "rest":              week["rest"] += 1
-                    elif s == "rest_day_worked":   week["rest_allowance"] += 1
-                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                    if getattr(entry, "is_annual_leave", False) or s == "annual_leave":
+                        week["annual_leave"] += 1
+                    elif getattr(entry, "is_sick_leave", False) or s == "sick_leave":
+                        week["sick_leave"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s != "present":
+                        week["rest"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s == "present":
+                        week["rest_allowance"] += 1
+                    elif s == "rest":
+                        week["rest"] += 1
+                    elif s == "rest_day_worked":
+                        week["rest_allowance"] += 1
+                    elif s == "absent":
+                        if getattr(entry, "absence_type", "") == "excused":
+                            week["absent_excused"] += 1
+                        else:
+                            week["absent_unexcused"] += 1
+                    elif s == "absence_excused":
+                        week["absent_excused"] += 1
+                    elif s == "absence_unexcused":
+                        week["absent_unexcused"] += 1
+                    
+                    if s == "late":
                         week["late"] += 1
-                        week["late_minutes"] += (entry.late_minutes - late_threshold)
-                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        late_mins = getattr(entry, "late_minutes", 0)
+                        if late_mins and late_mins > late_threshold:
+                            week["late_minutes"] += (late_mins - late_threshold)
+                    
+                    ot = getattr(entry, "overtime_hours", 0)
+                    if ot and ot > 0:
                         week["overtime"] += 1
-                        week["overtime_hours"] += entry.overtime_hours
+                        week["overtime_hours"] += ot
                 d += timedelta(days=1)
             attendance_data.append(week)
 
@@ -993,22 +1028,24 @@ def export_payroll_csv(
     for roster in rosters:
         user_rosters[roster.guard_id].append(roster)
 
-    # Bulk load attendance entries
+    # Bulk load AttendanceLog entries
     all_entries = (
-        db.query(DailyAttendanceEntry)
+        db.query(AttendanceLog, GuardRoster.guard_id, GuardRoster.assigned_date)
+        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
         .filter(
-            DailyAttendanceEntry.employee_id.in_(user_ids),
-            DailyAttendanceEntry.entry_date >= date_from,
-            DailyAttendanceEntry.entry_date <= date_to,
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
         )
         .all()
     )
     user_entries: dict[str, list] = {u_id: [] for u_id in user_ids}
-    for entry in all_entries:
-        user_entries[entry.employee_id].append(entry)
+    for log, guard_id, assigned_date in all_entries:
+        log._entry_date = assigned_date
+        user_entries[guard_id].append(log)
 
     # Supervisor name lookup
-    sup_ids = {e.entered_by for e in all_entries if e.entered_by}
+    sup_ids = {log.supervisor_id for log, g, d in all_entries if log.supervisor_id}
     supervisors = db.query(User).filter(User.user_id.in_(sup_ids)).all()
     sup_dict = {s.user_id: s.name for s in supervisors}
 
@@ -1072,8 +1109,8 @@ def export_payroll_csv(
         # Sorted by date (ascending) so "most recent supervisor" below is
         # actually the most recent entry, not whatever order the bulk query
         # happened to return rows in.
-        e_list = sorted(user_entries[user_id], key=lambda e: e.entry_date)
-        r_list = user_rosters[user_id]
+        e_list = sorted(user_entries.get(user_id, []), key=lambda e: getattr(e, "_entry_date", date.today()))
+        r_list = user_rosters.get(user_id, [])
 
         eff_dr = (
             user.daily_rate if (user.daily_rate and user.daily_rate > 0)
@@ -1095,7 +1132,7 @@ def export_payroll_csv(
             "uniform_status": "", "employee_insurance": 0,
         }
 
-        entry_by_date = {e.entry_date: e for e in e_list}
+        entry_by_date = {getattr(e, "_entry_date", None): e for e in e_list if getattr(e, "_entry_date", None)}
         attendance_data = []
         for ws, we in week_ranges:
             week = {
@@ -1109,18 +1146,38 @@ def export_payroll_csv(
                 entry = entry_by_date.get(d)
                 if entry:
                     s = entry.status
-                    if s == "absence_excused":     week["absent_excused"] += 1
-                    elif s == "absence_unexcused": week["absent_unexcused"] += 1
-                    elif s == "annual_leave":      week["annual_leave"] += 1
-                    elif s == "sick_leave":        week["sick_leave"] += 1
-                    elif s == "rest":              week["rest"] += 1
-                    elif s == "rest_day_worked":   week["rest_allowance"] += 1
-                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                    if getattr(entry, "is_annual_leave", False) or s == "annual_leave":
+                        week["annual_leave"] += 1
+                    elif getattr(entry, "is_sick_leave", False) or s == "sick_leave":
+                        week["sick_leave"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s != "present":
+                        week["rest"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s == "present":
+                        week["rest_allowance"] += 1
+                    elif s == "rest":
+                        week["rest"] += 1
+                    elif s == "rest_day_worked":
+                        week["rest_allowance"] += 1
+                    elif s == "absent":
+                        if getattr(entry, "absence_type", "") == "excused":
+                            week["absent_excused"] += 1
+                        else:
+                            week["absent_unexcused"] += 1
+                    elif s == "absence_excused":
+                        week["absent_excused"] += 1
+                    elif s == "absence_unexcused":
+                        week["absent_unexcused"] += 1
+                    
+                    if s == "late":
                         week["late"] += 1
-                        week["late_minutes"] += (entry.late_minutes - late_threshold)
-                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        late_mins = getattr(entry, "late_minutes", 0)
+                        if late_mins and late_mins > late_threshold:
+                            week["late_minutes"] += (late_mins - late_threshold)
+                    
+                    ot = getattr(entry, "overtime_hours", 0)
+                    if ot and ot > 0:
                         week["overtime"] += 1
-                        week["overtime_hours"] += entry.overtime_hours
+                        week["overtime_hours"] += ot
                 d += timedelta(days=1)
             attendance_data.append(week)
 
@@ -1241,19 +1298,21 @@ def export_bank_payroll_csv(
     late_rule = deduction_rules.get("late")
     late_threshold = int(late_rule.threshold_minutes) if late_rule else 10
 
-    # Bulk load entries
+    # Bulk load AttendanceLog entries
     all_entries = (
-        db.query(DailyAttendanceEntry)
+        db.query(AttendanceLog, GuardRoster.guard_id, GuardRoster.assigned_date)
+        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
         .filter(
-            DailyAttendanceEntry.employee_id.in_(user_ids),
-            DailyAttendanceEntry.entry_date >= date_from,
-            DailyAttendanceEntry.entry_date <= date_to,
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
         )
         .all()
     )
     user_entries: dict[str, list] = {u_id: [] for u_id in user_ids}
-    for entry in all_entries:
-        user_entries[entry.employee_id].append(entry)
+    for log, guard_id, assigned_date in all_entries:
+        log._entry_date = assigned_date
+        user_entries[guard_id].append(log)
 
     # Advances
     advances_qs = db.query(CashAdvance).filter(
@@ -1311,7 +1370,7 @@ def export_bank_payroll_csv(
 
     total_sum = 0.0
     for idx, (user_id, user) in enumerate(user_dict.items(), start=1):
-        e_list = sorted(user_entries[user_id], key=lambda e: e.entry_date)
+        e_list = sorted(user_entries.get(user_id, []), key=lambda e: getattr(e, "_entry_date", date.today()))
         eff_dr = (
             user.daily_rate if (user.daily_rate and user.daily_rate > 0)
             else ((user.base_salary / 30) if (user.base_salary and user.base_salary > 0) else 0)
@@ -1332,7 +1391,7 @@ def export_bank_payroll_csv(
             "uniform_status": "", "employee_insurance": 0,
         }
 
-        entry_by_date = {e.entry_date: e for e in e_list}
+        entry_by_date = {getattr(e, "_entry_date", None): e for e in e_list if getattr(e, "_entry_date", None)}
         attendance_data = []
         for ws, we in week_ranges:
             week = {
@@ -1346,18 +1405,38 @@ def export_bank_payroll_csv(
                 entry = entry_by_date.get(d)
                 if entry:
                     s = entry.status
-                    if s == "absence_excused":     week["absent_excused"] += 1
-                    elif s == "absence_unexcused": week["absent_unexcused"] += 1
-                    elif s == "annual_leave":      week["annual_leave"] += 1
-                    elif s == "sick_leave":        week["sick_leave"] += 1
-                    elif s == "rest":              week["rest"] += 1
-                    elif s == "rest_day_worked":   week["rest_allowance"] += 1
-                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                    if getattr(entry, "is_annual_leave", False) or s == "annual_leave":
+                        week["annual_leave"] += 1
+                    elif getattr(entry, "is_sick_leave", False) or s == "sick_leave":
+                        week["sick_leave"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s != "present":
+                        week["rest"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s == "present":
+                        week["rest_allowance"] += 1
+                    elif s == "rest":
+                        week["rest"] += 1
+                    elif s == "rest_day_worked":
+                        week["rest_allowance"] += 1
+                    elif s == "absent":
+                        if getattr(entry, "absence_type", "") == "excused":
+                            week["absent_excused"] += 1
+                        else:
+                            week["absent_unexcused"] += 1
+                    elif s == "absence_excused":
+                        week["absent_excused"] += 1
+                    elif s == "absence_unexcused":
+                        week["absent_unexcused"] += 1
+                    
+                    if s == "late":
                         week["late"] += 1
-                        week["late_minutes"] += (entry.late_minutes - late_threshold)
-                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        late_mins = getattr(entry, "late_minutes", 0)
+                        if late_mins and late_mins > late_threshold:
+                            week["late_minutes"] += (late_mins - late_threshold)
+                    
+                    ot = getattr(entry, "overtime_hours", 0)
+                    if ot and ot > 0:
                         week["overtime"] += 1
-                        week["overtime_hours"] += entry.overtime_hours
+                        week["overtime_hours"] += ot
                 d += timedelta(days=1)
             attendance_data.append(week)
 
@@ -1619,23 +1698,26 @@ def get_tax_sheet(
 
     # 4. Supervisor mapping via attendance entries
     all_entries = (
-        db.query(DailyAttendanceEntry)
+        db.query(AttendanceLog, GuardRoster.guard_id, GuardRoster.assigned_date)
+        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
         .filter(
-            DailyAttendanceEntry.employee_id.in_(user_ids),
-            DailyAttendanceEntry.entry_date >= date_from,
-            DailyAttendanceEntry.entry_date <= date_to,
-        ).all()
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
+        )
+        .all()
     )
     entries_by_user: dict = {uid: [] for uid in user_ids}
-    for e in all_entries:
-        entries_by_user[e.employee_id].append(e)
+    for log, guard_id, assigned_date in all_entries:
+        log._entry_date = assigned_date
+        entries_by_user[guard_id].append(log)
 
     supervisors = db.query(User).filter(User.role.in_(["supervisor", "leader"]), User.is_active == True).all()
     sup_name_map = {s.user_id: s.name for s in supervisors}
     emp_supervisor: dict = {}
-    for entry in all_entries:
-        if entry.entered_by and entry.entered_by in sup_name_map:
-            emp_supervisor[entry.employee_id] = sup_name_map[entry.entered_by]
+    for log, guard_id, _ in all_entries:
+        if log.supervisor_id and log.supervisor_id in sup_name_map:
+            emp_supervisor[guard_id] = sup_name_map[log.supervisor_id]
 
     # 5. Advances
     advances_qs = db.query(CashAdvance).filter(
@@ -1686,7 +1768,8 @@ def get_tax_sheet(
             "uniform_status": "", "employee_insurance": 0,
         }
 
-        entry_by_date = {e.entry_date: e for e in entries_by_user.get(user_id, [])}
+        user_entries = entries_by_user.get(user_id, [])
+        entry_by_date: dict = {getattr(e, "_entry_date", None): e for e in user_entries if getattr(e, "_entry_date", None)}
         attendance_data = []
         for ws, we in week_ranges:
             week = {
@@ -1700,18 +1783,38 @@ def get_tax_sheet(
                 entry = entry_by_date.get(d)
                 if entry:
                     s = entry.status
-                    if s == "absence_excused":     week["absent_excused"] += 1
-                    elif s == "absence_unexcused": week["absent_unexcused"] += 1
-                    elif s == "annual_leave":      week["annual_leave"] += 1
-                    elif s == "sick_leave":        week["sick_leave"] += 1
-                    elif s == "rest":              week["rest"] += 1
-                    elif s == "rest_day_worked":   week["rest_allowance"] += 1
-                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                    if getattr(entry, "is_annual_leave", False) or s == "annual_leave":
+                        week["annual_leave"] += 1
+                    elif getattr(entry, "is_sick_leave", False) or s == "sick_leave":
+                        week["sick_leave"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s != "present":
+                        week["rest"] += 1
+                    elif getattr(entry, "is_rest_day", False) and s == "present":
+                        week["rest_allowance"] += 1
+                    elif s == "rest":
+                        week["rest"] += 1
+                    elif s == "rest_day_worked":
+                        week["rest_allowance"] += 1
+                    elif s == "absent":
+                        if getattr(entry, "absence_type", "") == "excused":
+                            week["absent_excused"] += 1
+                        else:
+                            week["absent_unexcused"] += 1
+                    elif s == "absence_excused":
+                        week["absent_excused"] += 1
+                    elif s == "absence_unexcused":
+                        week["absent_unexcused"] += 1
+                    
+                    if s == "late":
                         week["late"] += 1
-                        week["late_minutes"] += (entry.late_minutes - late_threshold)
-                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        late_mins = getattr(entry, "late_minutes", 0)
+                        if late_mins and late_mins > late_threshold:
+                            week["late_minutes"] += (late_mins - late_threshold)
+                    
+                    ot = getattr(entry, "overtime_hours", 0)
+                    if ot and ot > 0:
                         week["overtime"] += 1
-                        week["overtime_hours"] += entry.overtime_hours
+                        week["overtime_hours"] += ot
                 d += timedelta(days=1)
             attendance_data.append(week)
 
