@@ -364,6 +364,10 @@ def _run_seed_migrations():
             with engine.begin() as conn:
                 conn.execute(sa_text("ALTER TABLE daily_attendance_entries ADD COLUMN advance_amount FLOAT DEFAULT 0"))
                 print("  Added daily_attendance_entries.advance_amount")
+        if "replaced_by_id" not in existing_dae:
+            with engine.begin() as conn:
+                conn.execute(sa_text("ALTER TABLE daily_attendance_entries ADD COLUMN replaced_by_id VARCHAR(36) NULL"))
+                print("  Added daily_attendance_entries.replaced_by_id")
 
     if insp.has_table("supervisor_routes"):
         existing = {c["name"] for c in insp.get_columns("supervisor_routes")}

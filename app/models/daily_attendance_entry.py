@@ -33,6 +33,8 @@ class DailyAttendanceEntry(Base):
     advance_amount = Column(Float, nullable=False, default=0.0)
     note = Column(Text, nullable=True)
 
+    replaced_by_id = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+
     entered_by = Column(String(36), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
 
     locked = Column(Boolean, nullable=False, default=False)

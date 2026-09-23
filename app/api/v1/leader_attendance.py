@@ -34,6 +34,7 @@ class AttendanceEntryInput(BaseModel):
     excused_by: Optional[str] = None
     advance_amount: float = 0.0
     note: Optional[str] = None
+    replaced_by_id: Optional[str] = None
 
 
 class BulkAttendanceInput(BaseModel):
@@ -56,6 +57,7 @@ class AttendanceEntryResponse(BaseModel):
     excused_by: Optional[str] = None
     advance_amount: float = 0.0
     note: Optional[str] = None
+    replaced_by_id: Optional[str] = None
     locked: bool = False
     entered_by: str
 
@@ -148,6 +150,7 @@ def get_site_guards_for_attendance(
                 "overtime_approved_by": entry.overtime_approved_by,
                 "excused_by": entry.excused_by,
                 "note": entry.note,
+                "replaced_by_id": entry.replaced_by_id,
                 "locked": entry.locked,
             } if entry else None,
         })
@@ -248,6 +251,7 @@ def bulk_save_attendance(
             existing.excused_by = record.excused_by
             existing.advance_amount = record.advance_amount
             existing.note = record.note
+            existing.replaced_by_id = record.replaced_by_id
             existing.site_id = payload.site_id
             results.append({"employee_id": record.employee_id, "status": "updated", "id": existing.id})
         else:
@@ -266,10 +270,37 @@ def bulk_save_attendance(
                 excused_by=record.excused_by,
                 advance_amount=record.advance_amount,
                 note=record.note,
+                replaced_by_id=record.replaced_by_id,
                 entered_by=current_user.user_id,
             )
             db.add(entry)
             results.append({"employee_id": record.employee_id, "status": "created", "id": entry.id})
+
+        # --- Automatic Replacement Rostering ---
+        if record.replaced_by_id:
+            # Find the shift the absent guard was supposed to work
+            absent_roster = db.query(GuardRoster).filter(
+                GuardRoster.guard_id == record.employee_id,
+                GuardRoster.assigned_date == target_date,
+            ).first()
+
+            if absent_roster:
+                # Check if replacement is already rostered for this shift
+                existing_rep_roster = db.query(GuardRoster).filter(
+                    GuardRoster.guard_id == record.replaced_by_id,
+                    GuardRoster.assigned_date == target_date,
+                    GuardRoster.shift_id == absent_roster.shift_id
+                ).first()
+
+                if not existing_rep_roster:
+                    new_roster = GuardRoster(
+                        roster_id=str(uuid.uuid4()),
+                        guard_id=record.replaced_by_id,
+                        shift_id=absent_roster.shift_id,
+                        assigned_date=target_date,
+                        status="active"
+                    )
+                    db.add(new_roster)
 
     db.commit()
 
