@@ -105,6 +105,14 @@ def get_site_guards_for_attendance(
         )
         existing = {e.employee_id: e for e in entries}
 
+    # Build replaced-by map to identify replacements
+    replaced_by_map = {}
+    for entry in existing.values():
+        if entry.replaced_by_id:
+            absent_user = next((r[1] for r in rosters if r[1].user_id == entry.employee_id), None)
+            if absent_user:
+                replaced_by_map[entry.replaced_by_id] = absent_user.name
+
     result = []
     seen_guards = set()
     current_year = target_date.year
@@ -114,6 +122,8 @@ def get_site_guards_for_attendance(
             continue
         seen_guards.add(guard.user_id)
         entry = existing.get(guard.user_id)
+        is_replacement = guard.user_id in replaced_by_map
+        replacing_guard_name = replaced_by_map.get(guard.user_id)
 
         # Annual leave balance
         leave_bal = db.query(AnnualLeaveBalance).filter(
@@ -141,6 +151,8 @@ def get_site_guards_for_attendance(
             "has_entry": entry is not None,
             "annual_leave_eligible": is_eligible,
             "annual_leave_remaining": remaining,
+            "is_replacement": is_replacement,
+            "replacing_guard_name": replacing_guard_name,
             "entry": {
                 "id": entry.id,
                 "status": entry.status,
@@ -166,8 +178,8 @@ def get_site_guards_for_attendance(
         "site_name": site.name if site else "",
         "entry_date": entry_date,
         "guards": result,
-        "total": len(result),
-        "submitted": sum(1 for g in result if g["has_entry"]),
+        "total": sum(1 for g in result if not g.get("is_replacement")),
+        "submitted": sum(1 for g in result if g["has_entry"] and not g.get("is_replacement")),
     }
 
 
