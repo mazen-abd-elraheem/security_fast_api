@@ -526,3 +526,125 @@ def get_monthly_summary(
         "rows": rows,
     }
 
+
+class AssignReplacementInput(BaseModel):
+    guard_id: str
+    site_id: str
+    entry_date: str
+
+
+@router.get("/available-replacements", summary="Get available guards/supervisors for replacement")
+def get_available_replacements(
+    entry_date: str = Query(..., description="YYYY-MM-DD"),
+    site_id: str = Query(...),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
+    db: Session = Depends(get_db),
+):
+    target_date = date.fromisoformat(entry_date)
+    
+    candidates = db.query(User).filter(
+        User.is_active == True,
+        User.role.in_(["guard", "outdoor", "supervisor", "leader"])
+    ).all()
+    
+    candidate_ids = [u.user_id for u in candidates]
+    rosters = db.query(GuardRoster, Shift).join(Shift, GuardRoster.shift_id == Shift.shift_id).filter(
+        GuardRoster.guard_id.in_(candidate_ids),
+        GuardRoster.assigned_date == target_date
+    ).all()
+    
+    roster_map = {}
+    for r, s in rosters:
+        if r.guard_id not in roster_map:
+            roster_map[r.guard_id] = []
+        roster_map[r.guard_id].append((r, s))
+        
+    available = []
+    now_local = datetime.now().time()
+    
+    for c in candidates:
+        role_val = c.role.value if hasattr(c.role, 'value') else c.role
+        if c.user_id not in roster_map:
+            available.append({
+                "user_id": c.user_id,
+                "name": c.name,
+                "employee_code": c.employee_code,
+                "role": role_val,
+                "current_status": "no_shift"
+            })
+            continue
+            
+        has_active = False
+        for r, s in roster_map[c.user_id]:
+            # if already assigned to this site today, they are not a replacement
+            if s.site_id == site_id:
+                has_active = True
+                break
+                
+            if s.end_time > s.start_time:
+                if now_local < s.end_time:
+                    has_active = True
+                    break
+            else:
+                has_active = True
+                break
+                
+        if not has_active:
+             available.append({
+                "user_id": c.user_id,
+                "name": c.name,
+                "employee_code": c.employee_code,
+                "role": role_val,
+                "current_status": "shift_ended"
+            })
+            
+    return {"available": available}
+
+
+@router.post("/assign-replacement", summary="Assign replacement to current active shift")
+def assign_replacement(
+    payload: AssignReplacementInput,
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
+    db: Session = Depends(get_db),
+):
+    target_date = date.fromisoformat(payload.entry_date)
+    
+    user = db.query(User).filter(User.user_id == payload.guard_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+        
+    shifts = db.query(Shift).filter(Shift.site_id == payload.site_id).all()
+    if not shifts:
+        raise HTTPException(400, "No shifts found for this site")
+        
+    now_local = datetime.now().time()
+    target_shift = shifts[0]
+    for s in shifts:
+        if s.start_time <= s.end_time:
+            if s.start_time <= now_local <= s.end_time:
+                target_shift = s
+                break
+        else:
+            if now_local >= s.start_time or now_local <= s.end_time:
+                target_shift = s
+                break
+                
+    existing = db.query(GuardRoster).filter(
+        GuardRoster.guard_id == payload.guard_id,
+        GuardRoster.assigned_date == target_date,
+        GuardRoster.shift_id == target_shift.shift_id
+    ).first()
+    
+    if not existing:
+        new_roster = GuardRoster(
+            roster_id=str(uuid.uuid4()),
+            guard_id=payload.guard_id,
+            shift_id=target_shift.shift_id,
+            assigned_date=target_date,
+            status="active"
+        )
+        db.add(new_roster)
+        db.commit()
+        
+    return {"message": "Replacement assigned successfully"}
+
