@@ -125,3 +125,56 @@ def remove_assignment(
         return {"detail": "Assignment canceled"}
     except SecureTrackException as e:
         handle_service_exception(e)
+
+
+@router.get("/guard-conflicts", summary="Check if guard has conflicting assignments in a date range")
+def get_guard_conflicts(
+    guard_id: str = Query(...),
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR)),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns all active roster assignments for this guard in the given date range.
+    Used to warn before reassigning a guard who's already scheduled somewhere.
+    """
+    from app.models.shift import Shift
+    from app.models.site import Site
+    from collections import defaultdict
+
+    rows = (
+        db.query(GuardRoster, Shift, Site)
+        .join(Shift, GuardRoster.shift_id == Shift.shift_id)
+        .join(Site, Shift.site_id == Site.site_id)
+        .filter(
+            GuardRoster.guard_id == guard_id,
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
+            GuardRoster.status != "canceled",
+        )
+        .order_by(GuardRoster.assigned_date.asc())
+        .all()
+    )
+
+    if not rows:
+        return {"conflicts": [], "total_conflict_days": 0}
+
+    # Group conflicts by (site, shift) and list the affected dates
+    groups: dict = defaultdict(list)
+    for roster, shift, site in rows:
+        key = (site.name, shift.label or "", str(shift.start_time or ""), str(shift.end_time or ""))
+        groups[key].append(str(roster.assigned_date))
+
+    conflicts = [
+        {
+            "site_name": k[0],
+            "shift_label": k[1],
+            "shift_time": f"{k[2][:5]} - {k[3][:5]}" if k[2] and k[3] else "",
+            "days": v,
+            "total_days": len(v),
+        }
+        for k, v in groups.items()
+    ]
+
+    return {"conflicts": conflicts, "total_conflict_days": len(rows)}
