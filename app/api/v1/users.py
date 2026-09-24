@@ -183,7 +183,7 @@ def list_users(
     onboarding_status: Optional[str] = Query(None, description="Filter by onboarding status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=2000),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """List users with optional filtering. Admin only."""

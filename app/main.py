@@ -33,14 +33,12 @@ from app.core.exceptions import (
 from app.models import Base
 from app.api.v1 import (
     auth, users, sites, shifts, roster, routes,
-    visits, attendance, incidents, dashboard,
+    visits, attendance, incidents,
     notifications, admin, password_reset, sync, devices,
     guard_photos, outdoor, workforce, tracking, payroll,
     deduction_rules, uniforms, cash_advance,
-    inventory, personnel, complaints, leave_requests,
-    daily_logbook, separations, payroll_engine,
+    inventory, personnel, daily_logbook, payroll_engine,
     operations_room,
-    disciplinary,
     evaluations,
     accountant,
     leader_attendance,
@@ -451,7 +449,6 @@ app.include_router(visits.router, prefix="/api/v1/visits", tags=["Visits (Geofen
 app.include_router(attendance.router, prefix="/api/v1/attendance", tags=["Attendance"])
 app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incidents"])
 app.include_router(emergency.router, prefix="/api/v1/emergency", tags=["Emergency Alerts"])
-app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(password_reset.router, prefix="/api/v1/auth/password", tags=["Password Reset"])
@@ -467,13 +464,9 @@ app.include_router(uniforms.router, prefix="/api/v1/uniforms", tags=["Uniforms"]
 app.include_router(cash_advance.router, prefix="/api/v1/cash-advance", tags=["Cash Advance"])
 app.include_router(inventory.router, prefix="/api/v1/inventory", tags=["Inventory"])
 app.include_router(personnel.router, prefix="/api/v1/personnel", tags=["Personnel"])
-app.include_router(complaints.router, prefix="/api/v1/complaints", tags=["Complaints"])
-app.include_router(leave_requests.router, prefix="/api/v1/leave-requests", tags=["Leave Requests"])
 app.include_router(daily_logbook.router, prefix="/api/v1/logbook", tags=["Daily Logbook"])
-app.include_router(separations.router, prefix="/api/v1/separations", tags=["Separations"])
 app.include_router(payroll_engine.router, prefix="/api/v1/payroll-engine", tags=["Payroll Engine"])
 app.include_router(operations_room.router, prefix="/api/v1/operations-room", tags=["Operations Room"])
-app.include_router(disciplinary.router, prefix="/api/v1/disciplinary", tags=["Disciplinary Actions"])
 app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Guard Evaluations"])
 app.include_router(accountant.router, prefix="/api/v1/accountant-sheet", tags=["Accountant Sheet"])
 app.include_router(leader_attendance.router, prefix="/api/v1/leader-attendance", tags=["Leader Attendance"])

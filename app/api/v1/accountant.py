@@ -1446,7 +1446,7 @@ def update_bank_account(
 @router.get("/classifications", summary="List unique classification names from formula configs")
 def list_classifications(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
 ):
     """Return all unique classification names (excluding __tax__)."""
     rows = (
