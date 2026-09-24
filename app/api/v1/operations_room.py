@@ -100,7 +100,8 @@ def _get_site_status(db: Session, site: Site, target_date: date) -> SiteStatus:
         
         present = 0
         late = 0
-        absent = 0
+        absent = 0        # explicitly marked absent (has entry with absence status)
+        unrecorded = 0    # rostered but no attendance entry yet
         assigned = 0
         rostered_ids: set = set()
         
@@ -120,9 +121,9 @@ def _get_site_status(db: Session, site: Site, target_date: date) -> SiteStatus:
                 if entry.late_minutes and entry.late_minutes > 10:
                     late += 1
             else:
-                # No entry yet — only original guards count as absent
+                # No entry yet — guard is unrecorded, not confirmed absent
                 if not is_replacement:
-                    absent += 1
+                    unrecorded += 1
 
         # Also count entries for this shift via shift_id that are NOT on the roster
         # (guards manually entered by leader without a roster assignment for today)
@@ -136,14 +137,16 @@ def _get_site_status(db: Session, site: Site, target_date: date) -> SiteStatus:
         required = shift.required_headcount or 0
         deficit = max(0, required - present)
         cov = (present / required * 100) if required > 0 else 100.0
-        # green = full coverage; yellow = all assigned present but roster short;
-        # red = someone expected is actually absent
+        # Color logic:
+        #   green  = full coverage (deficit == 0)
+        #   red    = guards EXPLICITLY marked absent
+        #   yellow = deficit exists but no explicit absences (roster gap or unrecorded)
         if deficit == 0:
             color = "green"
-        elif absent == 0 and present >= assigned:
-            color = "yellow"
-        else:
+        elif absent > 0:
             color = "red"
+        else:
+            color = "yellow"
         
         time_str = f"{shift.start_time.strftime('%H:%M')} - {shift.end_time.strftime('%H:%M')}" if shift.start_time and shift.end_time else "N/A"
         
@@ -171,10 +174,10 @@ def _get_site_status(db: Session, site: Site, target_date: date) -> SiteStatus:
     cov = (total_present / total_required * 100) if total_required > 0 else 100.0
     if deficit == 0:
         color = "green"
-    elif total_absent == 0 and total_present >= total_assigned:
-        color = "yellow"
-    else:
+    elif total_absent > 0:
         color = "red"
+    else:
+        color = "yellow"
     
     return SiteStatus(
         site_id=site.site_id, 
