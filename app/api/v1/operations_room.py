@@ -102,39 +102,48 @@ def _get_site_status(db: Session, site: Site, target_date: date) -> SiteStatus:
         late = 0
         absent = 0
         assigned = 0
+        rostered_ids: set = set()
         
         for r in shift_rosters:
             is_replacement = r.guard_id in replaced_by_map
             if not is_replacement:
                 assigned += 1
-                
+
+            rostered_ids.add(r.guard_id)
             entry = entry_map.get(r.guard_id)
             if entry:
                 if entry.status in ("present", "late", "rest_day_worked"):
                     present += 1
-                elif entry.status == "absence_unexcused":
-                    # Only count absence for original guards, a replacement shouldn't be absent, but if they are it's covered by original being absent
+                elif entry.status in ("absence_unexcused", "absence_excused"):
                     if not is_replacement:
                         absent += 1
                 if entry.late_minutes and entry.late_minutes > 10:
                     late += 1
             else:
-                # No entry yet
+                # No entry yet — only original guards count as absent
                 if not is_replacement:
                     absent += 1
 
+        # Also count entries for this shift via shift_id that are NOT on the roster
+        # (guards manually entered by leader without a roster assignment for today)
+        for entry in entries:
+            if entry.employee_id not in rostered_ids and entry.shift_id == shift.shift_id:
+                if entry.status in ("present", "late", "rest_day_worked"):
+                    present += 1
+                if entry.late_minutes and entry.late_minutes > 10:
+                    late += 1
+
         required = shift.required_headcount or 0
-        # If required = 2, and 2 assigned. Both present = 2 present.
-        # If 1 absent, 1 replacement present. We have 2 assigned. absent=1 (for original), present=1 (for original) + 1 (for replacement) = 2.
-        # Wait, if original is absent, present=1 (from original) is FALSE, present=0.
-        # Replacement is present, present=1. Total present = 1.
-        # But wait! If the original is 'absence_unexcused' (absent=1) AND replacement is 'present' (present=1),
-        # Does that mean absent=1 AND present=2 (if the other guard is present)? Yes!
-        # But `deficit` should be `required - present`.
-        
         deficit = max(0, required - present)
         cov = (present / required * 100) if required > 0 else 100.0
-        color = "green" if deficit == 0 else ("yellow" if cov >= 80 else "red")
+        # green = full coverage; yellow = all assigned present but roster short;
+        # red = someone expected is actually absent
+        if deficit == 0:
+            color = "green"
+        elif absent == 0 and present >= assigned:
+            color = "yellow"
+        else:
+            color = "red"
         
         time_str = f"{shift.start_time.strftime('%H:%M')} - {shift.end_time.strftime('%H:%M')}" if shift.start_time and shift.end_time else "N/A"
         
@@ -160,7 +169,12 @@ def _get_site_status(db: Session, site: Site, target_date: date) -> SiteStatus:
     
     deficit = max(0, total_required - total_present)
     cov = (total_present / total_required * 100) if total_required > 0 else 100.0
-    color = "green" if deficit == 0 else ("yellow" if cov >= 80 else "red")
+    if deficit == 0:
+        color = "green"
+    elif total_absent == 0 and total_present >= total_assigned:
+        color = "yellow"
+    else:
+        color = "red"
     
     return SiteStatus(
         site_id=site.site_id, 
