@@ -76,12 +76,15 @@ def _build_sheet_data(
     """Build the full sheet data joining all sources."""
 
     # 1) Get cash advances filtered by tab AND date range
+    # Unified status filter — matches accountant.py GET /{year}/{month} exactly
+    UNIFIED_APPROVED = ["admin_approved", "admin_modified", "supervisor_approved",
+                        "ops_approved", "ceo_approved"]
     if tab == "approved":
-        status_filter = ["admin_approved", "ceo_approved", "admin_modified"]
+        status_filter = UNIFIED_APPROVED
     elif tab == "rejected":
         status_filter = ["ops_rejected", "admin_rejected", "ceo_rejected"]
     else:  # pending / in_progress
-        status_filter = ["pending", "ops_approved"]
+        status_filter = ["pending"]
 
     advances = (
         db.query(CashAdvance)
@@ -253,7 +256,8 @@ def _build_sheet_data(
         # Calculate total advance amount (ops_approved or admin_approved)
         total_advance = sum(
             (a.approved_amount or a.amount) for a in guard_advances
-            if a.status in ("ops_approved", "admin_approved", "admin_modified", "ceo_approved")
+            if a.status in ("ops_approved", "admin_approved", "admin_modified",
+                            "ceo_approved", "supervisor_approved")
         )
 
         # Calculate rest allowance (Base + Extra)

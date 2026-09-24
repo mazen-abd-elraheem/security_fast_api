@@ -131,23 +131,35 @@ def action_vacation_request(
     current_user: User = Depends(require_role(UserRole.OPERATIONS_MANAGER, UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Ops Manager approves or rejects the request."""
+    """Ops Manager approves or rejects the request. On approval, decrements AnnualLeaveBalance."""
+    from app.models.annual_leave_balance import AnnualLeaveBalance
+    from app.api.v1.annual_leave import _get_or_create_balance
+
     vacation = db.query(VacationRequest).filter(VacationRequest.request_id == request_id).first()
     if not vacation:
         raise HTTPException(status_code=404, detail="Request not found")
-        
+
     if action == "approve":
         vacation.status = "approved"
+        # Decrement AnnualLeaveBalance by the number of vacation days
+        if vacation.user_id and vacation.days_count:
+            current_year = datetime.now(timezone.utc).year
+            emp = db.query(User).filter(User.user_id == vacation.user_id).first()
+            bal = _get_or_create_balance(
+                db, vacation.user_id, current_year,
+                hire_date=emp.hire_date if emp else None
+            )
+            bal.used_days = max(0, (bal.used_days or 0)) + vacation.days_count
     elif action == "reject":
         vacation.status = "rejected"
     else:
         raise HTTPException(status_code=400, detail="Invalid action. Use 'approve' or 'reject'")
-        
+
     vacation.ops_manager_id = current_user.user_id
     vacation.ops_manager_notes = notes
     vacation.reviewed_at = datetime.now(timezone.utc)
     vacation.updated_at = datetime.now(timezone.utc)
-    
+
     db.commit()
-    
+
     return {"message": f"Request {action}d successfully", "status": vacation.status}

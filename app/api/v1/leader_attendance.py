@@ -265,15 +265,31 @@ def bulk_save_attendance(
             existing.note = record.note
             existing.replaced_by_id = record.replaced_by_id
             existing.site_id = payload.site_id
+            # Refresh roster/shift linkage from current roster assignment
+            guard_roster = db.query(GuardRoster).filter(
+                GuardRoster.guard_id == record.employee_id,
+                GuardRoster.assigned_date == target_date,
+            ).first()
+            if guard_roster:
+                existing.roster_id = guard_roster.roster_id
+                existing.shift_id = guard_roster.shift_id
             results.append({"employee_id": record.employee_id, "status": "updated", "id": existing.id})
         else:
             # Adjust annual leave balance for new entry
             _adjust_leave_balance(record.employee_id, None, record.status)
 
+            # Resolve roster + shift for this guard on this date
+            guard_roster = db.query(GuardRoster).filter(
+                GuardRoster.guard_id == record.employee_id,
+                GuardRoster.assigned_date == target_date,
+            ).first()
+
             entry = DailyAttendanceEntry(
                 id=str(uuid.uuid4()),
                 employee_id=record.employee_id,
                 site_id=payload.site_id,
+                roster_id=guard_roster.roster_id if guard_roster else None,
+                shift_id=guard_roster.shift_id if guard_roster else None,
                 entry_date=target_date,
                 status=record.status,
                 late_minutes=record.late_minutes,

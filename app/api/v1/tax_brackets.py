@@ -1,101 +1,100 @@
 """
 SecureTrack Platform - Tax Brackets API
-Handles CRUD for dynamic tax brackets.
+
+DEPRECATION NOTICE:
+  The TaxBracket model (accountant_models.TaxBracket) stored standalone
+  bracket records that were NEVER consumed by the payroll engine.
+  The actual tax calculation is driven by PayrollFormulaConfig entries
+  under classification '__tax__' (bracket_1_limit, bracket_1_rate, ...).
+
+  These CRUD endpoints are kept for backward compatibility only.
+  To configure tax, use:
+    PUT /accountant-sheet/formula-configs  with classification='__tax__'
+  Keys:  bracket_1_limit, bracket_1_rate, bracket_2_limit, bracket_2_rate, ...
 """
-from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import Optional
 import uuid
 
 from app.core.database import get_db
 from app.api.deps import require_role
 from app.enums import UserRole
 from app.models.user import User
-from app.models.accountant_models import TaxBracket
+from app.models.payroll_formula_config import PayrollFormulaConfig
 
 router = APIRouter()
 
-class TaxBracketCreate(BaseModel):
-    min_amount: float
-    max_amount: Optional[float] = None
-    rate: float
-    label: Optional[str] = None
-    is_active: bool = True
 
-class TaxBracketUpdate(BaseModel):
-    min_amount: Optional[float] = None
-    max_amount: Optional[float] = None
-    rate: Optional[float] = None
-    label: Optional[str] = None
-    is_active: Optional[bool] = None
-
-@router.get("", summary="Get all tax brackets")
+@router.get("", summary="[Deprecated] List tax config — use /accountant-sheet/formula-configs?classification=__tax__ instead")
 def get_tax_brackets(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
-    brackets = db.query(TaxBracket).order_by(TaxBracket.min_amount.asc()).all()
+    """
+    Returns the active tax configuration from PayrollFormulaConfig (__tax__ classification).
+    This is the single source of truth consumed by the payroll engine.
+    """
+    rows = db.query(PayrollFormulaConfig).filter(
+        PayrollFormulaConfig.classification == "__tax__",
+        PayrollFormulaConfig.is_active == True,
+    ).order_by(PayrollFormulaConfig.config_key).all()
+
     return {
+        "note": "Tax is configured via PayrollFormulaConfig (classification='__tax__'). "
+                "Use PUT /accountant-sheet/formula-configs to update.",
         "brackets": [
             {
-                "id": b.id,
-                "min_amount": b.min_amount,
-                "max_amount": b.max_amount,
-                "rate": b.rate,
-                "label": b.label,
-                "is_active": b.is_active,
+                "id": r.id,
+                "config_key": r.config_key,
+                "value": r.value,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             }
-            for b in brackets
-        ]
+            for r in rows
+        ],
     }
 
-@router.post("", status_code=201, summary="Create a tax bracket")
+
+@router.post("", status_code=201, summary="[Deprecated] Upsert tax formula key via PayrollFormulaConfig")
 def create_tax_bracket(
-    payload: TaxBracketCreate,
+    config_key: str,
+    value: float,
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
-    bracket = TaxBracket(
-        id=str(uuid.uuid4()),
-        min_amount=payload.min_amount,
-        max_amount=payload.max_amount,
-        rate=payload.rate,
-        label=payload.label,
-        is_active=payload.is_active,
-    )
-    db.add(bracket)
+    """Upsert a tax config key in PayrollFormulaConfig under classification '__tax__'."""
+    row = db.query(PayrollFormulaConfig).filter(
+        PayrollFormulaConfig.classification == "__tax__",
+        PayrollFormulaConfig.config_key == config_key,
+    ).first()
+    if row:
+        row.value = value
+        row.updated_by = current_user.user_id
+    else:
+        row = PayrollFormulaConfig(
+            classification="__tax__",
+            config_key=config_key,
+            value=value,
+            updated_by=current_user.user_id,
+        )
+        db.add(row)
     db.commit()
-    db.refresh(bracket)
-    return {"message": "Tax bracket created successfully", "id": bracket.id}
+    return {"message": "Tax config key upserted", "config_key": config_key, "value": value}
 
-@router.put("/{bracket_id}", summary="Update a tax bracket")
-def update_tax_bracket(
-    bracket_id: str,
-    payload: TaxBracketUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
-    db: Session = Depends(get_db),
-):
-    bracket = db.query(TaxBracket).filter(TaxBracket.id == bracket_id).first()
-    if not bracket:
-        raise HTTPException(status_code=404, detail="Tax bracket not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(bracket, field, value)
-
-    db.commit()
-    return {"message": "Tax bracket updated successfully"}
-
-@router.delete("/{bracket_id}", summary="Delete a tax bracket")
+@router.delete("/{config_key}", summary="[Deprecated] Delete a tax formula key")
 def delete_tax_bracket(
-    bracket_id: str,
+    config_key: str,
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
-    bracket = db.query(TaxBracket).filter(TaxBracket.id == bracket_id).first()
-    if not bracket:
-        raise HTTPException(status_code=404, detail="Tax bracket not found")
-
-    db.delete(bracket)
+    row = db.query(PayrollFormulaConfig).filter(
+        PayrollFormulaConfig.classification == "__tax__",
+        PayrollFormulaConfig.config_key == config_key,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Tax config key '{config_key}' not found")
+    db.delete(row)
     db.commit()
-    return {"message": "Tax bracket deleted successfully"}
+    return {"message": f"Tax config key '{config_key}' deleted"}

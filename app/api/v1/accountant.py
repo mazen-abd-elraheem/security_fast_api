@@ -315,33 +315,318 @@ async def generate_payroll_sheet(
 
 
 
-@router.get("/{year:int}/{month:int}", summary="Get payroll spreadsheet data")
+@router.get("/{year:int}/{month:int}", summary="Live payroll sheet for a month (on-the-fly, no snapshots)")
 async def get_payroll_sheet(
     year: int,
     month: int,
+    role_filter: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
 ):
-    """Returns all rows of the payroll spreadsheet for a month. Fast — reads from DB."""
-    rows = db.query(PayrollSheetRow).filter(
-        and_(PayrollSheetRow.year == year, PayrollSheetRow.month == month)
-    ).order_by(PayrollSheetRow.serial_no).all()
+    """
+    Computes payroll on-the-fly from DailyAttendanceEntry for the given month.
+    Uses roster_id/shift_id stored on each attendance entry to resolve
+    site name, shift label and supervisor without fragile latest-roster heuristics.
+    Returns the same shape as /tax-sheet so the Flutter dashboard works unchanged.
+    """
+    from app.models.uniform_item import UniformItem
+    from app.models.separation_request import SeparationRequest
 
-    if not rows:
-        return {"rows": [], "is_approved": False, "count": 0}
+    _, days_in_month = monthrange(year, month)
+    date_from = date(year, month, 1)
+    date_to   = date(year, month, days_in_month)
 
-    result = []
-    for r in rows:
-        d = {c.name: getattr(r, c.name) for c in r.__table__.columns}
-        d["overridden_fields"] = json.loads(r.overridden_fields) if r.overridden_fields else []
-        result.append(d)
+    LIVE_ROLES = ["guard", "outdoor", "supervisor", "lady", "leader"]
+    users_query = db.query(User).filter(User.is_active == True)
+    if role_filter and role_filter != "all":
+        users_query = users_query.filter(User.role == role_filter)
+    else:
+        users_query = users_query.filter(User.role.in_(LIVE_ROLES))
+    users = users_query.all()
+    if not users:
+        return {"rows": [], "count": 0, "year": year, "month": month}
+
+    user_ids  = [u.user_id for u in users]
+    user_dict = {u.user_id: u for u in users}
+
+    # ── Formula engine ──
+    formula_configs = load_formula_configs(db)
+    deduction_rules = load_deduction_rules(db)
+    configs = db.query(SalaryClassificationConfig).all()
+    config_map = {
+        c.classification: {
+            "daily_rate": c.daily_rate, "annual_increase_pct": c.annual_increase_pct,
+            "annual_increase_base": c.annual_increase_base, "incentive_rate": c.incentive_rate,
+            "increase_2025_rate": c.increase_2025_rate, "bonus_rate": c.bonus_rate,
+        }
+        for c in configs
+    }
+    late_rule      = deduction_rules.get("late")
+    late_threshold = int(late_rule.threshold_minutes) if late_rule else 10
+
+    # ── Bulk load attendance entries (with optional roster/shift join) ──
+    all_entries = (
+        db.query(DailyAttendanceEntry)
+        .filter(
+            DailyAttendanceEntry.employee_id.in_(user_ids),
+            DailyAttendanceEntry.entry_date >= date_from,
+            DailyAttendanceEntry.entry_date <= date_to,
+        ).all()
+    )
+    entries_by_user: dict = {uid: [] for uid in user_ids}
+    for e in all_entries:
+        entries_by_user[e.employee_id].append(e)
+
+    # ── Resolve shift/site/supervisor from DAE.roster_id and DAE.shift_id ──
+    # Collect unique roster_ids and shift_ids stored on entries
+    roster_ids = list(set(e.roster_id for e in all_entries if e.roster_id))
+    shift_ids  = list(set(e.shift_id  for e in all_entries if e.shift_id))
+    site_ids_needed = []
+
+    shift_objs = db.query(Shift).filter(Shift.shift_id.in_(shift_ids)).all() if shift_ids else []
+    shift_map  = {s.shift_id: s for s in shift_objs}
+    for s in shift_objs:
+        if s.site_id:
+            site_ids_needed.append(s.site_id)
+    site_objs = db.query(Site).filter(Site.site_id.in_(site_ids_needed)).all() if site_ids_needed else []
+    site_map  = {s.site_id: s.name for s in site_objs}
+
+    # Supervisor name lookup (entered_by field)
+    entered_by_ids = list(set(e.entered_by for e in all_entries if e.entered_by))
+    sup_objs  = db.query(User).filter(User.user_id.in_(entered_by_ids)).all() if entered_by_ids else []
+    sup_map   = {u.user_id: u.name for u in sup_objs}
+
+    # Per-employee: derive shift_label, site_name, supervisor from their entries
+    def _resolve_meta(entries):
+        shift_label = ""
+        site_name   = ""
+        supervisor  = ""
+        # Use the most recent entry's shift/site
+        for e in sorted(entries, key=lambda x: x.entry_date, reverse=True):
+            if not shift_label and e.shift_id:
+                s = shift_map.get(e.shift_id)
+                if s:
+                    shift_label = s.label or f"{s.start_time}-{s.end_time}"
+                    site_name   = site_map.get(s.site_id, "")
+            if not supervisor and e.entered_by:
+                supervisor = sup_map.get(e.entered_by, "")
+            if shift_label and supervisor:
+                break
+        return shift_label, site_name, supervisor
+
+    # ── Fallback roster query for employees with no DAE entries this month ──
+    roster_entries = (
+        db.query(GuardRoster)
+        .options(joinedload(GuardRoster.shift).joinedload(Shift.site))
+        .filter(
+            GuardRoster.guard_id.in_(user_ids),
+            GuardRoster.assigned_date >= date_from,
+            GuardRoster.assigned_date <= date_to,
+        )
+        .order_by(GuardRoster.assigned_date.desc())
+        .all()
+    )
+    latest_roster: dict = {}
+    for r in roster_entries:
+        if r.guard_id not in latest_roster:
+            latest_roster[r.guard_id] = r
+
+    # ── Unified CashAdvance status filter ──
+    ADVANCE_STATUSES = ["admin_approved", "admin_modified", "supervisor_approved",
+                        "ops_approved", "ceo_approved"]
+    advances_qs = db.query(CashAdvance).filter(
+        CashAdvance.status.in_(ADVANCE_STATUSES),
+        CashAdvance.updated_at >= datetime.combine(date_from, datetime.min.time()),
+        CashAdvance.updated_at <= datetime.combine(date_to, datetime.max.time()),
+    ).all()
+    advance_map: dict = {}
+    for a in advances_qs:
+        uid = getattr(a, 'guard_id', None) or getattr(a, 'user_id', None)
+        if uid:
+            advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
+    # Also include advance_amount from DAE entries
+    for e in all_entries:
+        if e.advance_amount and e.advance_amount > 0:
+            advance_map[e.employee_id] = advance_map.get(e.employee_id, 0) + e.advance_amount
+
+    bonus_map = _bonus_map_for_month(db, year, month)
+
+    # ── Uniform status from UniformItem ──
+    try:
+        uniform_items = db.query(UniformItem).filter(
+            UniformItem.employee_id.in_(user_ids)
+        ).all()
+        uniform_map: dict = {}
+        for ui in uniform_items:
+            status = "returned" if getattr(ui, 'returned', False) else "issued"
+            uniform_map[ui.employee_id] = status
+    except Exception:
+        uniform_map = {}
+
+    # ── Termination dates from SeparationRequest ──
+    try:
+        sep_reqs = db.query(SeparationRequest).filter(
+            SeparationRequest.employee_id.in_(user_ids),
+            SeparationRequest.status.in_(["approved", "completed"]),
+        ).all()
+        term_map: dict = {}
+        for s in sep_reqs:
+            td = getattr(s, 'actual_last_working_day', None) or getattr(s, 'requested_last_working_day', None)
+            if td and s.employee_id not in term_map:
+                term_map[s.employee_id] = str(td)[:10]
+    except Exception:
+        term_map = {}
+
+    # ── Insurance data from User model ──
+    # Week boundaries
+    week_ranges = []
+    for w in range(4):
+        ws = date_from + timedelta(days=w * 7)
+        we = date_from + timedelta(days=(w + 1) * 7 - 1) if w < 3 else date_to
+        if ws <= date_to:
+            week_ranges.append((ws, min(we, date_to)))
+    while len(week_ranges) < 4:
+        week_ranges.append((date_to, date_to))
+
+    rows_out = []
+    for idx, (user_id, user) in enumerate(user_dict.items()):
+        eff_dr = (
+            user.daily_rate if (user.daily_rate and user.daily_rate > 0)
+            else ((user.base_salary / 30) if (user.base_salary and user.base_salary > 0) else 0)
+        )
+
+        emp_entries = entries_by_user.get(user_id, [])
+        shift_label, site_name, supervisor = _resolve_meta(emp_entries)
+
+        # Fallback: use roster if no entries found
+        if not shift_label:
+            roster = latest_roster.get(user_id)
+            if roster and roster.shift:
+                shift_label = roster.shift.label or ""
+                if roster.shift.site:
+                    site_name = roster.shift.site.name
+
+        user_data = {
+            "employee_code":    user.employee_code or user.badge_number or "",
+            "classification":   user.classification or user.role or "",
+            "name":             user.name,
+            "daily_rate":       eff_dr,
+            "hire_date":        str(user.hire_date)[:10] if user.hire_date else "",
+            "termination_date": term_map.get(user_id, ""),
+            "termination_reason": "",
+            "insurance_status": user.insurance_status or "none",
+            "bank_account":     user.bank_account or "",
+            "transfer_name":    getattr(user, 'transfer_name', None) or user.name or "",
+            "transfer_method":  user.transfer_method or "",
+            "payroll_amount":   user.payroll_amount or 0,
+            "shift_time":       shift_label,
+            "supervisor_name":  supervisor,
+            "site_name":        site_name,
+            "uniform_status":   uniform_map.get(user_id, ""),
+            "employee_insurance": 0,
+        }
+
+        entry_by_date = {e.entry_date: e for e in emp_entries}
+        attendance_data = []
+        for ws, we in week_ranges:
+            week = {
+                "absent_excused": 0, "absent_unexcused": 0,
+                "overtime": 0, "overtime_hours": 0.0,
+                "rest_allowance": 0, "late": 0, "late_minutes": 0.0, "deduction": 0,
+                "rest": 0, "annual_leave": 0, "sick_leave": 0,
+            }
+            d = ws
+            while d <= we:
+                entry = entry_by_date.get(d)
+                if entry:
+                    s = entry.status
+                    if s == "absence_excused":     week["absent_excused"] += 1
+                    elif s == "absence_unexcused": week["absent_unexcused"] += 1
+                    elif s == "annual_leave":      week["annual_leave"] += 1
+                    elif s == "sick_leave":        week["sick_leave"] += 1
+                    elif s == "rest":              week["rest"] += 1
+                    elif s == "rest_day_worked":   week["rest_allowance"] += 1
+                    if entry.late_minutes and entry.late_minutes > late_threshold:
+                        week["late"] += 1
+                        week["late_minutes"] += (entry.late_minutes - late_threshold)
+                    if entry.overtime_hours and entry.overtime_hours > 0:
+                        week["overtime"] += 1
+                        week["overtime_hours"] += entry.overtime_hours
+                d += timedelta(days=1)
+            attendance_data.append(week)
+
+        adv = advance_map.get(user_id, 0)
+        bns = bonus_map.get(user_id, 0)
+        row = compute_row(
+            user_data, attendance_data, adv, config_map,
+            year, month, idx + 1,
+            formula_configs=formula_configs,
+            deduction_rules=deduction_rules,
+            manual_bonus=bns,
+        )
+
+        rows_out.append({
+            "user_id":           user_id,
+            "employee_code":     user_data["employee_code"],
+            "employee_name":     user.name,
+            "name":              user.name,
+            "role":              user.role.value if hasattr(user.role, 'value') else user.role,
+            "classification":    user_data["classification"],
+            "shift_label":       shift_label,
+            "shift_time":        shift_label,
+            "supervisor_name":   supervisor,
+            "site_name":         site_name,
+            "site_id":           "",
+            "hire_date":         user_data["hire_date"],
+            "termination_date":  user_data["termination_date"],
+            "insurance_status":  user.insurance_status or "none",
+            "insurance_number":  getattr(user, 'insurance_number', '') or "",
+            "insurance_date":    str(getattr(user, 'insurance_date', '') or '')[:10],
+            "insurable_wage":    getattr(user, 'insurable_wage', 0) or 0,
+            "uniform_status":    user_data["uniform_status"],
+            "transfer_method":   user.transfer_method or "",
+            "bank_account":      user.bank_account or "",
+            "base_salary":       user.base_salary or 0,
+            "daily_rate":        row["daily_rate"],
+            "gross_salary":      row["gross_salary"],
+            "monthly_salary":    row.get("monthly_salary", 0),
+            "actual_salary":     row.get("actual_salary", 0),
+            "net_salary":        row["net_salary"],
+            "incentive":         row["incentive"],
+            "current_year_raise": row["increase_2025"],
+            "allowances":        row["allowances"],
+            "rest_allowance":    row.get("rest_allowance", 0),
+            "bonus":             row.get("bonus_rounded", bns),
+            "total_income":      row["total_income"],
+            "advance_deduction": row.get("advance_deduction", adv),
+            "insurance_share":   row["insurance_share"],
+            "tax_deduction":     row["tax_deduction"],
+            "other_deductions":  row.get("other_deductions", 0),
+            "manual_deduction":  row.get("manual_deduction", 0),
+            "total_deductions":  round(row["tax_deduction"] + row.get("advance_deduction", adv) + row["insurance_share"], 2),
+            "operational_days":  row["operational_days"],
+            "total_work_days":   row["total_work_days"],
+            "total_absent_excused":   row.get("total_absent_excused", 0),
+            "total_absent_unexcused": row.get("total_absent_unexcused", 0),
+            "total_overtime_hours":   row.get("total_overtime_hours", 0),
+            "total_late":             row.get("total_late", 0),
+            "total_rest":             row.get("total_rest", 0),
+            "total_rest_allowance":   row.get("total_rest_allowance", 0),
+            "total_annual_leave":      row.get("total_annual_leave", 0),
+            "total_sick_leave":        row.get("total_sick_leave", 0),
+            "overtime_pay":            row.get("overtime_pay", 0),
+            "annual_personal_exemption": row.get("annual_personal_exemption", 0),
+            "net_after_insurance":     row.get("net_after_insurance", 0),
+            "annual_taxable":          row.get("annual_taxable", 0),
+            "annual_tax":              row.get("annual_tax", 0),
+            "monthly_tax":             row.get("monthly_tax", 0),
+        })
 
     return {
-        "rows": result,
-        "is_approved": rows[0].is_approved if rows else False,
-        "approved_by": rows[0].approved_by if rows else None,
-        "approved_at": str(rows[0].approved_at) if rows and rows[0].approved_at else None,
-        "count": len(result),
+        "rows": rows_out,
+        "count": len(rows_out),
+        "year": year,
+        "month": month,
     }
 
 

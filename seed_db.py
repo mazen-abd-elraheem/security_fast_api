@@ -82,6 +82,19 @@ def _run_seed_migrations():
                 with engine.begin() as conn:
                     conn.execute(sa_text("ALTER TABLE attendance_logs ADD COLUMN total_outside_seconds FLOAT NOT NULL DEFAULT 0"))
                     print("Added 'total_outside_seconds' to attendance_logs")
+
+        # ── daily_attendance_entries: add roster_id and shift_id (scheduling linkage) ──
+        if insp.has_table("daily_attendance_entries"):
+            existing = {c["name"] for c in insp.get_columns("daily_attendance_entries")}
+            dae_new = {
+                "roster_id": "VARCHAR(36) NULL",
+                "shift_id":  "VARCHAR(36) NULL",
+            }
+            for col_name, col_def in dae_new.items():
+                if col_name not in existing:
+                    with engine.begin() as conn:
+                        conn.execute(sa_text(f"ALTER TABLE daily_attendance_entries ADD COLUMN {col_name} {col_def}"))
+                        print(f"  [migration] daily_attendance_entries.{col_name} added")
     except Exception as e:
         print(f"Seed migration check: {e}")
 
