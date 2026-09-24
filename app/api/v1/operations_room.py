@@ -211,10 +211,10 @@ def get_live_status(target_date: Optional[str] = None, db: Session = Depends(get
         total_guards_required=tr, total_guards_present=tp, overall_coverage=round(ov, 1), sites=ss)
 
 @router.get("/deficit-alerts", response_model=List[DeficitAlert])
-def get_deficit_alerts(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_deficit_alerts(target_date: Optional[str] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role not in ("admin", "operations_manager", "CEO"):
         raise HTTPException(status_code=403, detail="Access denied")
-    dt = date.today()
+    dt = date.fromisoformat(target_date) if target_date else date.today()
     sites = db.query(Site).all()
     alerts = []
     for site in sites:
