@@ -180,13 +180,14 @@ def list_users(
     role: Optional[str] = Query(None, description="Filter by role"),
     region: Optional[str] = Query(None, description="Filter by region"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    onboarding_status: Optional[str] = Query(None, description="Filter by onboarding status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=2000),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
     db: Session = Depends(get_db),
 ):
     """List users with optional filtering. Admin only."""
-    return UserService.list_users(db, role=role, region=region, is_active=is_active, skip=skip, limit=limit)
+    return UserService.list_users(db, role=role, region=region, is_active=is_active, onboarding_status=onboarding_status, skip=skip, limit=limit)
 
 
 @router.post("", response_model=UserResponse, status_code=201, summary="Admin creates a user")

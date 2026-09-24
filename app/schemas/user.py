@@ -94,6 +94,20 @@ class AdminUserUpdate(BaseModel):
     transfer_method: Optional[str] = Field(None, max_length=100)
 
 
+class HRCompleteProfileRequest(BaseModel):
+    """HR completes a 'fresh' user profile."""
+    email: EmailStr
+    password: str = Field(..., min_length=6, max_length=128)
+    base_salary: Optional[float] = None
+    classification: Optional[str] = Field(None, max_length=50)
+    bank_account: Optional[str] = Field(None, max_length=100)
+    transfer_name: Optional[str] = Field(None, max_length=255)
+    transfer_method: Optional[str] = Field(None, max_length=100)
+    national_id: Optional[str] = Field(None, max_length=20)
+    insurance_number: Optional[str] = Field(None, max_length=50)
+    is_missing_docs: bool = False # If true, status becomes 'missing' instead of 'completed'
+
+
 # --- Output Schemas ---
 
 class UserResponse(BaseModel):
@@ -110,6 +124,7 @@ class UserResponse(BaseModel):
     is_active: bool = True
     status: Optional[str] = "active"
     requested_role: Optional[str] = None
+    onboarding_status: str = "completed"
     base_salary: float = 0.0
     bank_account: Optional[str] = None
     transfer_name: Optional[str] = None

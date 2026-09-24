@@ -119,6 +119,86 @@ def personnel_create_user(
         "badge_number": db_user.badge_number,
     }
 
+
+class PersonnelCreateNameRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    role: str = Field(..., description="guard, lady, outdoor, leader, or supervisor")
+    site_id: str
+    shift_id: str
+
+
+@router.post("/create-name", summary="Personnel creates a new 'fresh' user name")
+def personnel_create_name(
+    data: PersonnelCreateNameRequest,
+    current_user: User = Depends(require_role(UserRole.PERSONNEL_OFFICER, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """
+    Personnel officer creates a basic user shell ('fresh').
+    Assigns them to a site and shift. HR will complete the profile later.
+    """
+    if data.role not in PERSONNEL_ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Personnel cannot create role '{data.role}'. Allowed: {', '.join(sorted(PERSONNEL_ALLOWED_ROLES))}"
+        )
+
+    site = db.query(Site).filter(Site.site_id == data.site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+        
+    shift = db.query(Shift).filter(Shift.shift_id == data.shift_id).first()
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    import random
+    emp_code = str(random.randint(100000, 999999))
+    while db.query(User).filter(User.employee_code == emp_code).first():
+        emp_code = str(random.randint(100000, 999999))
+
+    # Generate dummy email and password
+    dummy_email = f"user_{emp_code}@securetrack.local"
+    dummy_password = f"temp_{emp_code}"
+
+    db_user = User(
+        user_id=str(uuid.uuid4()),
+        employee_code=emp_code,
+        name=data.name,
+        email=dummy_email,
+        password_hash=hash_password(dummy_password),
+        role=data.role,
+        hire_date=datetime.now(timezone.utc),
+        onboarding_status="fresh",
+        is_active=False,  # Not active until HR completes it
+        status=UserStatus.PENDING if hasattr(UserStatus, 'PENDING') else "pending",
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+
+    # Automatically roster them for today
+    roster = GuardRoster(
+        roster_id=str(uuid.uuid4()),
+        site_id=data.site_id,
+        shift_id=data.shift_id,
+        guard_id=db_user.user_id,
+        assigned_date=date.today(),
+        status="assigned",
+        assigned_by=current_user.user_id,
+    )
+    db.add(roster)
+    db.commit()
+
+    return {
+        "message": "User name created successfully",
+        "user_id": db_user.user_id,
+        "name": db_user.name,
+        "employee_code": db_user.employee_code,
+        "onboarding_status": db_user.onboarding_status,
+        "site_id": roster.site_id,
+        "shift_id": roster.shift_id,
+    }
+
 class AssignGuardRequest(BaseModel):
     guard_id: str
     site_id: str

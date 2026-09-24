@@ -13,7 +13,7 @@ from app.api.deps import require_role, handle_service_exception
 from app.models.user import User
 from app.models.admin_audit_log import AdminAuditLog
 from app.enums import UserRole
-from app.schemas.user import UserResponse, UserListResponse
+from app.schemas.user import UserResponse, UserListResponse, HRCompleteProfileRequest
 from app.services.user_service import UserService
 from app.core.exceptions import SecureTrackException
 from app.core.audit import log_audit, log_create, log_update, log_delete, log_read, snapshot
@@ -148,6 +148,71 @@ def activate_user(
             severity="info",
         )
         db.commit()
+
+        return user
+    except SecureTrackException as e:
+        handle_service_exception(e)
+
+
+@router.post(
+    "/users/{user_id}/complete-onboarding",
+    response_model=UserResponse,
+    summary="HR completes a fresh user profile",
+)
+def complete_onboarding(
+    user_id: str,
+    data: HRCompleteProfileRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    """
+    HR completes the profile for a 'fresh' user.
+    Updates sensitive fields and marks as completed or missing.
+    """
+    try:
+        user = UserService.get_by_id(db, user_id)
+        if not user:
+            from app.core.exceptions import NotFoundException
+            raise NotFoundException("User", user_id)
+            
+        from app.core.security import hash_password
+        
+        user.email = data.email
+        user.password_hash = hash_password(data.password)
+        
+        if data.base_salary is not None:
+            user.base_salary = data.base_salary
+        if data.classification is not None:
+            user.classification = data.classification
+        if data.bank_account is not None:
+            user.bank_account = data.bank_account
+        if data.transfer_name is not None:
+            user.transfer_name = data.transfer_name
+        if data.transfer_method is not None:
+            user.transfer_method = data.transfer_method
+        if data.national_id is not None:
+            user.national_id = data.national_id
+        if data.insurance_number is not None:
+            user.insurance_number = data.insurance_number
+            
+        user.onboarding_status = "missing" if data.is_missing_docs else "completed"
+        
+        if user.onboarding_status == "completed":
+            user.is_active = True
+            from app.enums import UserStatus
+            user.status = UserStatus.ACTIVE if hasattr(UserStatus, 'ACTIVE') else "active"
+
+        create_audit_log(
+            db, current_user,
+            action="complete_onboarding",
+            target_type="user",
+            target_id=user_id,
+            target_name=user.name,
+            description=f"Completed onboarding for '{user.name}' ({user.email}) -> status: {user.onboarding_status}",
+            severity="info",
+        )
+        db.commit()
+        db.refresh(user)
 
         return user
     except SecureTrackException as e:

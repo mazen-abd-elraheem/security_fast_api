@@ -38,6 +38,7 @@ def _run_seed_migrations():
                 "transfer_name": "VARCHAR(255) NULL",
                 "transfer_method": "VARCHAR(100) NULL",
                 "uniform_status": "VARCHAR(100) DEFAULT 'none'",
+                "onboarding_status": "VARCHAR(30) DEFAULT 'completed'",
                 # Security — Account Lockout
                 "failed_login_count": "INTEGER DEFAULT 0",
                 "locked_until": "DATETIME NULL",

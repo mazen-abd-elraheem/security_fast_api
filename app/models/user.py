@@ -43,6 +43,7 @@ class User(Base):
     fcm_token = Column(String(500), nullable=True)  # Firebase Cloud Messaging token for push notifications
     status = Column(String(30), nullable=False, default=UserStatus.PENDING)  # pending status
     requested_role = Column(String(30), nullable=True)  # role requested during registration
+    onboarding_status = Column(String(30), nullable=False, default='completed') # fresh, missing, completed
 
     # Payroll
     base_salary = Column(Float, nullable=True, default=0.0)  # Monthly base salary in EGP

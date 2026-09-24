@@ -194,6 +194,7 @@ class UserService:
         role: Optional[str] = None,
         region: Optional[str] = None,
         is_active: Optional[bool] = None,
+        onboarding_status: Optional[str] = None,
         skip: int = 0,
         limit: int = 20,
     ) -> dict:
@@ -206,6 +207,8 @@ class UserService:
             query = query.filter(User.region == region)
         if is_active is not None:
             query = query.filter(User.is_active == is_active)
+        if onboarding_status:
+            query = query.filter(User.onboarding_status == onboarding_status)
 
         total = query.count()
         users = query.order_by(User.created_at.desc()).offset(skip).limit(limit).all()
