@@ -707,6 +707,7 @@ def get_attendance_report(
         .filter(GuardRoster.guard_id.in_(user_dict.keys()))
         .filter(GuardRoster.assigned_date >= date_from)
         .filter(GuardRoster.assigned_date <= date_to)
+        .filter(GuardRoster.status != "canceled")
         .all()
     )
 

@@ -85,6 +85,7 @@ def get_site_guards_for_attendance(
         .filter(
             Shift.site_id == site_id,
             GuardRoster.assigned_date == target_date,
+            GuardRoster.status != "canceled",
         )
         .all()
     )
@@ -269,6 +270,7 @@ def bulk_save_attendance(
             guard_roster = db.query(GuardRoster).filter(
                 GuardRoster.guard_id == record.employee_id,
                 GuardRoster.assigned_date == target_date,
+                GuardRoster.status != "canceled",
             ).first()
             if guard_roster:
                 existing.roster_id = guard_roster.roster_id
@@ -282,6 +284,7 @@ def bulk_save_attendance(
             guard_roster = db.query(GuardRoster).filter(
                 GuardRoster.guard_id == record.employee_id,
                 GuardRoster.assigned_date == target_date,
+                GuardRoster.status != "canceled",
             ).first()
 
             entry = DailyAttendanceEntry(
@@ -310,6 +313,7 @@ def bulk_save_attendance(
             absent_roster = db.query(GuardRoster).filter(
                 GuardRoster.guard_id == record.employee_id,
                 GuardRoster.assigned_date == target_date,
+                GuardRoster.status != "canceled",
             ).first()
 
             if absent_roster:
@@ -317,7 +321,8 @@ def bulk_save_attendance(
                 existing_rep_roster = db.query(GuardRoster).filter(
                     GuardRoster.guard_id == record.replaced_by_id,
                     GuardRoster.assigned_date == target_date,
-                    GuardRoster.shift_id == absent_roster.shift_id
+                    GuardRoster.shift_id == absent_roster.shift_id,
+                    GuardRoster.status != "canceled",
                 ).first()
 
                 if not existing_rep_roster:
@@ -609,7 +614,8 @@ def get_available_replacements(
     candidate_ids = [u.user_id for u in candidates]
     rosters = db.query(GuardRoster, Shift).join(Shift, GuardRoster.shift_id == Shift.shift_id).filter(
         GuardRoster.guard_id.in_(candidate_ids),
-        GuardRoster.assigned_date == target_date
+        GuardRoster.assigned_date == target_date,
+        GuardRoster.status != "canceled",
     ).all()
     
     roster_map = {}
@@ -691,7 +697,8 @@ def assign_replacement(
     existing = db.query(GuardRoster).filter(
         GuardRoster.guard_id == payload.guard_id,
         GuardRoster.assigned_date == target_date,
-        GuardRoster.shift_id == target_shift.shift_id
+        GuardRoster.shift_id == target_shift.shift_id,
+        GuardRoster.status != "canceled",
     ).first()
     
     if not existing:
