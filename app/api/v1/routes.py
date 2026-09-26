@@ -151,3 +151,48 @@ def update_route_status(
         )
     except SecureTrackException as e:
         handle_service_exception(e)
+
+
+@router.get("/user/{user_id}/assignments", summary="Get all assignments for a user (conflict check)")
+def get_user_assignments(
+    user_id: str,
+    date_from: date = Query(default=None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: date = Query(default=None, description="Filter to date (YYYY-MM-DD)"),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns all route assignments for a given user (supervisor/leader),
+    including site name and shift label — used for conflict detection UI.
+    """
+    from app.models.supervisor_route import SupervisorRoute
+    from app.models.shift import Shift
+    from app.models.site import Site
+
+    q = db.query(SupervisorRoute).filter(SupervisorRoute.supervisor_id == user_id)
+    if date_from:
+        q = q.filter(SupervisorRoute.assigned_date >= date_from)
+    if date_to:
+        q = q.filter(SupervisorRoute.assigned_date <= date_to)
+
+    assignments = q.order_by(SupervisorRoute.assigned_date.desc()).all()
+
+    result = []
+    for a in assignments:
+        site = db.query(Site).filter(Site.site_id == a.site_id).first()
+        shift = db.query(Shift).filter(Shift.shift_id == a.shift_id).first() if a.shift_id else None
+        result.append({
+            "route_id": a.route_id,
+            "site_id": a.site_id,
+            "site_name": site.name if site else "Unknown",
+            "shift_id": a.shift_id,
+            "shift_label": shift.label if shift else None,
+            "shift_start": shift.start_time.strftime("%H:%M") if shift and shift.start_time else None,
+            "shift_end": shift.end_time.strftime("%H:%M") if shift and shift.end_time else None,
+            "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
+            "status": a.status,
+            "role": a.role if hasattr(a, 'role') else "supervisor",
+        })
+
+    return {"assignments": result, "total": len(result), "user_id": user_id}
+

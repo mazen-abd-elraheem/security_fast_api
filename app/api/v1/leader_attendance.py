@@ -68,18 +68,20 @@ class AttendanceEntryResponse(BaseModel):
 def get_site_guards_for_attendance(
     site_id: str,
     entry_date: str = Query(..., description="YYYY-MM-DD"),
+    shift_id: Optional[str] = Query(None, description="Filter guards by shift (optional)"),
     current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
     db: Session = Depends(get_db),
 ):
     """
     Returns all guards rostered at this site on the given date,
     plus any existing attendance entries for the day.
+    Optionally filtered by shift_id.
     """
     target_date = date.fromisoformat(entry_date)
 
     # Get guards rostered at this site on this date
-    rosters = (
-        db.query(GuardRoster, User)
+    q = (
+        db.query(GuardRoster, User, Shift)
         .join(Shift, GuardRoster.shift_id == Shift.shift_id)
         .join(User, GuardRoster.guard_id == User.user_id)
         .filter(
@@ -87,8 +89,11 @@ def get_site_guards_for_attendance(
             GuardRoster.assigned_date == target_date,
             GuardRoster.status != "canceled",
         )
-        .all()
     )
+    if shift_id:
+        q = q.filter(GuardRoster.shift_id == shift_id)
+
+    rosters = q.all()
 
     guard_ids = [r[1].user_id for r in rosters]
 
@@ -118,7 +123,7 @@ def get_site_guards_for_attendance(
     seen_guards = set()
     current_year = target_date.year
 
-    for roster, guard in rosters:
+    for roster, guard, shift in rosters:
         if guard.user_id in seen_guards:
             continue
         seen_guards.add(guard.user_id)
@@ -149,6 +154,10 @@ def get_site_guards_for_attendance(
             "employee_code": guard.employee_code,
             "classification": guard.classification,
             "roster_id": roster.roster_id,
+            "shift_id": roster.shift_id,
+            "shift_label": shift.label if shift else None,
+            "shift_start": shift.start_time.strftime("%H:%M") if shift and shift.start_time else None,
+            "shift_end": shift.end_time.strftime("%H:%M") if shift and shift.end_time else None,
             "has_entry": entry is not None,
             "annual_leave_eligible": is_eligible,
             "annual_leave_remaining": remaining,
