@@ -172,63 +172,51 @@ def update_route_status(
         handle_service_exception(e)
 
 
-@router.get("/user/{user_id}/assignments", summary="Get all assignments for a user (conflict check)")
+@router.get("/user/{user_id}/assignments", summary="Get assignment summary for a user (conflict check)")
 def get_user_assignments(
     user_id: str,
-    date_from: date = Query(default=None, description="Filter from date (YYYY-MM-DD)"),
-    date_to: date = Query(default=None, description="Filter to date (YYYY-MM-DD)"),
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """
-    Returns all route assignments for a given user (supervisor/leader),
-    including site name and shift label — used for conflict detection UI.
+    Returns a lightweight summary of route assignments grouped by site,
+    used for conflict detection UI. No date range filter — returns all.
     """
     from app.models.supervisor_route import SupervisorRoute
-    from app.models.shift import Shift
     from app.models.site import Site
+    from sqlalchemy import func
 
-    q = db.query(SupervisorRoute).filter(SupervisorRoute.supervisor_id == user_id)
-    if date_from:
-        q = q.filter(SupervisorRoute.assigned_date >= date_from)
-    if date_to:
-        q = q.filter(SupervisorRoute.assigned_date <= date_to)
+    # One query: GROUP BY site_id → count + date range
+    rows = (
+        db.query(
+            SupervisorRoute.site_id,
+            func.count(SupervisorRoute.route_id).label("count"),
+            func.min(SupervisorRoute.assigned_date).label("date_from"),
+            func.max(SupervisorRoute.assigned_date).label("date_to"),
+        )
+        .filter(SupervisorRoute.supervisor_id == user_id)
+        .group_by(SupervisorRoute.site_id)
+        .all()
+    )
 
-    assignments = q.order_by(SupervisorRoute.assigned_date.desc()).all()
+    total = sum(r.count for r in rows)
 
-    # Batch-load all sites and shifts (avoid N+1)
-    site_ids = {a.site_id for a in assignments}
-    shift_ids = {a.shift_id for a in assignments if a.shift_id}
+    # Batch-load site names
+    site_ids = [r.site_id for r in rows]
     site_map = {}
-    shift_map = {}
     if site_ids:
         sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
-        site_map = {s.site_id: s for s in sites}
-    if shift_ids:
-        shifts_q = db.query(Shift).filter(Shift.shift_id.in_(shift_ids)).all()
-        shift_map = {s.shift_id: s for s in shifts_q}
+        site_map = {s.site_id: s.name for s in sites}
 
-    # Also look up the user's role
-    user_obj = db.query(User).filter(User.user_id == user_id).first()
-    user_role = (user_obj.role.value if hasattr(user_obj.role, 'value') else user_obj.role) if user_obj and user_obj.role else "supervisor"
-
-    result = []
-    for a in assignments:
-        site = site_map.get(a.site_id)
-        shift = shift_map.get(a.shift_id) if a.shift_id else None
-        result.append({
-            "route_id": a.route_id,
-            "site_id": a.site_id,
-            "site_name": site.name if site else "Unknown",
-            "shift_id": a.shift_id,
-            "shift_label": shift.label if shift else None,
-            "shift_start": shift.start_time.strftime("%H:%M") if shift and shift.start_time else None,
-            "shift_end": shift.end_time.strftime("%H:%M") if shift and shift.end_time else None,
-            "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
-            "status": a.status,
-            "role": user_role,
+    summary = []
+    for r in rows:
+        summary.append({
+            "site_id": r.site_id,
+            "site_name": site_map.get(r.site_id, "Unknown"),
+            "count": r.count,
+            "date_from": r.date_from.isoformat() if r.date_from else None,
+            "date_to": r.date_to.isoformat() if r.date_to else None,
         })
 
-    return {"assignments": result, "total": len(result), "user_id": user_id}
-
+    return {"sites": summary, "total": total, "user_id": user_id}
 
