@@ -987,3 +987,33 @@ def export_attendance_report(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+@router.get("/recent-daily-entries", summary="Get recent daily attendance entries")
+def get_recent_daily_entries(
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.daily_attendance_entry import DailyAttendanceEntry
+    from app.models.user import User
+    from app.models.site import Site
+
+    entries = (
+        db.query(DailyAttendanceEntry)
+        .order_by(DailyAttendanceEntry.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    results = []
+    for e in entries:
+        user = db.query(User).filter(User.user_id == e.employee_id).first()
+        site = db.query(Site).filter(Site.site_id == e.site_id).first()
+        results.append({
+            "name": user.name if user else "Unknown",
+            "site": site.name if site else "Unknown",
+            "status": e.status,
+            "recorded_at": e.created_at.isoformat() if e.created_at else None,
+        })
+
+    return {"entries": results}
