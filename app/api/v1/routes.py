@@ -113,11 +113,14 @@ def get_routes_for_date(
     routes = RouteService.get_all_routes_for_date(db, target_date)
     items = []
     for r in routes:
+        sup = r.supervisor  # SQLAlchemy relationship
         items.append(RouteResponse(
             route_id=r.route_id,
             supervisor_id=r.supervisor_id,
-            supervisor_name=r.supervisor.name if r.supervisor else None,
+            supervisor_name=sup.name if sup else None,
+            supervisor_role=sup.role.value if sup and sup.role else None,
             site_id=r.site_id,
+            shift_id=r.shift_id,
             site_name=r.site.name if r.site else None,
             site_address=r.site.address if r.site else None,
             assigned_date=r.assigned_date,

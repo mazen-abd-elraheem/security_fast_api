@@ -35,6 +35,7 @@ class RouteResponse(BaseModel):
     route_id: str
     supervisor_id: str
     supervisor_name: Optional[str] = None
+    supervisor_role: Optional[str] = None  # 'supervisor' | 'leader' | etc.
     site_id: str
     shift_id: Optional[str] = None
     site_name: Optional[str] = None

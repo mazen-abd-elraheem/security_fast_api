@@ -139,6 +139,7 @@ def get_guard_conflicts(
     Returns all active roster assignments for this guard in the given date range.
     Used to warn before reassigning a guard who's already scheduled somewhere.
     """
+    from app.models.guard_roster import GuardRoster
     from app.models.shift import Shift
     from app.models.site import Site
     from collections import defaultdict
