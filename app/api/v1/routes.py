@@ -210,7 +210,7 @@ def get_user_assignments(
 
     # Also look up the user's role
     user_obj = db.query(User).filter(User.user_id == user_id).first()
-    user_role = user_obj.role.value if user_obj and user_obj.role else "supervisor"
+    user_role = (user_obj.role.value if hasattr(user_obj.role, 'value') else user_obj.role) if user_obj and user_obj.role else "supervisor"
 
     result = []
     for a in assignments:
