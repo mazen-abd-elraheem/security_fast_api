@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack Platform â€” Route Service
 Manages daily supervisor route assignments.
 """
@@ -71,29 +71,40 @@ class RouteService:
         if supervisor.role not in ("supervisor", "leader"):
             raise BadRequestException(f"User {supervisor.name} is not a supervisor or leader")
 
+        # Batch-load all sites to avoid N+1 queries inside the loop
+        site_ids = {s.site_id for s in sites}
+        site_objs = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
+        site_map = {s.site_id: s for s in site_objs}
+        for sid in site_ids:
+            if sid not in site_map:
+                raise NotFoundException("Site", sid)
+
+        # Batch-load existing routes for this supervisor in the date range (ONE query instead of N)
+        existing_routes = db.query(
+            SupervisorRoute.assigned_date,
+            SupervisorRoute.site_id,
+            SupervisorRoute.shift_id,
+        ).filter(
+            SupervisorRoute.supervisor_id == supervisor_id,
+            SupervisorRoute.site_id.in_(site_ids),
+            SupervisorRoute.assigned_date.in_(dates),
+        ).all()
+
+        # Build a set of (date, site_id, shift_id) for O(1) duplicate detection
+        existing_set = {(r.assigned_date, r.site_id, r.shift_id) for r in existing_routes}
+
         all_routes = []
-        skipped = 0
         for target_date in dates:
             for site_assignment in sites:
-                site = db.query(Site).filter(Site.site_id == site_assignment.site_id).first()
-                if not site:
-                    raise NotFoundException("Site", site_assignment.site_id)
-
-                # Skip duplicates silently
-                existing = db.query(SupervisorRoute).filter(
-                    SupervisorRoute.supervisor_id == supervisor_id,
-                    SupervisorRoute.site_id == site_assignment.site_id,
-                    SupervisorRoute.assigned_date == target_date,
-                ).first()
-                if existing:
-                    skipped += 1
+                key = (target_date, site_assignment.site_id, site_assignment.shift_id)
+                if key in existing_set:
                     continue
 
                 db_route = SupervisorRoute(
                     route_id=str(uuid.uuid4()),
                     supervisor_id=supervisor_id,
                     site_id=site_assignment.site_id,
-                        shift_id=site_assignment.shift_id,
+                    shift_id=site_assignment.shift_id,
                     assigned_date=target_date,
                     visit_order=site_assignment.visit_order,
                 )
@@ -102,6 +113,7 @@ class RouteService:
 
         db.commit()
         return all_routes
+
 
     @staticmethod
     def get_daily_route(db: Session, supervisor_id: str, target_date: date) -> list:
