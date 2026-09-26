@@ -151,7 +151,7 @@ def supervisor_attendance_dashboard(
         .filter(SupervisorRoute.assigned_date == target_date)
         .all()
     )
-    site_ids = [r.site_id for r in routes]
+    site_ids = list({r.site_id for r in routes})
     if not site_ids:
         return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
 

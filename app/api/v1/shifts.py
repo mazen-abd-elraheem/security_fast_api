@@ -37,7 +37,7 @@ def create_shift(
 @router.get("/{site_id}/shifts", response_model=ShiftListResponse, summary="List shifts for site")
 def list_shifts(
     site_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """Get all active shifts for a site."""
