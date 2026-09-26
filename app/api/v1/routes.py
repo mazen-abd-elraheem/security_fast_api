@@ -111,24 +111,40 @@ def get_routes_for_date(
 ):
     """Get all supervisor routes for a specific date."""
     routes = RouteService.get_all_routes_for_date(db, target_date)
+
+    # Batch-load supervisors and sites to avoid N+1 lazy queries
+    sup_ids = {r.supervisor_id for r in routes}
+    site_ids = {r.site_id for r in routes}
+    sup_map = {}
+    site_map_data = {}
+    if sup_ids:
+        sups = db.query(User).filter(User.user_id.in_(sup_ids)).all()
+        sup_map = {s.user_id: s for s in sups}
+    if site_ids:
+        from app.models.site import Site
+        sites_q = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
+        site_map_data = {s.site_id: s for s in sites_q}
+
     items = []
     for r in routes:
-        sup = r.supervisor  # SQLAlchemy relationship
+        sup = sup_map.get(r.supervisor_id)
+        site_obj = site_map_data.get(r.site_id)
         items.append(RouteResponse(
             route_id=r.route_id,
             supervisor_id=r.supervisor_id,
             supervisor_name=sup.name if sup else None,
-            supervisor_role=sup.role.value if sup and sup.role else None,
+            supervisor_role=(sup.role.value if hasattr(sup.role, 'value') else sup.role) if sup and sup.role else None,
             site_id=r.site_id,
             shift_id=r.shift_id,
-            site_name=r.site.name if r.site else None,
-            site_address=r.site.address if r.site else None,
+            site_name=site_obj.name if site_obj else None,
+            site_address=site_obj.address if site_obj else None,
             assigned_date=r.assigned_date,
             visit_order=r.visit_order,
             status=r.status,
             created_at=r.created_at,
         ))
     return {"routes": items, "total": len(items), "date": target_date.isoformat()}
+
 
 
 @router.put("/{route_id}", response_model=RouteResponse, summary="Update route status")
@@ -180,10 +196,26 @@ def get_user_assignments(
 
     assignments = q.order_by(SupervisorRoute.assigned_date.desc()).all()
 
+    # Batch-load all sites and shifts (avoid N+1)
+    site_ids = {a.site_id for a in assignments}
+    shift_ids = {a.shift_id for a in assignments if a.shift_id}
+    site_map = {}
+    shift_map = {}
+    if site_ids:
+        sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
+        site_map = {s.site_id: s for s in sites}
+    if shift_ids:
+        shifts_q = db.query(Shift).filter(Shift.shift_id.in_(shift_ids)).all()
+        shift_map = {s.shift_id: s for s in shifts_q}
+
+    # Also look up the user's role
+    user_obj = db.query(User).filter(User.user_id == user_id).first()
+    user_role = user_obj.role.value if user_obj and user_obj.role else "supervisor"
+
     result = []
     for a in assignments:
-        site = db.query(Site).filter(Site.site_id == a.site_id).first()
-        shift = db.query(Shift).filter(Shift.shift_id == a.shift_id).first() if a.shift_id else None
+        site = site_map.get(a.site_id)
+        shift = shift_map.get(a.shift_id) if a.shift_id else None
         result.append({
             "route_id": a.route_id,
             "site_id": a.site_id,
@@ -194,8 +226,9 @@ def get_user_assignments(
             "shift_end": shift.end_time.strftime("%H:%M") if shift and shift.end_time else None,
             "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
             "status": a.status,
-            "role": a.role if hasattr(a, 'role') else "supervisor",
+            "role": user_role,
         })
 
     return {"assignments": result, "total": len(result), "user_id": user_id}
+
 
