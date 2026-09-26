@@ -155,11 +155,31 @@ def supervisor_attendance_dashboard(
     if not site_ids:
         return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
 
-    # 2. Bulk-load sites, shifts, and rosters in 3 queries (no N+1)
+    # 2. Bulk-load sites
     sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
     site_map = {s.site_id: s for s in sites}
 
-    shifts = db.query(Shift).filter(Shift.site_id.in_(site_ids), Shift.is_active == True).all()
+    # 3. Determine which shifts this supervisor is assigned to
+    # Build a map: site_id → set of assigned shift_ids (from routes)
+    assigned_shift_ids_by_site: dict[str, set] = {sid: set() for sid in site_ids}
+    has_specific_shifts: dict[str, bool] = {sid: False for sid in site_ids}
+    for r in routes:
+        if r.shift_id:
+            assigned_shift_ids_by_site[r.site_id].add(r.shift_id)
+            has_specific_shifts[r.site_id] = True
+
+    # Load all active shifts for the sites, then filter
+    all_site_shifts = db.query(Shift).filter(Shift.site_id.in_(site_ids), Shift.is_active == True).all()
+    shifts = []
+    for s in all_site_shifts:
+        # If supervisor has specific shift assignments → only include those
+        # If no specific shifts (legacy) → include all shifts for that site
+        if has_specific_shifts.get(s.site_id, False):
+            if s.shift_id in assigned_shift_ids_by_site.get(s.site_id, set()):
+                shifts.append(s)
+        else:
+            shifts.append(s)
+
     shift_map = {s.shift_id: s for s in shifts}
     # site_id → list of shift_ids
     site_shift_ids: dict[str, list] = {sid: [] for sid in site_ids}
