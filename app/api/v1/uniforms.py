@@ -26,7 +26,7 @@ router = APIRouter()
 @router.post("", response_model=UniformItemResponse, status_code=201, summary="Issue uniform item")
 def issue_uniform_item(
     data: UniformItemCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.SUPERVISOR, UserRole.HR, UserRole.OPS_MANAGER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.SUPERVISOR, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Issue a uniform item to an employee. Admin only."""
@@ -41,7 +41,7 @@ def issue_uniform_item(
 @router.post("/bulk", response_model=UniformItemListResponse, status_code=201, summary="Bulk issue uniforms")
 def bulk_issue_uniforms(
     data: UniformBulkIssue,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.SUPERVISOR, UserRole.HR, UserRole.OPS_MANAGER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.SUPERVISOR, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Issue multiple uniform items to one employee at once. Admin only."""
@@ -60,7 +60,7 @@ def bulk_issue_uniforms(
 # ── Admin tracker: employees without uniform + terminated unreturned ──
 @router.get("/tracker", response_model=UniformTrackerResponse, summary="Uniform tracker dashboard")
 def get_uniform_tracker(
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPS_MANAGER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Admin dashboard: active employees missing uniforms + terminated with unreturned items."""
@@ -110,7 +110,7 @@ def get_my_uniforms(
 @router.get("/employee/{employee_id}", response_model=UniformItemListResponse, summary="Employee uniforms")
 def get_employee_uniforms(
     employee_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPS_MANAGER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Get all uniform items for a specific employee. Admin only."""
@@ -126,7 +126,7 @@ def get_employee_uniforms(
 def list_uniform_items(
     status: Optional[str] = Query(None, description="Filter by status: issued, returned, lost, damaged"),
     employee_id: Optional[str] = Query(None, description="Filter by employee ID"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPS_MANAGER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """List all uniform items with optional filters. Admin only."""
@@ -142,7 +142,7 @@ def list_uniform_items(
 def update_uniform_item(
     item_id: str,
     data: UniformItemUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.SUPERVISOR, UserRole.HR, UserRole.OPS_MANAGER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.SUPERVISOR, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Update a uniform item (e.g., mark as returned, update size). Admin only."""
@@ -157,7 +157,7 @@ def update_uniform_item(
 @router.delete("/{item_id}", status_code=200, summary="Delete uniform item")
 def delete_uniform_item(
     item_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPS_MANAGER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Delete a uniform item record. Admin only."""
