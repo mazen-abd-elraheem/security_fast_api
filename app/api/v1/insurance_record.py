@@ -101,7 +101,7 @@ def _build_insurance_data(db: Session) -> list[dict]:
 
 @router.get("/report", summary="Get insurance record data")
 def get_insurance_report(
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.HR, UserRole.PERSONNEL_OFFICER, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     rows = _build_insurance_data(db)
@@ -113,7 +113,7 @@ def get_insurance_report(
 @router.put("/update-cells", summary="Batch update editable insurance cells")
 def batch_update_insurance_cells(
     data: InsuranceUpdateRequest,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.HR, UserRole.PERSONNEL_OFFICER, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     updated = 0

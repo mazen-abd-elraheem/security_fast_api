@@ -123,7 +123,7 @@ def get_evaluations_summary(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in ["admin", "operations_manager"]:
+    if current_user.role not in ["admin", "operations_manager", "hr", "personnel_officer", "ceo"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     from app.models.guard_roster import GuardRoster

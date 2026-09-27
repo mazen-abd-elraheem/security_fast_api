@@ -1,4 +1,4 @@
-﻿"""
+"""
 SecureTrack Platform -- Inventory Routes
 Admin manages clothing/uniform stock. Personnel Officer + Admin can view.
 """
@@ -43,10 +43,10 @@ class InventoryUpdate(BaseModel):
 @router.post("", status_code=201, summary="Add inventory stock")
 def add_inventory(
     data: InventoryCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Add new clothing stock to inventory. Admin only."""
+    """Add new clothing stock to inventory. Admin and HR only."""
     # Check if item with same type+size+color already exists
     existing = db.query(InventoryItem).filter(
         InventoryItem.item_type == data.item_type,
@@ -85,10 +85,10 @@ def add_inventory(
 def list_inventory(
     item_type: Optional[str] = Query(None),
     low_stock_only: bool = Query(False),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """List all inventory items. Admin + Personnel Officer."""
+    """List all inventory items. Admin + Personnel Officer + HR."""
     query = db.query(InventoryItem)
     if item_type:
         query = query.filter(InventoryItem.item_type == item_type)
@@ -104,7 +104,7 @@ def list_inventory(
 # â”€â”€ Get low stock alerts â”€â”€
 @router.get("/low-stock", summary="Low stock alerts")
 def get_low_stock(
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """Get inventory items below minimum stock level."""
@@ -120,7 +120,7 @@ def get_low_stock(
 # â”€â”€ Summary dashboard â”€â”€
 @router.get("/summary", summary="Inventory summary")
 def get_inventory_summary(
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """Get inventory summary stats."""
@@ -163,10 +163,10 @@ def get_inventory_summary(
 def update_inventory(
     item_id: str,
     data: InventoryUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Update inventory stock. Admin only."""
+    """Update inventory stock. Admin and HR only."""
     item = db.query(InventoryItem).filter(InventoryItem.item_id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Inventory item not found")
@@ -192,10 +192,10 @@ def update_inventory(
 @router.delete("/{item_id}", summary="Delete inventory item")
 def delete_inventory(
     item_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Delete an inventory item. Admin only."""
+    """Delete an inventory item. Admin and HR only."""
     item = db.query(InventoryItem).filter(InventoryItem.item_id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Inventory item not found")

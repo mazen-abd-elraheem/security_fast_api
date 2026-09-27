@@ -176,7 +176,7 @@ def _build_documents_sheet_data(db: Session) -> list[dict]:
 @router.get("/report", summary="Employee documents sheet report")
 def get_documents_sheet_report(
     db: Session = Depends(get_db),
-    user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER))
+    user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPERATIONS_MANAGER))
 ):
     """
     Returns the comprehensive documents tracking sheet for all guards/leaders/supervisors.
@@ -187,7 +187,7 @@ def get_documents_sheet_report(
 @router.get("/photos", summary="Employee documents photos report")
 def get_documents_photos_report(
     db: Session = Depends(get_db),
-    user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER))
+    user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER, UserRole.HR, UserRole.OPERATIONS_MANAGER))
 ):
     """
     Returns employees with their actual uploaded document photos.
@@ -230,7 +230,7 @@ def get_documents_photos_report(
 @router.post("/batch-update", summary="Batch update employee documents fields")
 def batch_update_cells(
     data: DocBatchUpdateRequest,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.PERSONNEL_OFFICER, UserRole.OPERATIONS_MANAGER, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     updated = 0
@@ -276,7 +276,7 @@ def batch_update_cells(
 
 @router.get("/export-csv", summary="Export documents sheet as CSV")
 def export_csv(
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR, UserRole.PERSONNEL_OFFICER, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     rows = _build_documents_sheet_data(db)
@@ -321,7 +321,7 @@ def export_csv(
 @router.post("/alert/{user_id}", summary="Alert personnel officers about missing documents")
 def alert_missing_documents(
     user_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.PERSONNEL_OFFICER, UserRole.OPERATIONS_MANAGER, UserRole.CEO)),
     db: Session = Depends(get_db),
 ):
     target_user = db.query(User).filter(User.user_id == user_id).first()

@@ -202,10 +202,10 @@ def ops_manager_review(
 
 @router.get("/admin/pending", summary="Admin views ops-approved requests")
 def admin_get_pending(
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Admin views cash advance requests approved by ops manager."""
+    """Admin views cash advance requests approved by ops manager. HR can also view."""
     advances = (
         db.query(CashAdvance)
         .filter(CashAdvance.status == CashAdvanceStatus.OPS_APPROVED.value)
@@ -222,10 +222,10 @@ def admin_get_pending(
 @router.get("/admin/all", summary="Admin views all cash advance requests")
 def admin_get_all(
     status_filter: Optional[str] = Query(None, description="Filter by status"),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Admin views all cash advance requests with optional status filter."""
+    """Admin views all cash advance requests with optional status filter. HR can also view."""
     query = db.query(CashAdvance)
 
     if status_filter:
