@@ -109,7 +109,10 @@ def get_terminations_sheet(
                 received_by = c_record.received_by
             reason = c_record.reason or "غير محدد"
         elif u.uniform_status:
-            uniform_status = u.uniform_status
+            if u.uniform_status == 'none':
+                uniform_status = 'بدون زي'
+            else:
+                uniform_status = u.uniform_status
 
         # Attendance totals for the date range
         attendance_entries = (

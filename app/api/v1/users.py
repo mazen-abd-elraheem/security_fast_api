@@ -187,7 +187,13 @@ def list_users(
     db: Session = Depends(get_db),
 ):
     """List users with optional filtering. Admin only."""
-    return UserService.list_users(db, role=role, region=region, is_active=is_active, onboarding_status=onboarding_status, skip=skip, limit=limit)
+    result = UserService.list_users(db, role=role, region=region, is_active=is_active, onboarding_status=onboarding_status, skip=skip, limit=limit)
+    if current_user.role == UserRole.HR:
+        restricted = [UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO]
+        filtered = [u for u in result["users"] if u.role not in restricted]
+        result["users"] = filtered
+        result["total"] = len(filtered)
+    return result
 
 
 @router.post("", response_model=UserResponse, status_code=201, summary="Admin or HR creates a user")
@@ -224,6 +230,13 @@ def get_user(
         if not user:
             from app.core.exceptions import NotFoundException
             raise NotFoundException("User", user_id)
+        
+        if current_user.role == UserRole.HR:
+            restricted = [UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO]
+            if user.role in restricted:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=403, detail="HR is not authorized to view this user.")
+                
         log_read(db, current_user, "user", user_id, user.name)
         db.commit()
         return user
@@ -247,6 +260,13 @@ def admin_update_user(
             
     try:
         user = UserService.get_by_id(db, user_id)
+        
+        if current_user.role == UserRole.HR and user:
+            restricted = [UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO]
+            if user.role in restricted:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=403, detail="HR is not authorized to update this user.")
+                
         old = snapshot(user) if user else {}
         updated = UserService.admin_update_user(db, user_id, update_data)
         log_update(db, current_user, "user", old, updated)
