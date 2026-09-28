@@ -208,10 +208,27 @@ def update_clothes_termination_status(
 ):
     rec = db.query(ClothesTermination).filter(ClothesTermination.user_id == term_id).first()
     if not rec:
-        rec = db.query(ClothesTermination).filter(ClothesTermination.id == term_id).first()
+        try:
+            rec = db.query(ClothesTermination).filter(ClothesTermination.id == int(term_id)).first()
+        except ValueError:
+            pass
     
     if not rec:
-        raise HTTPException(status_code=404, detail="Termination record not found")
+        from app.models.user import User
+        user = db.query(User).filter(User.user_id == term_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Termination record not found and user does not exist")
+        
+        rec = ClothesTermination(
+            user_id=term_id,
+            user_name=user.name,
+            clothes_status=payload.clothes_status,
+            received_by=payload.received_by or "HR",
+            notes=payload.notes,
+        )
+        db.add(rec)
+        db.commit()
+        return {"success": True}
         
     rec.clothes_status = payload.clothes_status
     if payload.received_by is not None:
