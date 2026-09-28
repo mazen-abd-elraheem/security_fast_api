@@ -11,6 +11,7 @@ from sqlalchemy import func
 
 from app.models.uniform_item import UniformItem
 from app.models.user import User
+from app.models.inventory_item import InventoryItem
 from app.schemas.uniform import (
     UniformItemCreate, UniformItemUpdate,
     UniformItemResponse, EmployeeUniformSummary,
@@ -31,10 +32,12 @@ class UniformService:
         if not employee:
             raise NotFoundException("Employee", data.employee_id)
 
+        item_type_val = data.item_type.value if hasattr(data.item_type, 'value') else data.item_type
+        
         item = UniformItem(
             item_id=str(uuid.uuid4()),
             employee_id=data.employee_id,
-            item_type=data.item_type.value if hasattr(data.item_type, 'value') else data.item_type,
+            item_type=item_type_val,
             size=data.size,
             color=data.color,
             notes=data.notes,
@@ -43,6 +46,16 @@ class UniformService:
             issued_by=issued_by_id,
         )
         db.add(item)
+        
+        # Deduct from inventory
+        inventory = db.query(InventoryItem).filter(
+            func.lower(InventoryItem.item_type) == item_type_val.lower(),
+            func.lower(InventoryItem.size) == (data.size.lower() if data.size else None),
+            func.lower(InventoryItem.color) == (data.color.lower() if data.color else None)
+        ).first()
+        if inventory and inventory.quantity_available > 0:
+            inventory.quantity_available -= 1
+
         db.commit()
         db.refresh(item)
         return item
@@ -61,10 +74,11 @@ class UniformService:
 
         created = []
         for data in items:
+            item_type_val = data.item_type.value if hasattr(data.item_type, 'value') else data.item_type
             item = UniformItem(
                 item_id=str(uuid.uuid4()),
                 employee_id=employee_id,
-                item_type=data.item_type.value if hasattr(data.item_type, 'value') else data.item_type,
+                item_type=item_type_val,
                 size=data.size,
                 color=data.color,
                 notes=data.notes,
@@ -74,6 +88,15 @@ class UniformService:
             )
             db.add(item)
             created.append(item)
+            
+            # Deduct from inventory
+            inventory = db.query(InventoryItem).filter(
+                func.lower(InventoryItem.item_type) == item_type_val.lower(),
+                func.lower(InventoryItem.size) == (data.size.lower() if data.size else None),
+                func.lower(InventoryItem.color) == (data.color.lower() if data.color else None)
+            ).first()
+            if inventory and inventory.quantity_available > 0:
+                inventory.quantity_available -= 1
 
         db.commit()
         for item in created:
