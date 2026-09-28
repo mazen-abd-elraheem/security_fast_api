@@ -190,13 +190,19 @@ def list_users(
     return UserService.list_users(db, role=role, region=region, is_active=is_active, onboarding_status=onboarding_status, skip=skip, limit=limit)
 
 
-@router.post("", response_model=UserResponse, status_code=201, summary="Admin creates a user")
+@router.post("", response_model=UserResponse, status_code=201, summary="Admin or HR creates a user")
 def admin_create_user(
     user_data: AdminUserCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Admin creates any type of user account."""
+    """Admin creates any type of user account. HR creates restricted roles."""
+    if current_user.role == UserRole.HR:
+        allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
+        if user_data.role not in allowed:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="HR is not authorized to create a user with this role.")
+            
     try:
         user = UserService.admin_create_user(db, user_data)
         log_create(db, current_user, "user", user)
@@ -209,10 +215,10 @@ def admin_create_user(
 @router.get("/{user_id}", response_model=UserResponse, summary="Get user by ID")
 def get_user(
     user_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Get a user's profile by ID. Admin only."""
+    """Get a user's profile by ID. Admin and HR only."""
     try:
         user = UserService.get_by_id(db, user_id)
         if not user:
@@ -229,10 +235,16 @@ def get_user(
 def admin_update_user(
     user_id: str,
     update_data: AdminUserUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Admin-level user update — can change any field."""
+    """Admin-level user update — can change any field. HR can update restricted roles."""
+    if current_user.role == UserRole.HR and update_data.role:
+        allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
+        if update_data.role not in allowed:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="HR is not authorized to assign this role.")
+            
     try:
         user = UserService.get_by_id(db, user_id)
         old = snapshot(user) if user else {}
@@ -247,7 +259,7 @@ def admin_update_user(
 @router.delete("/{user_id}", response_model=UserResponse, summary="Deactivate a user")
 def deactivate_user(
     user_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """Soft-delete: deactivate a user account."""

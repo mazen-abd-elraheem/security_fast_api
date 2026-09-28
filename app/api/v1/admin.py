@@ -70,7 +70,7 @@ def get_audit_logs(
 def list_pending_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=50),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
@@ -89,17 +89,24 @@ def list_pending_users(
 def approve_user(
     user_id: str,
     role: Optional[str] = Query(None, description="Override role on approval"),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
-    Admin approves a pending user registration.
+    Admin or HR approves a pending user registration.
 
     - Sets status=ACTIVE and is_active=True so the user can now log in.
     - Optionally override the role the user requested.
     - Sends an approval email notification.
     """
     try:
+        user_record = UserService.get_by_id(db, user_id)
+        if current_user.role == UserRole.HR:
+            allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
+            target_role = role or (user_record.requested_role if user_record else None) or (user_record.role if user_record else None)
+            if target_role not in allowed:
+                raise HTTPException(status_code=403, detail="HR is not authorized to approve a user with this role.")
+
         user = UserService.approve_user(db, user_id, role=role)
 
         # Audit log
@@ -126,15 +133,21 @@ def approve_user(
 )
 def activate_user(
     user_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
-    Admin activates a user account.
+    Admin or HR activates a user account.
 
     Sets is_active=True and status=ACTIVE so the user can log in.
     """
     try:
+        user_record = UserService.get_by_id(db, user_id)
+        if current_user.role == UserRole.HR and user_record:
+            allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
+            if user_record.role not in allowed:
+                raise HTTPException(status_code=403, detail="HR is not authorized to activate this role.")
+
         user = UserService.activate_user(db, user_id)
 
         # Audit log
@@ -226,11 +239,11 @@ def complete_onboarding(
 def reject_user(
     user_id: str,
     reason: Optional[str] = Query("", description="Reason for rejection"),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
-    Admin rejects a pending user registration.
+    Admin or HR rejects a pending user registration.
 
     The user record is kept with status=REJECTED.
     An email notification is sent to the user.
@@ -238,6 +251,13 @@ def reject_user(
     try:
         # Get user info before rejection for audit log
         user = UserService.get_by_id(db, user_id)
+        
+        if current_user.role == UserRole.HR and user:
+            allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
+            target_role = user.requested_role or user.role
+            if target_role not in allowed:
+                raise HTTPException(status_code=403, detail="HR is not authorized to reject this role.")
+
         user_name = user.name if user else "Unknown"
         user_email = user.email if user else "Unknown"
 
@@ -266,14 +286,20 @@ def reject_user(
 )
 def delete_user(
     user_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
-    Admin permanently deletes a user record from the database.
+    Admin or HR permanently deletes a user record from the database.
     """
     try:
         user = UserService.get_by_id(db, user_id)
+        
+        if current_user.role == UserRole.HR and user:
+            allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
+            if user.role not in allowed:
+                raise HTTPException(status_code=403, detail="HR is not authorized to delete this role.")
+
         user_name = user.name if user else "Unknown"
         user_email = user.email if user else "Unknown"
 
