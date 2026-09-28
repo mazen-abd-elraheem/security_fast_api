@@ -444,10 +444,9 @@ async def get_payroll_sheet(
         uid = getattr(a, 'guard_id', None) or getattr(a, 'user_id', None)
         if uid:
             advance_map[uid] = advance_map.get(uid, 0) + float(a.approved_amount or a.amount or 0)
-    # Also include advance_amount from DAE entries
-    for e in all_entries:
-        if e.advance_amount and e.advance_amount > 0:
-            advance_map[e.employee_id] = advance_map.get(e.employee_id, 0) + e.advance_amount
+    # NOTE: DAE.advance_amount is intentionally excluded here.
+    # CashAdvance table is the single source of truth for advance deductions.
+    # Including both would double-count advances recorded in both systems.
 
     bonus_map = _bonus_map_for_month(db, year, month)
 
@@ -603,7 +602,13 @@ async def get_payroll_sheet(
             "tax_deduction":     row["tax_deduction"],
             "other_deductions":  row.get("other_deductions", 0),
             "manual_deduction":  row.get("manual_deduction", 0),
-            "total_deductions":  round(row["tax_deduction"] + row.get("advance_deduction", adv) + row["insurance_share"], 2),
+            "total_deductions":  round(
+                row["tax_deduction"]
+                + row.get("advance_deduction", adv)
+                + row["insurance_share"]
+                + row.get("other_deductions", 0),
+                2
+            ),
             "operational_days":  row["operational_days"],
             "total_work_days":   row["total_work_days"],
             "total_absent_excused":   row.get("total_absent_excused", 0),

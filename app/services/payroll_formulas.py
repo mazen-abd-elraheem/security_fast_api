@@ -219,6 +219,7 @@ def compute_row(
     t_overtime     = sum(wk(i, "overtime")         for i in range(4))
     t_rest_allow   = sum(wk(i, "rest_allowance")   for i in range(4))
     t_late         = sum(wk(i, "late")             for i in range(4))
+    t_late_minutes = sum(wk(i, "late_minutes")     for i in range(4))  # excess minutes past threshold
     t_deduction    = sum(wk(i, "deduction")        for i in range(4))
     t_rest         = sum(wk(i, "rest")             for i in range(4))
     t_annual_lv    = sum(wk(i, "annual_leave")     for i in range(4))
@@ -255,7 +256,16 @@ def compute_row(
     sick_grace = 2
 
     ded_absence = t_absent_unexc * absent_unexc_mult * dr
-    ded_late = t_late * late_mult * dr
+
+    # Late deduction: per-minute (EGP/min) OR per-occurrence (fraction of daily rate)
+    r_late = deduction_rules.get("late")
+    if r_late and getattr(r_late, 'is_per_minute', False):
+        # Per-minute mode: EGP per excess minute past threshold
+        ded_late = t_late_minutes * float(r_late.amount)
+    else:
+        # Per-occurrence mode: each late occurrence = 0.5 day (or from DB)
+        ded_late = t_late * late_mult * dr
+
     ded_other = t_deduction * dr
     ded_sick = max(0.0, t_sick_lv - sick_grace) * late_mult * dr
     ded_term = (t_rest + t_annual_lv) * dr if term_reason in ("انقطاع", "استقاله فوريه") else 0.0
@@ -322,14 +332,6 @@ def compute_row(
     cq_tax          = calc_annual_tax(max(cp_annual, 0), tax_brackets)
     cr_monthly_tax  = cq_tax / 12.0
     bp_tax          = cr_monthly_tax
-
-    # ── Late deduction (EGP) ──
-    late_rule = deduction_rules.get("late")
-    late_amount_per = 0.0
-    if late_rule and late_rule.is_per_minute:
-        late_amount_per = late_rule.amount  # per minute
-    elif late_rule:
-        late_amount_per = late_rule.amount  # fixed per occurrence
 
     # ── Overtime pay ──
     overtime_pay = calc_overtime_pay(t_ot_hours, dr, deduction_rules)
