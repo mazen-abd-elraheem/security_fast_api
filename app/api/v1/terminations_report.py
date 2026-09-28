@@ -25,7 +25,7 @@ def get_terminations_sheet(
     date_from: str = Query(..., description="Start date (YYYY-MM-DD)"),
     date_to: str = Query(..., description="End date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
 ):
     """
     Returns aggregated data for terminated employees.

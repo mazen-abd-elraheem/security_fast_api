@@ -95,7 +95,7 @@ def get_my_photos(
 def get_guard_photos(
     guard_id: str,
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR,
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.HR
     )),
     db: Session = Depends(get_db),
 ):
@@ -129,7 +129,7 @@ def get_guard_photos(
 def get_all_guard_photos(
     limit: int = Query(30, ge=1, le=100),
     current_user: User = Depends(require_role(
-        UserRole.ADMIN,
+        UserRole.ADMIN, UserRole.HR
     )),
     db: Session = Depends(get_db),
 ):

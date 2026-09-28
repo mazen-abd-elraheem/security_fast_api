@@ -191,6 +191,35 @@ def update_clothes_terminations(payload: UpdatePayload, db: Session = Depends(de
             else:
                 setattr(rec, u.field, u.value)
     db.commit()
+    db.commit()
+    return {"success": True}
+
+class UpdateTerminationStatusPayload(BaseModel):
+    clothes_status: str
+    received_by: Optional[str] = None
+    notes: Optional[str] = None
+
+@router.put("/terminations/{term_id}")
+def update_clothes_termination_status(
+    term_id: str, 
+    payload: UpdateTerminationStatusPayload, 
+    db: Session = Depends(deps.get_db), 
+    current_user=Depends(deps.get_current_user)
+):
+    rec = db.query(ClothesTermination).filter(ClothesTermination.user_id == term_id).first()
+    if not rec:
+        rec = db.query(ClothesTermination).filter(ClothesTermination.id == term_id).first()
+    
+    if not rec:
+        raise HTTPException(status_code=404, detail="Termination record not found")
+        
+    rec.clothes_status = payload.clothes_status
+    if payload.received_by is not None:
+        rec.received_by = payload.received_by
+    if payload.notes is not None:
+        rec.notes = payload.notes
+        
+    db.commit()
     return {"success": True}
 
 class CreateTerminationPayload(BaseModel):
