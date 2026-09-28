@@ -154,7 +154,7 @@ def update_employee_balance(
     employee_id: str,
     payload: LeaveBalanceUpdate,
     year: int = Query(default=None),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     if not year:
@@ -173,7 +173,7 @@ def update_employee_balance(
 @router.post("/initialize", summary="Initialize balances for all active employees for a year (idempotent)")
 def initialize_year_balances(
     year: int = Query(default=None),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     if not year:
