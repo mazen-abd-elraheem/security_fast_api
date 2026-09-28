@@ -69,7 +69,7 @@ def get_site_guards_for_attendance(
     site_id: str,
     entry_date: str = Query(..., description="YYYY-MM-DD"),
     shift_id: Optional[str] = Query(None, description="Filter guards by shift (optional)"),
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
@@ -198,7 +198,7 @@ def get_site_guards_for_attendance(
 @router.post("/bulk", summary="Bulk save daily attendance")
 def bulk_save_attendance(
     payload: BulkAttendanceInput,
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
@@ -360,7 +360,7 @@ def bulk_save_attendance(
 def lock_day(
     site_id: str = Query(...),
     entry_date: str = Query(...),
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """Lock all entries for a site on a given day."""
@@ -389,7 +389,7 @@ def get_monthly_summary(
     month: int = Query(...),
     site_id: Optional[str] = None,
     role_filter: Optional[str] = Query(None, description="guard, outdoor, supervisor"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.LEADER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.LEADER, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     """
@@ -610,7 +610,7 @@ class AssignReplacementInput(BaseModel):
 def get_available_replacements(
     entry_date: str = Query(..., description="YYYY-MM-DD"),
     site_id: str = Query(...),
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     target_date = date.fromisoformat(entry_date)
@@ -678,7 +678,7 @@ def get_available_replacements(
 @router.post("/assign-replacement", summary="Assign replacement to current active shift")
 def assign_replacement(
     payload: AssignReplacementInput,
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
     target_date = date.fromisoformat(payload.entry_date)
