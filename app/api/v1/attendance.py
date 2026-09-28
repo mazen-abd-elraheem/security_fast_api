@@ -1,150 +1,76 @@
 """
 SecureTrack Platform — Attendance Routes
+All attendance now based on DailyAttendanceEntry (not AttendanceLog).
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
+import uuid
 
 from app.core.database import get_db
-from app.api.deps import get_current_user, require_role, handle_service_exception
+from app.api.deps import get_current_user, require_role
 from app.models.user import User
+from app.models.daily_attendance_entry import DailyAttendanceEntry
+from app.models.guard_roster import GuardRoster
+from app.models.shift import Shift
+from app.models.site import Site
 from app.enums import UserRole
-from app.schemas.attendance import (
-    AttendanceRecord, BulkAttendanceRequest,
-    AttendanceLogResponse, AttendanceListResponse, AttendanceReportResponse,
-)
-from app.services.attendance_service import AttendanceService
-from app.core.exceptions import SecureTrackException
 
 router = APIRouter()
 
 
-def _build_log_response(r) -> AttendanceLogResponse:
-    guard = r.roster.guard if r.roster else None
-    shift = r.roster.shift if r.roster else None
-    site = shift.site if shift else None
-    return AttendanceLogResponse(
-        log_id=r.log_id,
-        roster_id=r.roster_id,
-        visit_id=r.visit_id,
-        supervisor_id=r.supervisor_id,
-        status=r.status,
-        replacement_guard_id=r.replacement_guard_id,
-        notes=r.notes,
-        recorded_at=r.recorded_at,
-        guard_id=guard.user_id if guard else None,
-        guard_name=guard.name if guard else None,
-        site_name=site.name if site else None,
-        absence_type=getattr(r, 'absence_type', None),
-        excused_by=getattr(r, 'excused_by', None),
-        overtime_hours=getattr(r, 'overtime_hours', None),
-        overtime_approved_by=getattr(r, 'overtime_approved_by', None),
-        overtime_approved=getattr(r, 'overtime_approved', False),
-        is_rest_day=getattr(r, 'is_rest_day', False),
-        is_sick_leave=getattr(r, 'is_sick_leave', False),
-        is_annual_leave=getattr(r, 'is_annual_leave', False),
-    )
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
 
-@router.post("", response_model=AttendanceLogResponse, status_code=201, summary="Record attendance")
-def record_attendance(
-    visit_id: str = Query(..., description="Visit ID this attendance is for"),
-    record: AttendanceRecord = ...,
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
-    db: Session = Depends(get_db),
-):
-    """Record attendance for a single guard during a visit."""
-    try:
-        att = AttendanceService.record_attendance(db, current_user.user_id, visit_id, record)
-        # Fetch the full object to populate relationships
-        att = db.query(att.__class__).filter_by(log_id=att.log_id).first()
-        return _build_log_response(att)
-    except SecureTrackException as e:
-        handle_service_exception(e)
+def _entry_to_dict(e: DailyAttendanceEntry, guard: User | None = None, site: Site | None = None) -> dict:
+    return {
+        "entry_id": e.id,
+        "employee_id": e.employee_id,
+        "employee_name": guard.name if guard else None,
+        "site_id": e.site_id,
+        "site_name": site.name if site else None,
+        "entry_date": e.entry_date.isoformat() if e.entry_date else None,
+        "status": e.status,
+        "late_minutes": e.late_minutes,
+        "overtime_hours": e.overtime_hours,
+        "overtime_approved": e.overtime_approved,
+        "overtime_approved_by": e.overtime_approved_by,
+        "excused_by": e.excused_by,
+        "advance_amount": e.advance_amount,
+        "note": e.note,
+        "replaced_by_id": e.replaced_by_id,
+        "locked": e.locked,
+        "entered_by": e.entered_by,
+        "roster_id": e.roster_id,
+        "shift_id": e.shift_id,
+        "created_at": e.created_at.isoformat() if e.created_at else None,
+        "updated_at": e.updated_at.isoformat() if e.updated_at else None,
+    }
 
 
-@router.post("/bulk", status_code=201, summary="Bulk record attendance")
-def bulk_record_attendance(
-    bulk_data: BulkAttendanceRequest,
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
-    db: Session = Depends(get_db),
-):
-    """Record attendance for all guards during a visit."""
-    try:
-        results = AttendanceService.bulk_record(db, current_user.user_id, bulk_data)
-        return {"detail": f"{len(results)} attendance records created", "count": len(results)}
-    except SecureTrackException as e:
-        handle_service_exception(e)
-
-
-@router.get("/site/{site_id}", response_model=AttendanceListResponse, summary="Attendance for site")
-def get_attendance_for_site(
-    site_id: str,
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
-    current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER,
-    )),
-    db: Session = Depends(get_db),
-):
-    """Get attendance records for a site within a date range."""
-    records = AttendanceService.get_attendance_for_site(db, site_id, date_from, date_to)
-    items = [_build_log_response(r) for r in records]
-    return AttendanceListResponse(records=items, total=len(items))
-
-
-@router.get("/guard/{guard_id}", response_model=AttendanceListResponse, summary="Guard attendance")
-def get_guard_attendance(
-    guard_id: str,
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get attendance history for a guard. Guards can view their own."""
-    user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
-    if user_role == "guard" and current_user.user_id != guard_id:
-        raise HTTPException(status_code=403, detail="Guards can only view their own attendance")
-
-    records = AttendanceService.get_guard_attendance(db, guard_id, date_from, date_to)
-    items = [_build_log_response(r) for r in records]
-    return AttendanceListResponse(records=items, total=len(items))
-
-@router.get("/my", response_model=AttendanceListResponse, summary="Get supervisor's recorded attendance today")
-def get_my_attendance(
-    target_date: Optional[date] = Query(None),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
-    db: Session = Depends(get_db)
-):
-    """Get attendance logs recorded by the supervisor/leader today."""
-    records = AttendanceService.get_supervisor_attendance_today(db, current_user.user_id, target_date)
-    items = [_build_log_response(r) for r in records]
-    return AttendanceListResponse(records=items, total=len(items))
-
+# ─────────────────────────────────────────────
+# Supervisor dashboard: get guards with their daily status
+# ─────────────────────────────────────────────
 
 @router.get("/supervisor/dashboard", summary="Supervisor attendance dashboard for assigned sites")
 def supervisor_attendance_dashboard(
     target_date: Optional[date] = Query(None),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER, UserRole.HR, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """
     Returns all guards rostered at the supervisor's assigned sites today,
-    along with their attendance status (checked_in or not).
-    Powers the supervisor attendance-recording screen.
+    along with their DailyAttendanceEntry status.
     """
     from app.models.supervisor_route import SupervisorRoute
-    from app.models.guard_roster import GuardRoster
-    from app.models.shift import Shift
-    from app.models.site import Site
-    from app.models.attendance_log import AttendanceLog
     from sqlalchemy.orm import joinedload
 
     if target_date is None:
         target_date = date.today()
 
-    # 1. Get all sites assigned to this supervisor today
     routes = (
         db.query(SupervisorRoute)
         .filter(SupervisorRoute.supervisor_id == current_user.user_id)
@@ -155,12 +81,10 @@ def supervisor_attendance_dashboard(
     if not site_ids:
         return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
 
-    # 2. Bulk-load sites
     sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
     site_map = {s.site_id: s for s in sites}
 
-    # 3. Determine which shifts this supervisor is assigned to
-    # Build a map: site_id → set of assigned shift_ids (from routes)
+    # Determine which shifts this supervisor is assigned to
     assigned_shift_ids_by_site: dict[str, set] = {sid: set() for sid in site_ids}
     has_specific_shifts: dict[str, bool] = {sid: False for sid in site_ids}
     for r in routes:
@@ -168,12 +92,9 @@ def supervisor_attendance_dashboard(
             assigned_shift_ids_by_site[r.site_id].add(r.shift_id)
             has_specific_shifts[r.site_id] = True
 
-    # Load all active shifts for the sites, then filter
     all_site_shifts = db.query(Shift).filter(Shift.site_id.in_(site_ids), Shift.is_active == True).all()
     shifts = []
     for s in all_site_shifts:
-        # If supervisor has specific shift assignments → only include those
-        # If no specific shifts (legacy) → include all shifts for that site
         if has_specific_shifts.get(s.site_id, False):
             if s.shift_id in assigned_shift_ids_by_site.get(s.site_id, set()):
                 shifts.append(s)
@@ -181,7 +102,6 @@ def supervisor_attendance_dashboard(
             shifts.append(s)
 
     shift_map = {s.shift_id: s for s in shifts}
-    # site_id → list of shift_ids
     site_shift_ids: dict[str, list] = {sid: [] for sid in site_ids}
     for s in shifts:
         site_shift_ids[s.site_id].append(s.shift_id)
@@ -200,28 +120,28 @@ def supervisor_attendance_dashboard(
             .all()
         )
 
-    # 3. Bulk-load attendance logs for all rosters
-    roster_ids = [r.roster_id for r in rosters]
-    att_logs = []
-    if roster_ids:
-        att_logs = (
-            db.query(AttendanceLog)
+    # Load DailyAttendanceEntries for all guards at these sites today
+    guard_ids = list({r.guard_id for r in rosters if r.guard_id})
+    entries_map: dict[str, DailyAttendanceEntry] = {}
+    if guard_ids:
+        entries = (
+            db.query(DailyAttendanceEntry)
             .filter(
-                AttendanceLog.roster_id.in_(roster_ids),
-                AttendanceLog.supervisor_id == current_user.user_id,
+                DailyAttendanceEntry.employee_id.in_(guard_ids),
+                DailyAttendanceEntry.entry_date == target_date,
+                DailyAttendanceEntry.site_id.in_(site_ids),
             )
             .all()
         )
-    log_by_roster = {al.roster_id: al for al in att_logs}
+        entries_map = {e.employee_id: e for e in entries}
 
-    # 4. Group rosters by site
+    # Group rosters by site
     roster_by_site: dict[str, list] = {sid: [] for sid in site_ids}
     for r in rosters:
         shift_obj = shift_map.get(r.shift_id)
         if shift_obj:
             roster_by_site[shift_obj.site_id].append(r)
 
-    # 5. Build response
     sites_data = []
     total_guards = 0
     total_present = 0
@@ -244,9 +164,9 @@ def supervisor_attendance_dashboard(
             if guard:
                 seen_guard_ids.add(guard.user_id)
 
-            att_log = log_by_roster.get(roster.roster_id)
-            att_status = att_log.status if att_log else "not_recorded"
-            if att_log and att_log.status in ("present", "late"):
+            entry = entries_map.get(guard.user_id) if guard else None
+            att_status = entry.status if entry else "not_recorded"
+            if att_status in ("present", "rest_day_worked"):
                 site_present += 1
 
             guards.append({
@@ -254,20 +174,16 @@ def supervisor_attendance_dashboard(
                 "guard_name": guard.name if guard else "Unknown",
                 "guard_code": guard.employee_code if guard else None,
                 "roster_id": roster.roster_id,
+                "shift_id": roster.shift_id,
                 "shift_label": shift.label if shift else None,
                 "shift_time": f"{shift.start_time.strftime('%H:%M')}-{shift.end_time.strftime('%H:%M')}" if shift else None,
                 "status": att_status,
-                "recorded_at": att_log.recorded_at.isoformat() if att_log else None,
-                "notes": att_log.notes if att_log else None,
-                "log_id": att_log.log_id if att_log else None,
-                "absence_type": att_log.absence_type if att_log else None,
-                "excused_by": att_log.excused_by if att_log else None,
-                "overtime_hours": att_log.overtime_hours if att_log else None,
-                "overtime_approved_by": att_log.overtime_approved_by if att_log else None,
-                "overtime_approved": att_log.overtime_approved if att_log else False,
-                "is_rest_day": att_log.is_rest_day if att_log else False,
-                "is_sick_leave": att_log.is_sick_leave if att_log else False,
-                "is_annual_leave": att_log.is_annual_leave if att_log else False,
+                "entry_id": entry.id if entry else None,
+                "late_minutes": entry.late_minutes if entry else 0,
+                "overtime_hours": entry.overtime_hours if entry else 0,
+                "note": entry.note if entry else None,
+                "locked": entry.locked if entry else False,
+                "created_at": entry.created_at.isoformat() if entry and entry.created_at else None,
             })
 
         total_guards += len(guards)
@@ -288,19 +204,11 @@ def supervisor_attendance_dashboard(
     }
 
 
+# ─────────────────────────────────────────────
+# Guard auto check-in via GPS → writes DailyAttendanceEntry
+# ─────────────────────────────────────────────
 
-
-
-
-# -- Guard Auto Check-in --
-
-from app.models.guard_roster import GuardRoster
-from app.models.shift import Shift
-from app.models.site import Site
-from app.models.attendance_log import AttendanceLog
 from app.services.geo_service import GeoService
-import uuid
-
 
 @router.post("/checkin", status_code=200, summary="Guard auto check-in via GPS")
 def guard_checkin(
@@ -310,18 +218,15 @@ def guard_checkin(
     db: Session = Depends(get_db),
 ):
     """
-    Auto check-in: find the guard's assigned roster for today,
-    verify they are within the site's geofence, and create an attendance log.
+    Auto check-in: find the guard's roster for today, verify geofence,
+    then create or update a DailyAttendanceEntry as 'present'.
     """
-    from datetime import datetime, timezone
     import logging
     logger = logging.getLogger("securetrack.checkin")
 
     today = date.today()
-    logger.info(f"[CHECKIN] User={current_user.user_id} ({current_user.name}), "
-                f"role={current_user.role}, lat={latitude}, lng={longitude}, today={today}")
+    logger.info(f"[CHECKIN] User={current_user.user_id} ({current_user.name}), lat={latitude}, lng={longitude}, today={today}")
 
-    # Find today's roster assignment for this guard (exclude canceled)
     roster = (
         db.query(GuardRoster)
         .filter(GuardRoster.guard_id == current_user.user_id)
@@ -332,19 +237,19 @@ def guard_checkin(
     if not roster:
         return {"status": "no_assignment", "detail": f"No shift assigned for today ({today})"}
 
-    logger.info(f"[CHECKIN] Found roster={roster.roster_id}, shift={roster.shift_id}, "
-                f"assigned_date={roster.assigned_date}")
-
-    # Check if already checked in today
+    # Check if already checked in
     existing = (
-        db.query(AttendanceLog)
-        .filter(AttendanceLog.roster_id == roster.roster_id)
+        db.query(DailyAttendanceEntry)
+        .filter(
+            DailyAttendanceEntry.employee_id == current_user.user_id,
+            DailyAttendanceEntry.entry_date == today,
+            DailyAttendanceEntry.roster_id == roster.roster_id,
+        )
         .first()
     )
-    if existing:
+    if existing and existing.status in ("present", "rest_day_worked"):
         return {"status": "already_checked_in", "detail": "Already checked in for this shift"}
 
-    # Get the site via shift ? site
     shift = db.query(Shift).filter(Shift.shift_id == roster.shift_id).first()
     if not shift:
         return {"status": "error", "detail": "Shift not found"}
@@ -353,10 +258,8 @@ def guard_checkin(
     if not site:
         return {"status": "error", "detail": "Site not found"}
 
-    # Calculate distance
     distance = GeoService.haversine_distance_meters(latitude, longitude, site.latitude, site.longitude)
-    logger.info(f"[CHECKIN] Site={site.name}, site_lat={site.latitude}, site_lng={site.longitude}, "
-                f"radius={site.radius_meters}m, distance={int(distance)}m")
+    logger.info(f"[CHECKIN] Site={site.name}, distance={int(distance)}m, radius={site.radius_meters}m")
 
     if distance > site.radius_meters:
         return {
@@ -365,29 +268,39 @@ def guard_checkin(
             "distance_meters": int(distance),
         }
 
-    # Create attendance log (no visit/supervisor required for auto check-in)
-    log_id = str(uuid.uuid4())
-    recorded_at = datetime.now(timezone.utc)
-    log = AttendanceLog(
-        log_id=log_id,
-        roster_id=roster.roster_id,
-        visit_id=None,
-        supervisor_id=current_user.user_id,
-        status="present",
-        notes=f"Auto check-in at {int(distance)}m from site center",
-        recorded_at=recorded_at,
-    )
-    db.add(log)
-    db.commit()
+    now = datetime.now(timezone.utc)
 
-    logger.info(f"[CHECKIN] SUCCESS — log_id={log_id}, distance={int(distance)}m")
+    if existing:
+        existing.status = "present"
+        existing.note = f"Auto check-in at {int(distance)}m from site center"
+        existing.updated_at = now
+        db.commit()
+        entry_id = existing.id
+    else:
+        entry = DailyAttendanceEntry(
+            id=str(uuid.uuid4()),
+            employee_id=current_user.user_id,
+            site_id=site.site_id,
+            roster_id=roster.roster_id,
+            shift_id=roster.shift_id,
+            entry_date=today,
+            status="present",
+            late_minutes=0,
+            overtime_hours=0.0,
+            entered_by=current_user.user_id,
+            note=f"Auto check-in at {int(distance)}m from site center",
+        )
+        db.add(entry)
+        db.commit()
+        entry_id = entry.id
 
+    logger.info(f"[CHECKIN] SUCCESS — entry_id={entry_id}, distance={int(distance)}m")
     return {
         "status": "checked_in",
         "detail": f"Checked in to {site.name}",
         "site_name": site.name,
         "distance_meters": int(distance),
-        "recorded_at": recorded_at.isoformat(),
+        "recorded_at": now.isoformat(),
     }
 
 
@@ -404,7 +317,7 @@ def debug_checkin(
     ).all()
 
     roster_today = [r for r in rosters if r.assigned_date == today]
-    
+
     result = {
         "user_id": current_user.user_id,
         "name": current_user.name,
@@ -419,7 +332,11 @@ def debug_checkin(
         r = roster_today[0]
         shift = db.query(Shift).filter(Shift.shift_id == r.shift_id).first()
         site = db.query(Site).filter(Site.site_id == shift.site_id).first() if shift else None
-        existing_log = db.query(AttendanceLog).filter(AttendanceLog.roster_id == r.roster_id).first()
+        existing_entry = db.query(DailyAttendanceEntry).filter(
+            DailyAttendanceEntry.employee_id == current_user.user_id,
+            DailyAttendanceEntry.entry_date == today,
+            DailyAttendanceEntry.roster_id == r.roster_id,
+        ).first()
 
         result["roster_id"] = r.roster_id
         result["shift_id"] = r.shift_id
@@ -428,12 +345,11 @@ def debug_checkin(
         result["site_lat"] = site.latitude if site else None
         result["site_lng"] = site.longitude if site else None
         result["site_radius"] = site.radius_meters if site else None
-        result["already_checked_in"] = existing_log is not None
-        if existing_log:
-            result["existing_log_id"] = existing_log.log_id
-            result["existing_log_status"] = existing_log.status
+        result["already_checked_in"] = existing_entry is not None and existing_entry.status in ("present", "rest_day_worked")
+        if existing_entry:
+            result["existing_entry_id"] = existing_entry.id
+            result["existing_entry_status"] = existing_entry.status
 
-        # Calculate distance from guard's stored location
         if site and current_user.latitude and current_user.longitude:
             dist = GeoService.haversine_distance_meters(current_user.latitude, current_user.longitude, site.latitude, site.longitude)
             result["stored_location_distance_m"] = int(dist)
@@ -442,138 +358,136 @@ def debug_checkin(
     return result
 
 
-# -- CSV Export --
+# ─────────────────────────────────────────────
+# Guard / Supervisor attendance history
+# ─────────────────────────────────────────────
 
-from fastapi.responses import StreamingResponse
-import csv
-import io
-
-@router.get("/export", summary="Export attendance as CSV")
-def export_attendance_csv(
-    target_date: date = Query(..., description="Date to export"),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+@router.get("/guard/{guard_id}", summary="Guard attendance history")
+def get_guard_attendance(
+    guard_id: str,
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Export attendance records for a date as CSV."""
-    from sqlalchemy.orm import joinedload
+    """Get DailyAttendanceEntry history for a guard. Guards can only view their own."""
+    user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
+    if user_role == "guard" and current_user.user_id != guard_id:
+        raise HTTPException(status_code=403, detail="Guards can only view their own attendance")
 
-    logs = (
-        db.query(AttendanceLog)
-        .options(
-            joinedload(AttendanceLog.roster).joinedload(GuardRoster.guard),
-            joinedload(AttendanceLog.roster).joinedload(GuardRoster.shift).joinedload(Shift.site),
-        )
-        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
-        .filter(GuardRoster.assigned_date == target_date)
-        .all()
-    )
+    guard = db.query(User).filter(User.user_id == guard_id).first()
 
-    output = io.StringIO()
-    output.write('\ufeff')  # UTF-8 BOM for Excel
-    writer = csv.writer(output)
-    writer.writerow(["Guard Name", "Badge", "Site", "Shift", "Status", "Check-in Time", "Notes"])
+    q = db.query(DailyAttendanceEntry).filter(DailyAttendanceEntry.employee_id == guard_id)
+    if date_from:
+        q = q.filter(DailyAttendanceEntry.entry_date >= date_from)
+    if date_to:
+        q = q.filter(DailyAttendanceEntry.entry_date <= date_to)
+    entries = q.order_by(DailyAttendanceEntry.entry_date.desc()).all()
 
-    for log in logs:
-        guard = log.roster.guard if log.roster else None
-        shift = log.roster.shift if log.roster else None
-        site = shift.site if shift else None
-        writer.writerow([
-            guard.name if guard else "Unknown",
-            guard.badge_number if guard else "",
-            site.name if site else "Unknown",
-            shift.label if shift else "",
-            log.status,
-            log.recorded_at.strftime("%Y-%m-%d %H:%M:%S") if log.recorded_at else "",
-            log.notes or "",
-        ])
+    items = []
+    for e in entries:
+        site = db.query(Site).filter(Site.site_id == e.site_id).first()
+        items.append(_entry_to_dict(e, guard=guard, site=site))
 
-    output.seek(0)
-    filename = f"attendance_{target_date.isoformat()}.csv"
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
+    return {"records": items, "total": len(items)}
 
 
-# -- Supervisor Attendance Daily Summary (for Admin) --
+@router.get("/my", summary="Get my recorded attendance")
+def get_my_attendance(
+    target_date: Optional[date] = Query(None),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER, UserRole.GUARD, UserRole.OUTDOOR)),
+    db: Session = Depends(get_db),
+):
+    """Get DailyAttendanceEntries recorded for/by the current user."""
+    q = db.query(DailyAttendanceEntry).filter(DailyAttendanceEntry.employee_id == current_user.user_id)
+    if target_date:
+        q = q.filter(DailyAttendanceEntry.entry_date == target_date)
+    entries = q.order_by(DailyAttendanceEntry.entry_date.desc()).all()
+
+    items = []
+    for e in entries:
+        site = db.query(Site).filter(Site.site_id == e.site_id).first()
+        items.append(_entry_to_dict(e, site=site))
+
+    return {"records": items, "total": len(items)}
+
+
+# ─────────────────────────────────────────────
+# Daily Summary for Admin — read from DailyAttendanceEntry
+# ─────────────────────────────────────────────
 
 @router.get("/daily-summary", summary="Supervisor attendance daily summary")
 def get_daily_summary(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
-    site_id: str = Query(None, description="Filter by site ID"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
+    site_id: Optional[str] = Query(None, description="Filter by site ID"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """
-    Get all supervisor-recorded attendance for a date, grouped by site.
-    This is the manual roll-call data taken by supervisors during visits.
-    """
-    from sqlalchemy.orm import joinedload
-
-    query = (
-        db.query(AttendanceLog)
-        .options(
-            joinedload(AttendanceLog.roster).joinedload(GuardRoster.guard),
-            joinedload(AttendanceLog.roster).joinedload(GuardRoster.shift).joinedload(Shift.site),
-            joinedload(AttendanceLog.supervisor),
-            joinedload(AttendanceLog.visit),
+    """Get all daily attendance entries grouped by site and date."""
+    q = (
+        db.query(DailyAttendanceEntry)
+        .filter(
+            DailyAttendanceEntry.entry_date >= date_from,
+            DailyAttendanceEntry.entry_date <= date_to,
         )
-        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
-        .outerjoin(Shift, GuardRoster.shift_id == Shift.shift_id)
-        .filter(GuardRoster.assigned_date >= date_from)
-        .filter(GuardRoster.assigned_date <= date_to)
     )
     if site_id:
-        query = query.filter(Shift.site_id == site_id)
-    logs = query.all()
+        q = q.filter(DailyAttendanceEntry.site_id == site_id)
+    entries = q.all()
 
-    # Group by site and date
-    sites_map = {}
-    for log in logs:
-        guard = log.roster.guard if log.roster else None
-        shift = log.roster.shift if log.roster else None
-        site = shift.site if shift else None
+    # Pre-fetch users and sites
+    emp_ids = {e.employee_id for e in entries}
+    s_ids = {e.site_id for e in entries}
+    by_ids = {e.entered_by for e in entries}
+
+    users = {u.user_id: u for u in db.query(User).filter(User.user_id.in_(emp_ids)).all()}
+    sites_map = {s.site_id: s for s in db.query(Site).filter(Site.site_id.in_(s_ids)).all()}
+    entered_by_map = {u.user_id: u for u in db.query(User).filter(User.user_id.in_(by_ids)).all()}
+
+    sites_data: dict[str, dict] = {}
+    for e in entries:
+        guard = users.get(e.employee_id)
+        site = sites_map.get(e.site_id)
+        entered_by_user = entered_by_map.get(e.entered_by)
         site_name = site.name if site else "Unknown"
-        supervisor = log.supervisor
-        date_str = log.roster.assigned_date.isoformat() if log.roster else "Unknown"
-        key = f"{date_str}_{site_name}"
+        date_str = e.entry_date.isoformat()
+        key = f"{date_str}_{e.site_id}"
 
-        if key not in sites_map:
-            sites_map[key] = {
+        if key not in sites_data:
+            sites_data[key] = {
                 "date": date_str,
+                "site_id": e.site_id,
                 "site_name": site_name,
-                "supervisor_name": supervisor.name if supervisor else "Unknown",
-                "visit_time": log.recorded_at.strftime("%H:%M") if log.recorded_at else "",
+                "supervisor_name": entered_by_user.name if entered_by_user else "Unknown",
                 "guards": [],
                 "total_present": 0,
                 "total_absent": 0,
                 "total_late": 0,
             }
 
-        guard_entry = {
-            "log_id": log.log_id,
-            "roster_id": log.roster_id,
+        sites_data[key]["guards"].append({
+            "entry_id": e.id,
             "name": guard.name if guard else "Unknown",
             "badge_number": guard.badge_number if guard else "",
             "employee_code": guard.employee_code if guard else "",
             "classification": guard.classification if guard else "",
-            "status": log.status,
-            "notes": log.notes or "",
-            "recorded_at": log.recorded_at.isoformat() if log.recorded_at else "",
-        }
-        sites_map[key]["guards"].append(guard_entry)
+            "status": e.status,
+            "late_minutes": e.late_minutes,
+            "overtime_hours": e.overtime_hours,
+            "note": e.note or "",
+            "locked": e.locked,
+            "created_at": e.created_at.isoformat() if e.created_at else "",
+        })
 
-        if log.status == "present":
-            sites_map[key]["total_present"] += 1
-        elif log.status == "absent":
-            sites_map[key]["total_absent"] += 1
-        elif log.status == "late":
-            sites_map[key]["total_late"] += 1
+        if e.status in ("present", "rest_day_worked"):
+            sites_data[key]["total_present"] += 1
+        elif e.status in ("absence_unexcused", "absence_excused"):
+            sites_data[key]["total_absent"] += 1
+        elif e.status == "late" or e.late_minutes > 0:
+            sites_data[key]["total_late"] += 1
 
-    sites_list = list(sites_map.values())
-
+    sites_list = list(sites_data.values())
     summary = {
         "total_present": sum(s["total_present"] for s in sites_list),
         "total_absent": sum(s["total_absent"] for s in sites_list),
@@ -587,54 +501,44 @@ def get_daily_summary(
     }
 
 
+# ─────────────────────────────────────────────
+# CSV Exports
+# ─────────────────────────────────────────────
+
+from fastapi.responses import StreamingResponse
+import csv
+import io
+
+
 @router.get("/daily-summary/export", summary="Export supervisor attendance as CSV")
 def export_daily_summary_csv(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
-    site_id: str = Query(None, description="Filter by site ID"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO)),
+    site_id: Optional[str] = Query(None, description="Filter by site ID"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Export supervisor-recorded attendance for a date as CSV."""
-    from sqlalchemy.orm import joinedload
-
-    query = (
-        db.query(AttendanceLog)
-        .options(
-            joinedload(AttendanceLog.roster).joinedload(GuardRoster.guard),
-            joinedload(AttendanceLog.roster).joinedload(GuardRoster.shift).joinedload(Shift.site),
-            joinedload(AttendanceLog.supervisor),
-        )
-        .join(GuardRoster, AttendanceLog.roster_id == GuardRoster.roster_id)
-        .outerjoin(Shift, GuardRoster.shift_id == Shift.shift_id)
-        .filter(GuardRoster.assigned_date >= date_from)
-        .filter(GuardRoster.assigned_date <= date_to)
-    )
-    if site_id:
-        query = query.filter(Shift.site_id == site_id)
-    logs = query.all()
+    """Export daily attendance entries for a date range as CSV."""
+    data = get_daily_summary(date_from=date_from, date_to=date_to, site_id=site_id, current_user=current_user, db=db)
 
     output = io.StringIO()
-    output.write('\ufeff')  # UTF-8 BOM for Excel
+    output.write('\ufeff')
     writer = csv.writer(output)
-    writer.writerow(["Date", "Site", "Supervisor", "Guard Name", "Badge", "Status", "Notes", "Recorded At"])
+    writer.writerow(["Date", "Site", "Supervisor", "Guard Name", "Badge", "Status", "Late Minutes", "Note", "Recorded At"])
 
-    for log in logs:
-        guard = log.roster.guard if log.roster else None
-        shift = log.roster.shift if log.roster else None
-        site = shift.site if shift else None
-        supervisor = log.supervisor
-
-        writer.writerow([
-            log.roster.assigned_date.isoformat() if log.roster else "Unknown",
-            site.name if site else "Unknown",
-            supervisor.name if supervisor else "Unknown",
-            guard.name if guard else "Unknown",
-            guard.badge_number if guard else "",
-            log.status,
-            log.notes or "",
-            log.recorded_at.strftime("%Y-%m-%d %H:%M:%S") if log.recorded_at else "",
-        ])
+    for site_entry in data["sites"]:
+        for g in site_entry["guards"]:
+            writer.writerow([
+                site_entry["date"],
+                site_entry["site_name"],
+                site_entry["supervisor_name"],
+                g["name"],
+                g["badge_number"],
+                g["status"],
+                g["late_minutes"],
+                g["note"],
+                g["created_at"],
+            ])
 
     output.seek(0)
     filename = f"attendance_summary_{date_from.isoformat()}_to_{date_to.isoformat()}.csv"
@@ -645,65 +549,138 @@ def export_daily_summary_csv(
     )
 
 
-# -- Accountant Edit & Delete --
-class AttendanceUpdate(BaseModel):
-    status: str
-    notes: Optional[str] = None
-
-@router.put("/{log_id}", summary="Edit attendance record (Accountant)")
-def update_attendance(
-    log_id: str,
-    update_data: AttendanceUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+@router.get("/export", summary="Export attendance as CSV")
+def export_attendance_csv(
+    target_date: date = Query(..., description="Date to export"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    log = db.query(AttendanceLog).filter(AttendanceLog.log_id == log_id).first()
-    if not log:
-        raise HTTPException(status_code=404, detail="Attendance record not found")
-    
-    log.status = update_data.status
-    if update_data.notes is not None:
-        log.notes = update_data.notes
-        
+    """Export DailyAttendanceEntries for a date as CSV."""
+    entries = db.query(DailyAttendanceEntry).filter(DailyAttendanceEntry.entry_date == target_date).all()
+    emp_ids = {e.employee_id for e in entries}
+    s_ids = {e.site_id for e in entries}
+    users = {u.user_id: u for u in db.query(User).filter(User.user_id.in_(emp_ids)).all()}
+    sites_map = {s.site_id: s for s in db.query(Site).filter(Site.site_id.in_(s_ids)).all()}
+
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow(["Guard Name", "Badge", "Site", "Status", "Late Minutes", "Overtime Hours", "Note", "Date"])
+
+    for e in entries:
+        guard = users.get(e.employee_id)
+        site = sites_map.get(e.site_id)
+        writer.writerow([
+            guard.name if guard else "Unknown",
+            guard.badge_number if guard else "",
+            site.name if site else "Unknown",
+            e.status,
+            e.late_minutes,
+            e.overtime_hours,
+            e.note or "",
+            e.entry_date.isoformat(),
+        ])
+
+    output.seek(0)
+    filename = f"attendance_{target_date.isoformat()}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+# ─────────────────────────────────────────────
+# Edit & Delete attendance entries (Admin/Accountant)
+# ─────────────────────────────────────────────
+
+class AttendanceEntryUpdate(BaseModel):
+    status: Optional[str] = None
+    late_minutes: Optional[int] = None
+    overtime_hours: Optional[float] = None
+    overtime_approved: Optional[bool] = None
+    overtime_approved_by: Optional[str] = None
+    excused_by: Optional[str] = None
+    note: Optional[str] = None
+    override_reason: Optional[str] = None
+
+
+@router.put("/{entry_id}", summary="Edit attendance entry (Admin/Accountant)")
+def update_attendance_entry(
+    entry_id: str,
+    update_data: AttendanceEntryUpdate,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    entry = db.query(DailyAttendanceEntry).filter(DailyAttendanceEntry.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Attendance entry not found")
+
+    if entry.locked and current_user.role not in (UserRole.ADMIN,):
+        raise HTTPException(status_code=403, detail="This entry is locked. Only Admin can override.")
+
+    if update_data.status is not None:
+        entry.status = update_data.status
+    if update_data.late_minutes is not None:
+        entry.late_minutes = update_data.late_minutes
+    if update_data.overtime_hours is not None:
+        entry.overtime_hours = update_data.overtime_hours
+    if update_data.overtime_approved is not None:
+        entry.overtime_approved = update_data.overtime_approved
+    if update_data.overtime_approved_by is not None:
+        entry.overtime_approved_by = update_data.overtime_approved_by
+    if update_data.excused_by is not None:
+        entry.excused_by = update_data.excused_by
+    if update_data.note is not None:
+        entry.note = update_data.note
+    if update_data.override_reason is not None:
+        entry.override_reason = update_data.override_reason
+        entry.overridden_by = current_user.user_id
+        entry.overridden_at = datetime.now(timezone.utc)
+
+    entry.updated_at = datetime.now(timezone.utc)
     db.commit()
-    db.refresh(log)
-    return {"message": "Updated successfully", "status": log.status}
+    db.refresh(entry)
+    return {"message": "Updated successfully", "status": entry.status, "entry_id": entry.id}
 
-@router.delete("/{log_id}", summary="Delete attendance record (Accountant)")
-def delete_attendance(
-    log_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT)),
+
+@router.delete("/{entry_id}", summary="Delete attendance entry (Admin)")
+def delete_attendance_entry(
+    entry_id: str,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
-    log = db.query(AttendanceLog).filter(AttendanceLog.log_id == log_id).first()
-    if not log:
-        raise HTTPException(status_code=404, detail="Attendance record not found")
-    
-    db.delete(log)
+    entry = db.query(DailyAttendanceEntry).filter(DailyAttendanceEntry.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Attendance entry not found")
+
+    db.delete(entry)
     db.commit()
     return {"message": "Deleted successfully"}
-# -- Comprehensive Attendance Report --
+
+
+# ─────────────────────────────────────────────
+# Comprehensive Attendance Report — already uses DailyAttendanceEntry
+# ─────────────────────────────────────────────
 
 @router.get("/report", summary="Comprehensive Attendance Report")
 def get_attendance_report(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
-    site_id: str = Query(None, description="Filter by site ID"),
+    site_id: Optional[str] = Query(None, description="Filter by site ID"),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    from sqlalchemy.orm import joinedload
-    from app.models.daily_attendance_entry import DailyAttendanceEntry
     from app.models.payroll_formula_config import PayrollFormulaConfig
+    from app.models.supervisor_route import SupervisorRoute
+    from sqlalchemy.orm import joinedload
 
-    # Load deduction constants from DB (formula configs), fallback to defaults
     _cfgs = db.query(PayrollFormulaConfig).all()
     _cfg_map = {c.config_key: float(c.value) for c in _cfgs}
     LATE_THRESHOLD_MINUTES = _cfg_map.get("late_threshold_minutes", 10)
     LATE_DEDUCTION_PER_MINUTE = _cfg_map.get("late_deduction_per_minute", 1.0)
     ABSENT_DEDUCTION = _cfg_map.get("absent_day_deduction", 100.0)
 
-    # Arabic labels for roles shown in the attendance report
     ROLE_ARABIC_MAP = {
         "supervisor": "المشرف",
         "leader": "ليدر",
@@ -735,9 +712,6 @@ def get_attendance_report(
     for roster in rosters:
         user_rosters[roster.guard_id].append(roster)
 
-    # Also load SupervisorRoutes for supervisor/leader roles
-    from app.models.supervisor_route import SupervisorRoute
-    from app.models.site import Site
     sup_routes = (
         db.query(SupervisorRoute)
         .filter(SupervisorRoute.supervisor_id.in_(user_dict.keys()))
@@ -749,7 +723,6 @@ def get_attendance_report(
     for sr in sup_routes:
         user_sup_routes[sr.supervisor_id].append(sr)
 
-    # Pre-build site_id → supervisor_name map (eliminates per-user N+1)
     all_site_ids = set()
     for r_list in user_rosters.values():
         for r in r_list:
@@ -761,16 +734,13 @@ def get_attendance_report(
 
     site_supervisor_map: dict[str, str] = {}
     if all_site_ids:
-        # Get the latest supervisor route per site
         from sqlalchemy import func as sa_func, and_
         sup_route_sub = (
             db.query(
                 SupervisorRoute.site_id,
                 sa_func.max(SupervisorRoute.assigned_date).label("max_date"),
             )
-            .filter(
-                SupervisorRoute.site_id.in_(all_site_ids),
-            )
+            .filter(SupervisorRoute.site_id.in_(all_site_ids))
             .group_by(SupervisorRoute.site_id)
             .subquery()
         )
@@ -812,19 +782,17 @@ def get_attendance_report(
         user_roster_list = user_rosters[user_id]
         user_entry_list = user_entries[user_id]
         user_sr_list = user_sup_routes[user_id]
-        
-        # If site filter is provided, skip users not assigned to this site in this period
+
         if site_id:
             user_sites = {r.shift.site_id for r in user_roster_list if r.shift}
             user_sites.update({sr.site_id for sr in user_sr_list})
             if site_id not in user_sites:
                 continue
 
-        # Get latest roster for shift/site info
         latest_roster = None
         if user_roster_list:
             latest_roster = sorted(user_roster_list, key=lambda r: r.assigned_date)[-1]
-            
+
         shift_label = latest_roster.shift.label if latest_roster and latest_roster.shift else "N/A"
         site_name = latest_roster.shift.site.name if latest_roster and latest_roster.shift and latest_roster.shift.site else "N/A"
         shift_time = ""
@@ -834,7 +802,6 @@ def get_attendance_report(
             if st and et:
                 shift_time = f"{st.strftime('%H:%M')} - {et.strftime('%H:%M')}"
 
-        # For supervisor/leader roles: fallback to supervisor_routes if no guard_roster
         if (shift_label == "N/A" or site_name == "N/A") and user_sr_list:
             latest_sr = sorted(user_sr_list, key=lambda r: r.assigned_date)[-1]
             sr_site = db.query(Site).filter(Site.site_id == latest_sr.site_id).first()
@@ -848,7 +815,6 @@ def get_attendance_report(
                     if not shift_time and sr_shift.start_time and sr_shift.end_time:
                         shift_time = f"{sr_shift.start_time.strftime('%H:%M')} - {sr_shift.end_time.strftime('%H:%M')}"
 
-        # Find the supervisor assigned to this user's site — bulk-preloaded
         supervisor_name = "N/A"
         resolved_site_id = None
         if latest_roster and latest_roster.shift:
@@ -856,29 +822,24 @@ def get_attendance_report(
         elif user_sr_list:
             latest_sr = sorted(user_sr_list, key=lambda r: r.assigned_date)[-1]
             resolved_site_id = latest_sr.site_id
-
         if resolved_site_id and resolved_site_id in site_supervisor_map:
             supervisor_name = site_supervisor_map[resolved_site_id]
 
-
-        # Aggregate counts
-        days_present = sum(1 for e in user_entry_list if e.status == 'present')
+        days_present = sum(1 for e in user_entry_list if e.status in ("present", "rest_day_worked"))
         days_absent_excused = sum(1 for e in user_entry_list if e.status == 'absence_excused')
         days_absent_unexcused = sum(1 for e in user_entry_list if e.status == 'absence_unexcused')
         days_annual_leave = sum(1 for e in user_entry_list if e.status == 'annual_leave')
         days_sick_leave = sum(1 for e in user_entry_list if e.status == 'sick_leave')
         days_rest = sum(1 for e in user_entry_list if e.status == 'rest')
         days_rest_worked = sum(1 for e in user_entry_list if e.status == 'rest_day_worked')
-        
+
         late_count = sum(1 for e in user_entry_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
         total_overtime_hours = sum(e.overtime_hours for e in user_entry_list)
-        
-        # Calculate deduction money
+
         late_deduction = sum((e.late_minutes * LATE_DEDUCTION_PER_MINUTE) for e in user_entry_list if e.late_minutes > LATE_THRESHOLD_MINUTES)
         absent_deduction = days_absent_unexcused * ABSENT_DEDUCTION
         total_deduction_money = round(late_deduction + absent_deduction, 2)
 
-        # Leave date logic
         leave_date = ""
         if not user.is_active and user.updated_at:
             leave_date = user.updated_at.strftime("%Y-%m-%d")
@@ -911,7 +872,7 @@ def get_attendance_report(
     return {
         "date_from": date_from.isoformat(),
         "date_to": date_to.isoformat(),
-        "employees": employees
+        "employees": employees,
     }
 
 
@@ -919,67 +880,35 @@ def get_attendance_report(
 def export_attendance_report(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
-    site_id: str = Query(None, description="Filter by site ID"),
+    site_id: Optional[str] = Query(None, description="Filter by site ID"),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    import io
-    import csv
-    from fastapi.responses import StreamingResponse
-    
     report = get_attendance_report(date_from=date_from, date_to=date_to, site_id=site_id, current_user=current_user, db=db)
     employees = report["employees"]
 
     output = io.StringIO()
     output.write("\ufeff")
     writer = csv.writer(output)
-    
+
     headers = [
-        "الاكواد",
-        "مسلسل",
-        "التصنيف",
-        "توقيت العمل",
-        "المشرف",
-        "مشروع",
-        "تاريخ التعيين",
-        "تاريخ ترك العمل",
-        "الاســـــــــــــــــــــــــــــم",
-        "غياب باذن",
-        "غياب بدون",
-        "اضافى",
-        "بدل راحه",
-        "تاخير",
-        "خصم",
-        "راحة",
-        "اجازة من السنوي",
-        "اجازة مرضي",
-        "ايام العمل التشغيليه"
+        "الاكواد", "مسلسل", "التصنيف", "توقيت العمل", "المشرف", "مشروع",
+        "تاريخ التعيين", "تاريخ ترك العمل", "الاسم",
+        "غياب باذن", "غياب بدون", "اضافى", "بدل راحه",
+        "تاخير", "خصم", "راحة", "اجازة من السنوي", "اجازة مرضي", "ايام العمل التشغيليه",
     ]
     writer.writerow(headers)
-    
+
     for emp in employees:
         writer.writerow([
-            emp["badge_number"],
-            emp["serial"],
-            emp["classification"],
-            emp["shift_label"],
-            emp["supervisor"],
-            emp["site_name"],
-            emp["hire_date"],
-            emp["leave_date"],
-            emp["name"],
-            emp["absence_excused"],
-            emp["absence_unexcused"],
-            emp["overtime_hours"],
-            emp["rest_day_worked"],
-            emp["late_count"],
-            emp["deductions"],
-            emp["rest_days"],
-            emp["annual_leave"],
-            emp["sick_leave"],
-            emp["days_present"]
+            emp["badge_number"], emp["serial"], emp["classification"],
+            emp["shift_label"], emp["supervisor"], emp["site_name"],
+            emp["hire_date"], emp["leave_date"], emp["name"],
+            emp["absence_excused"], emp["absence_unexcused"], emp["overtime_hours"],
+            emp["rest_day_worked"], emp["late_count"], emp["deductions"],
+            emp["rest_days"], emp["annual_leave"], emp["sick_leave"], emp["days_present"],
         ])
-        
+
     output.seek(0)
     filename = f"attendance_report_{date_from.isoformat()}_to_{date_to.isoformat()}.csv"
     return StreamingResponse(
@@ -988,16 +917,17 @@ def export_attendance_report(
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
+
+# ─────────────────────────────────────────────
+# Recent entries (dashboard widget)
+# ─────────────────────────────────────────────
+
 @router.get("/recent-daily-entries", summary="Get recent daily attendance entries")
 def get_recent_daily_entries(
     limit: int = 5,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.models.daily_attendance_entry import DailyAttendanceEntry
-    from app.models.user import User
-    from app.models.site import Site
-
     entries = (
         db.query(DailyAttendanceEntry)
         .order_by(DailyAttendanceEntry.created_at.desc())
@@ -1017,3 +947,31 @@ def get_recent_daily_entries(
         })
 
     return {"entries": results}
+
+
+# ─────────────────────────────────────────────
+# Site attendance (read from DailyAttendanceEntry)
+# ─────────────────────────────────────────────
+
+@router.get("/site/{site_id}", summary="Attendance for site")
+def get_attendance_for_site(
+    site_id: str,
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    """Get DailyAttendanceEntries for a site within a date range."""
+    q = db.query(DailyAttendanceEntry).filter(DailyAttendanceEntry.site_id == site_id)
+    if date_from:
+        q = q.filter(DailyAttendanceEntry.entry_date >= date_from)
+    if date_to:
+        q = q.filter(DailyAttendanceEntry.entry_date <= date_to)
+    entries = q.order_by(DailyAttendanceEntry.entry_date.desc()).all()
+
+    site = db.query(Site).filter(Site.site_id == site_id).first()
+    emp_ids = {e.employee_id for e in entries}
+    users = {u.user_id: u for u in db.query(User).filter(User.user_id.in_(emp_ids)).all()}
+
+    items = [_entry_to_dict(e, guard=users.get(e.employee_id), site=site) for e in entries]
+    return {"records": items, "total": len(items)}
