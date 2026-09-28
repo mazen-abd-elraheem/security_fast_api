@@ -61,8 +61,16 @@ class UniformItemListResponse(BaseModel):
     total: int
 
 
+class EmployeeSlim(BaseModel):
+    """Lightweight employee record for employees missing uniforms."""
+    employee_id: str
+    employee_name: str
+    badge_number: Optional[str] = None
+    role: str
+
+
 class EmployeeUniformSummary(BaseModel):
-    """Summary of one employee's uniform status."""
+    """Full summary of one employee's uniform status (terminated with unreturned)."""
     employee_id: str
     employee_name: str
     badge_number: Optional[str] = None
@@ -76,7 +84,7 @@ class EmployeeUniformSummary(BaseModel):
 
 class UniformTrackerResponse(BaseModel):
     """Admin tracker view: employees missing uniforms + terminated with unreturned."""
-    employees_without_uniform: List[EmployeeUniformSummary]
+    employees_without_uniform: List[EmployeeSlim]
     terminated_with_unreturned: List[EmployeeUniformSummary]
     total_without_uniform: int
     total_terminated_unreturned: int

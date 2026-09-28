@@ -177,11 +177,6 @@ class UniformService:
                 "employee_name": e.name,
                 "badge_number": e.badge_number,
                 "role": e.role if isinstance(e.role, str) else e.role.value,
-                "is_active": e.is_active,
-                "total_items_issued": 0,
-                "total_items_returned": 0,
-                "total_items_outstanding": 0,
-                "items": [],
             }
             for e in employees
         ]

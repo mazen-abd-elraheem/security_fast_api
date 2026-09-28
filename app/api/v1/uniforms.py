@@ -13,7 +13,7 @@ from app.enums import UserRole
 from app.schemas.uniform import (
     UniformItemCreate, UniformItemUpdate, UniformBulkIssue,
     UniformItemResponse, UniformItemListResponse,
-    EmployeeUniformSummary, UniformTrackerResponse,
+    EmployeeSlim, EmployeeUniformSummary, UniformTrackerResponse,
 )
 from app.services.uniform_service import UniformService
 from app.core.exceptions import SecureTrackException
@@ -82,7 +82,7 @@ def get_uniform_tracker(
             items=[UniformService.to_response(i) for i in t["items"]],
         ))
 
-    without_summaries = [EmployeeUniformSummary(**w) for w in without]
+    without_summaries = [EmployeeSlim(**w) for w in without]
 
     return UniformTrackerResponse(
         employees_without_uniform=without_summaries,
