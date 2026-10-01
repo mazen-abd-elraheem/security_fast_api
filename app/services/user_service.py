@@ -85,6 +85,9 @@ class UserService:
         while db.query(User).filter(User.employee_code == emp_code).first():
             emp_code = str(random.randint(100000, 999999))
 
+        base_salary = user_in.payroll_amount if user_in.payroll_amount is not None else 0.0
+        daily_rate = base_salary / 30.0
+
         db_user = User(
             user_id=str(uuid.uuid4()),
             employee_code=emp_code,
@@ -95,6 +98,14 @@ class UserService:
             role=user_in.role.value,
             badge_number=user_in.badge_number,
             region=user_in.region,
+            classification=user_in.classification,
+            bank_account=user_in.bank_account,
+            transfer_name=user_in.transfer_name,
+            transfer_method=user_in.transfer_method,
+            payroll_amount=user_in.payroll_amount,
+            base_salary=base_salary,
+            daily_rate=daily_rate,
+            hire_date=datetime.now(timezone.utc),
             is_active=True,
             status=UserStatus.ACTIVE,
         )
@@ -169,6 +180,16 @@ class UserService:
             user.bank_account = update_data.bank_account
         if update_data.base_salary is not None:
             user.base_salary = update_data.base_salary
+        if update_data.classification is not None:
+            user.classification = update_data.classification
+        if update_data.transfer_name is not None:
+            user.transfer_name = update_data.transfer_name
+        if update_data.transfer_method is not None:
+            user.transfer_method = update_data.transfer_method
+        if update_data.payroll_amount is not None:
+            user.payroll_amount = update_data.payroll_amount
+            user.base_salary = update_data.payroll_amount
+            user.daily_rate = update_data.payroll_amount / 30.0
 
         db.commit()
         db.refresh(user)

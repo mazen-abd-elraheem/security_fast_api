@@ -276,6 +276,107 @@ def admin_update_user(
         handle_service_exception(e)
 
 
+@router.post("/import-bulk", summary="Bulk import or update users (Excel)")
+def bulk_import_users(
+    rows: list[dict],
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    """Import/Update users from Excel. Creates a snapshot for rollback."""
+    from app.api.v1.snapshots import create_import_snapshot
+    import uuid
+    from datetime import date
+    
+    before_rows = []
+    after_rows = []
+    
+    for row in rows:
+        emp_code = str(row.get("employee_code", "")).strip()
+        if not emp_code:
+            continue
+            
+        # Find if user exists by employee_code
+        existing_user = db.query(User).filter(User.employee_code == emp_code).first()
+        
+        # Build dictionary of fields to update
+        update_data = {}
+        for k, v in row.items():
+            if k == "employee_code": continue
+            # Handle empty strings and parse numbers appropriately
+            val = str(v).strip() if v is not None else ""
+            if val == "":
+                update_data[k] = None
+            elif k in ["base_salary", "daily_rate", "payroll_amount"]:
+                try:
+                    update_data[k] = float(val)
+                    if k == "payroll_amount":
+                        update_data["base_salary"] = float(val)
+                        update_data["daily_rate"] = float(val) / 30.0
+                except ValueError:
+                    update_data[k] = 0.0
+            else:
+                update_data[k] = val
+                
+        # If HR, enforce restrictions
+        if current_user.role == UserRole.HR:
+            allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
+            if existing_user and existing_user.role in [UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO]:
+                continue # Skip updating restricted users
+            if "role" in update_data and update_data["role"] not in allowed:
+                update_data["role"] = UserRole.GUARD # Fallback
+                
+        if existing_user:
+            # Snapshot before
+            before_dict = {c.name: getattr(existing_user, c.name) for c in existing_user.__table__.columns}
+            before_rows.append(before_dict)
+            
+            # Update
+            for k, v in update_data.items():
+                if hasattr(existing_user, k):
+                    setattr(existing_user, k, v)
+                    
+            db.flush()
+            
+            # Snapshot after
+            after_dict = {c.name: getattr(existing_user, c.name) for c in existing_user.__table__.columns}
+            after_rows.append(after_dict)
+        else:
+            # New user
+            new_id = str(uuid.uuid4())
+            new_user = User(
+                user_id=new_id,
+                employee_code=emp_code,
+                name=update_data.get("name") or f"User {emp_code}",
+                email=update_data.get("email") or f"{emp_code}@securetrack.local",
+                role=update_data.get("role") or UserRole.GUARD,
+                is_active=True,
+            )
+            # Apply other fields
+            for k, v in update_data.items():
+                if k not in ["name", "email", "role"] and hasattr(new_user, k):
+                    setattr(new_user, k, v)
+                    
+            db.add(new_user)
+            db.flush()
+            
+            # Snapshot after (before is empty since it didn't exist)
+            after_dict = {c.name: getattr(new_user, c.name) for c in new_user.__table__.columns}
+            after_rows.append(after_dict)
+            
+    # Create snapshot
+    if after_rows:
+        create_import_snapshot(
+            db=db,
+            table_name="users",
+            before_rows=before_rows,
+            after_rows=after_rows,
+            user=current_user,
+            description=f"Excel bulk import of {len(after_rows)} users",
+        )
+        db.commit()
+        
+    return {"detail": f"Imported/Updated {len(after_rows)} users"}
+
 @router.delete("/{user_id}", response_model=UserResponse, summary="Deactivate a user")
 def deactivate_user(
     user_id: str,

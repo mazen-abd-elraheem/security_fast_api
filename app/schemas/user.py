@@ -56,15 +56,17 @@ class UserLocationUpdate(BaseModel):
 class AdminUserCreate(BaseModel):
     """Admin creates any type of user account."""
     name: str = Field(..., min_length=2, max_length=255)
-    email: EmailStr
+    email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
     role: UserRole
     phone_number: Optional[str] = Field(None, pattern=r'^\+?[0-9]{7,15}$')
     badge_number: Optional[str] = Field(None, max_length=50)
     region: Optional[str] = Field(None, max_length=100)
+    classification: Optional[str] = Field(None, max_length=50)
     bank_account: Optional[str] = Field(None, max_length=100)
     transfer_name: Optional[str] = Field(None, max_length=255)
     transfer_method: Optional[str] = Field(None, max_length=100)
+    payroll_amount: Optional[float] = None
 
     @field_validator("password")
     @classmethod
@@ -82,21 +84,23 @@ class AdminUserUpdate(BaseModel):
     """Admin-level profile update â€” can change any field including role and password."""
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     phone_number: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = Field(None, max_length=255)
     role: Optional[UserRole] = None
     badge_number: Optional[str] = Field(None, max_length=50)
     region: Optional[str] = Field(None, max_length=100)
     new_password: Optional[str] = Field(None, min_length=6, max_length=128)
     is_active: Optional[bool] = None
+    classification: Optional[str] = Field(None, max_length=50)
     bank_account: Optional[str] = Field(None, max_length=100)
     base_salary: Optional[float] = None
     transfer_name: Optional[str] = Field(None, max_length=255)
     transfer_method: Optional[str] = Field(None, max_length=100)
+    payroll_amount: Optional[float] = None
 
 
 class HRCompleteProfileRequest(BaseModel):
     """HR completes a 'fresh' user profile."""
-    email: EmailStr
+    email: str
     password: str = Field(..., min_length=6, max_length=128)
     base_salary: Optional[float] = None
     classification: Optional[str] = Field(None, max_length=50)

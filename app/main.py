@@ -493,6 +493,9 @@ app.include_router(visitor_log.router, prefix="/api/v1/visitor-logs", tags=["Vis
 from app.api.v1 import annual_leave
 app.include_router(annual_leave.router, prefix="/api/v1/annual-leave", tags=["Annual Leave"])
 
+from app.api.v1 import snapshots
+app.include_router(snapshots.router, prefix="/api/v1/snapshots", tags=["Data Snapshots"])
+
 # ==========================================
 # Static Files (uploaded images) Ã¢â‚¬â€  must be AFTER routers
 # ==========================================
