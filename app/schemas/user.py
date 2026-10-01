@@ -130,6 +130,10 @@ class UserResponse(BaseModel):
     requested_role: Optional[str] = None
     onboarding_status: str = "completed"
     base_salary: float = 0.0
+    daily_rate: float = 0.0
+    payroll_amount: Optional[float] = 0.0
+    classification: Optional[str] = None
+    employee_code: Optional[str] = None
     bank_account: Optional[str] = None
     transfer_name: Optional[str] = None
     transfer_method: Optional[str] = None
@@ -137,6 +141,7 @@ class UserResponse(BaseModel):
     insurance_number: Optional[str] = None
     insurance_date: Optional[datetime] = None
     insurable_wage: Optional[float] = 0.0
+    hire_date: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
