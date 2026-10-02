@@ -5,6 +5,8 @@ Profile management, location updates, and user listing.
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional
+import calendar
+from datetime import datetime
 
 from app.core.database import get_db
 from app.api.deps import get_current_user, require_role, handle_service_exception
@@ -282,88 +284,157 @@ def bulk_import_users(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Import/Update users from Excel. Creates a snapshot for rollback."""
+    """
+    Import/Update users from Excel.
+    - Uses badge_number as the unique identity key (same as export columns).
+    - Mirrors admin_create_user / admin_update_user logic:
+        * payroll_amount (= base salary) -> recalculates base_salary AND daily_rate = payroll / days_in_month
+        * New users get a generated password: SecureTrack@<badge_number>
+        * hire_date parsed from ISO string; falls back to now() if empty.
+    """
     from app.api.v1.snapshots import create_import_snapshot
-    import uuid
-    from datetime import date
-    
+    import uuid, random
+    from app.core.security import hash_password
+    from app.enums import UserStatus
+
+    now = datetime.now()
+    days_in_month = float(calendar.monthrange(now.year, now.month)[1])
+
     before_rows = []
     after_rows = []
-    
+
+    HR_RESTRICTED_ROLES = {UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO}
+    HR_ALLOWED_ROLES = {
+        UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER,
+        UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER,
+    }
+
+    def _safe_float(v, default=0.0):
+        try:
+            return float(str(v).strip()) if str(v).strip() else default
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_str(v):
+        s = str(v).strip() if v is not None else ""
+        return s if s.lower() not in ("none", "null") else ""
+
+    def _parse_hire_date(v):
+        s = _safe_str(v)
+        if not s:
+            return None
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s[:19], fmt)
+            except ValueError:
+                continue
+        return None
+
     for row in rows:
-        emp_code = str(row.get("employee_code", "")).strip()
-        if not emp_code:
+        badge = _safe_str(row.get("badge_number", ""))
+        if not badge:
             continue
-            
-        # Find if user exists by employee_code
-        existing_user = db.query(User).filter(User.employee_code == emp_code).first()
-        
-        # Build dictionary of fields to update
-        update_data = {}
-        for k, v in row.items():
-            if k == "employee_code": continue
-            # Handle empty strings and parse numbers appropriately
-            val = str(v).strip() if v is not None else ""
-            if val == "":
-                update_data[k] = None
-            elif k in ["base_salary", "daily_rate", "payroll_amount"]:
-                try:
-                    update_data[k] = float(val)
-                    if k == "payroll_amount":
-                        update_data["base_salary"] = float(val)
-                        update_data["daily_rate"] = float(val) / 30.0
-                except ValueError:
-                    update_data[k] = 0.0
-            else:
-                update_data[k] = val
-                
-        # If HR, enforce restrictions
+
+        existing_user = db.query(User).filter(User.badge_number == badge).first()
+
+        # HR cannot touch admin/hr/accountant/ceo accounts
         if current_user.role == UserRole.HR:
-            allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
-            if existing_user and existing_user.role in [UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO]:
-                continue # Skip updating restricted users
-            if "role" in update_data and update_data["role"] not in allowed:
-                update_data["role"] = UserRole.GUARD # Fallback
-                
+            if existing_user and existing_user.role in HR_RESTRICTED_ROLES:
+                continue
+
+        # Parse fields (matching export column keys exactly)
+        name            = _safe_str(row.get("name", ""))
+        email           = _safe_str(row.get("email", ""))
+        role_str        = _safe_str(row.get("role", "guard")).lower()
+        classification  = _safe_str(row.get("classification", ""))
+        bank_account    = _safe_str(row.get("bank_account", ""))
+        transfer_name   = _safe_str(row.get("transfer_name", ""))
+        transfer_method = _safe_str(row.get("transfer_method", ""))
+        status_str      = _safe_str(row.get("status", "active")).lower()
+        insurance_str   = _safe_str(row.get("insurance_status", "none")).lower()
+        hire_date       = _parse_hire_date(row.get("hire_date", ""))
+
+        # payroll_amount is the base salary (exported as 'payroll_amount')
+        # Also accept base_salary for backwards compat
+        payroll_raw    = row.get("payroll_amount") or row.get("base_salary") or 0
+        payroll_amount = _safe_float(payroll_raw)
+        base_salary    = payroll_amount
+        daily_rate     = (payroll_amount / days_in_month) if payroll_amount > 0 else 0.0
+
+        # Coerce role
+        try:
+            role = UserRole(role_str)
+        except ValueError:
+            role = UserRole.GUARD
+        if current_user.role == UserRole.HR and role not in HR_ALLOWED_ROLES:
+            role = UserRole.GUARD
+
         if existing_user:
-            # Snapshot before
+            # -- UPDATE existing user --
             before_dict = {c.name: getattr(existing_user, c.name) for c in existing_user.__table__.columns}
             before_rows.append(before_dict)
-            
-            # Update
-            for k, v in update_data.items():
-                if hasattr(existing_user, k):
-                    setattr(existing_user, k, v)
-                    
+
+            if name:            existing_user.name = name
+            if email:           existing_user.email = email
+            if classification:  existing_user.classification = classification
+            if bank_account:    existing_user.bank_account = bank_account
+            if transfer_name:   existing_user.transfer_name = transfer_name
+            if transfer_method: existing_user.transfer_method = transfer_method
+            if hire_date:       existing_user.hire_date = hire_date
+            if status_str:      existing_user.status = status_str
+            if insurance_str:   existing_user.insurance_status = insurance_str
+            # Only admin can change role via import
+            if current_user.role == UserRole.ADMIN:
+                existing_user.role = role.value
+            if payroll_amount > 0:
+                existing_user.payroll_amount = payroll_amount
+                existing_user.base_salary    = base_salary
+                existing_user.daily_rate     = daily_rate
+
             db.flush()
-            
-            # Snapshot after
             after_dict = {c.name: getattr(existing_user, c.name) for c in existing_user.__table__.columns}
             after_rows.append(after_dict)
+
         else:
-            # New user
-            new_id = str(uuid.uuid4())
+            # -- CREATE new user --
+            if not email:
+                email = f"{badge}@securetrack.local"
+            if not name:
+                name = f"User {badge}"
+
+            emp_code = str(random.randint(100000, 999999))
+            while db.query(User).filter(User.employee_code == emp_code).first():
+                emp_code = str(random.randint(100000, 999999))
+
+            # Default password: SecureTrack@<badge>  (user should change on first login)
+            default_password = f"SecureTrack@{badge}"
+
             new_user = User(
-                user_id=new_id,
+                user_id=str(uuid.uuid4()),
+                badge_number=badge,
                 employee_code=emp_code,
-                name=update_data.get("name") or f"User {emp_code}",
-                email=update_data.get("email") or f"{emp_code}@securetrack.local",
-                role=update_data.get("role") or UserRole.GUARD,
+                name=name,
+                email=email,
+                password_hash=hash_password(default_password),
+                role=role.value,
+                classification=classification or None,
+                bank_account=bank_account or None,
+                transfer_name=transfer_name or None,
+                transfer_method=transfer_method or None,
+                payroll_amount=payroll_amount,
+                base_salary=base_salary,
+                daily_rate=daily_rate,
+                hire_date=hire_date or datetime.now(),
+                status=status_str or UserStatus.ACTIVE,
+                insurance_status=insurance_str or "none",
                 is_active=True,
             )
-            # Apply other fields
-            for k, v in update_data.items():
-                if k not in ["name", "email", "role"] and hasattr(new_user, k):
-                    setattr(new_user, k, v)
-                    
             db.add(new_user)
             db.flush()
-            
-            # Snapshot after (before is empty since it didn't exist)
+
             after_dict = {c.name: getattr(new_user, c.name) for c in new_user.__table__.columns}
             after_rows.append(after_dict)
-            
-    # Create snapshot
+
     if after_rows:
         create_import_snapshot(
             db=db,
@@ -374,8 +445,10 @@ def bulk_import_users(
             description=f"Excel bulk import of {len(after_rows)} users",
         )
         db.commit()
-        
+
     return {"detail": f"Imported/Updated {len(after_rows)} users"}
+
+
 
 @router.delete("/{user_id}", response_model=UserResponse, summary="Deactivate a user")
 def deactivate_user(

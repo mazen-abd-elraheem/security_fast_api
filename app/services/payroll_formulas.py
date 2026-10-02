@@ -90,7 +90,7 @@ def calc_work_days(hire_date_str: str, term_date_str: str, year: int, month: int
         except Exception:
             pass
 
-    return 30.0
+    return float(days_in_month)
 
 
 def calc_operational_days(
@@ -227,6 +227,8 @@ def compute_row(
     t_ot_hours     = sum(wk(i, "overtime_hours")   for i in range(4))
 
     # ── AW: work days ──
+    _, days_in_month = monthrange(year, month)
+    days_in_month = float(days_in_month)
     work_days = calc_work_days(hire, term, year, month)
 
     # ── BH: daily rate ──
@@ -281,14 +283,14 @@ def compute_row(
     ai_base = cls_cfg.get("annual_increase_base", 0.0)
     if ai_base == 0 and config_overrides and cls in config_overrides:
         ai_base = config_overrides[cls].get("annual_increase_base", 0.0)
-    annual_inc_current = (ai_base / 30.0) * op_days
+    annual_inc_current = (ai_base / days_in_month) * op_days
 
     # ── BK: annual increase prev years ──
-    monthly_sal = dr * 30
+    monthly_sal = dr * days_in_month
     pct = cls_cfg.get("annual_increase_pct", 0.0)
     if pct == 0 and config_overrides and cls in config_overrides:
         pct = config_overrides[cls].get("annual_increase_pct", 0.0)
-    annual_inc_prev = ((monthly_sal * pct) * op_days) / 30.0
+    annual_inc_prev = ((monthly_sal * pct) * op_days) / days_in_month
 
     # ── BL: gross salary ──
     gross = salary_ops + annual_inc_current + annual_inc_prev
@@ -303,13 +305,13 @@ def compute_row(
     inc_rate = cls_cfg.get("incentive_rate", 0.0)
     if inc_rate == 0 and config_overrides and cls in config_overrides:
         inc_rate = config_overrides[cls].get("incentive_rate", 0.0)
-    bt_incentive = (inc_rate / 30.0) * op_days
+    bt_incentive = (inc_rate / days_in_month) * op_days
 
     # ── BU: increase 2025 ──
     bu_rate = cls_cfg.get("increase_2025_rate", 0.0)
     if bu_rate == 0 and config_overrides and cls in config_overrides:
         bu_rate = config_overrides[cls].get("increase_2025_rate", 0.0)
-    bu_increase = (bu_rate / 30.0) * op_days
+    bu_increase = (bu_rate / days_in_month) * op_days
 
     # ── BX: total incentive ──
     bv_bonus_manual = float(manual_bonus or 0)
@@ -321,7 +323,7 @@ def compute_row(
 
     # ── Tax ──
     tax_brackets = build_tax_brackets(formula_configs)
-    ci_monthly_sal = dr * 30
+    ci_monthly_sal = dr * days_in_month
     cj_actual      = salary_ops + annual_inc_current + annual_inc_prev
     ck_allowances  = bx_total_incentive
     cl_total_income = cj_actual + ck_allowances
@@ -350,7 +352,7 @@ def compute_row(
     cb_rate = cls_cfg.get("bonus_rate", 0.0)
     if cb_rate == 0 and config_overrides and cls in config_overrides:
         cb_rate = config_overrides[cls].get("bonus_rate", 0.0)
-    cb_bonus = round((cb_rate / 30.0) * op_days, 0)
+    cb_bonus = round((cb_rate / days_in_month) * op_days, 0)
 
     # ── CC: grand incentive ──
     cc_grand = ca_total + cb_bonus

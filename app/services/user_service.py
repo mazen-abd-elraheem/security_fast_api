@@ -4,6 +4,8 @@ Handles registration, authentication, and profile management for all roles.
 """
 import uuid
 from typing import Optional, List
+import calendar
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -86,7 +88,10 @@ class UserService:
             emp_code = str(random.randint(100000, 999999))
 
         base_salary = user_in.payroll_amount if user_in.payroll_amount is not None else 0.0
-        daily_rate = base_salary / 30.0
+        
+        now = datetime.now()
+        days_in_month = calendar.monthrange(now.year, now.month)[1]
+        daily_rate = base_salary / float(days_in_month)
 
         db_user = User(
             user_id=str(uuid.uuid4()),
@@ -189,7 +194,10 @@ class UserService:
         if update_data.payroll_amount is not None:
             user.payroll_amount = update_data.payroll_amount
             user.base_salary = update_data.payroll_amount
-            user.daily_rate = update_data.payroll_amount / 30.0
+            
+            now = datetime.now()
+            days_in_month = calendar.monthrange(now.year, now.month)[1]
+            user.daily_rate = update_data.payroll_amount / float(days_in_month)
 
         db.commit()
         db.refresh(user)
