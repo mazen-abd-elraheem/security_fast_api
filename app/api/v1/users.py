@@ -396,7 +396,39 @@ def bulk_import_users(
             after_rows.append(after_dict)
 
         else:
-            # -- CREATE new user --
+            # -- CREATE or UPDATE by email fallback --
+            # Badge not found, but the email may already belong to another user
+            # (e.g. badge number was edited in the export file). In that case,
+            # update that user's badge_number + fields instead of creating a duplicate.
+            if email:
+                existing_user = db.query(User).filter(User.email == email).first()
+
+            if existing_user:
+                # Found by email — treat as UPDATE and also correct the badge_number
+                before_dict = {c.name: getattr(existing_user, c.name) for c in existing_user.__table__.columns}
+                before_rows.append(before_dict)
+
+                existing_user.badge_number = badge   # adopt the new badge from file
+                if name:            existing_user.name = name
+                if classification:  existing_user.classification = classification
+                if bank_account:    existing_user.bank_account = bank_account
+                if transfer_name:   existing_user.transfer_name = transfer_name
+                if transfer_method: existing_user.transfer_method = transfer_method
+                if hire_date:       existing_user.hire_date = hire_date
+                if status_str:      existing_user.status = status_str
+                if insurance_str:   existing_user.insurance_status = insurance_str
+                if current_user.role == UserRole.ADMIN:
+                    existing_user.role = role.value
+                if payroll_amount > 0:
+                    existing_user.payroll_amount = payroll_amount
+                    existing_user.base_salary    = base_salary
+                    existing_user.daily_rate     = daily_rate
+
+                db.flush()
+                after_dict = {c.name: getattr(existing_user, c.name) for c in existing_user.__table__.columns}
+                after_rows.append(after_dict)
+                continue  # skip the create block below
+
             if not email:
                 email = f"{badge}@securetrack.local"
             if not name:
