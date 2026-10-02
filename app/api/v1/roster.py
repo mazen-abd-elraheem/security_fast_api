@@ -46,6 +46,92 @@ def bulk_assign(
         handle_service_exception(e)
 
 
+@router.post("/import-bulk", status_code=201, summary="Import roster assignments from CSV")
+def import_bulk_roster(
+    rows: list[dict],
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """
+    Bulk-create roster assignments from CSV rows.
+    Resolves guard by badge_number, shift by (site_name + shift_label).
+    Skips duplicates (guard already assigned to same shift on same date).
+    """
+    from app.models.user import User as UserModel
+    from app.models.shift import Shift
+    from app.models.site import Site
+    from app.models.guard_roster import GuardRoster
+    import uuid as _uuid
+    from datetime import date as _date
+
+    def _ss(v):
+        return str(v).strip() if v not in (None, "", "null", "None") else ""
+
+    created = skipped = 0
+    today = str(_date.today())
+
+    for row in rows:
+        badge      = _ss(row.get("badge_number") or row.get("Badge Number", ""))
+        site_name  = _ss(row.get("site_name")    or row.get("Site Name",    ""))
+        shift_lbl  = _ss(row.get("shift_label")  or row.get("Shift Label",  ""))
+        date_str   = _ss(row.get("assigned_date") or row.get("Date", today))
+        if not date_str:
+            date_str = today
+
+        if not badge or not site_name or not shift_lbl:
+            skipped += 1
+            continue
+
+        # Resolve guard
+        guard = db.query(UserModel).filter(UserModel.badge_number == badge).first()
+        if not guard:
+            skipped += 1
+            continue
+
+        # Resolve site → shift
+        site = db.query(Site).filter(Site.name.ilike(site_name)).first()
+        if not site:
+            skipped += 1
+            continue
+
+        shift = db.query(Shift).filter(
+            Shift.site_id == site.site_id,
+            Shift.label.ilike(shift_lbl),
+        ).first()
+        if not shift:
+            skipped += 1
+            continue
+
+        # Check duplicate
+        dup = db.query(GuardRoster).filter(
+            GuardRoster.guard_id == guard.user_id,
+            GuardRoster.shift_id == shift.shift_id,
+            GuardRoster.assigned_date == date_str,
+            GuardRoster.status != "canceled",
+        ).first()
+        if dup:
+            skipped += 1
+            continue
+
+        db.add(GuardRoster(
+            roster_id=str(_uuid.uuid4()),
+            guard_id=guard.user_id,
+            shift_id=shift.shift_id,
+            assigned_date=date_str,
+            status="scheduled",
+        ))
+        db.flush()
+        created += 1
+
+    db.commit()
+    return {
+        "detail": f"Roster import: {created} created, {skipped} skipped",
+        "created_count": created,
+        "skipped_count": skipped,
+        "total_count": len(rows),
+    }
+
+
 @router.get("/site/{site_id}", response_model=RosterListResponse, summary="Get roster for site")
 def get_roster_for_site(
     site_id: str,

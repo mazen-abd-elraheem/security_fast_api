@@ -98,3 +98,106 @@ def delete_site(
         return {"detail": "Site deactivated"}
     except SecureTrackException as e:
         handle_service_exception(e)
+
+
+@router.post("/import-bulk", summary="Bulk import / upsert sites from CSV")
+def import_bulk_sites(
+    rows: list[dict],
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """
+    Bulk upsert sites from a CSV export.
+    Lookup key: site name (case-insensitive).
+    - Existing site  → smart-update only changed fields.
+    - Not found      → create (requires lat/lon).
+    """
+    from app.models.site import Site
+    import uuid as _uuid
+
+    def _sf(v):
+        try:
+            return float(str(v).replace(",", "").strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _si(v):
+        try:
+            return int(str(v).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _ss(v):
+        return str(v).strip() if v not in (None, "", "null", "None") else ""
+
+    created = updated = skipped = 0
+
+    for row in rows:
+        name = _ss(row.get("name") or row.get("site_name") or row.get("Site Name", ""))
+        if not name:
+            skipped += 1
+            continue
+
+        address    = _ss(row.get("address")        or row.get("Address",       ""))
+        region     = _ss(row.get("region")          or row.get("Region",        ""))
+        lat        = _sf(row.get("latitude")        or row.get("Latitude"))
+        lon        = _sf(row.get("longitude")       or row.get("Longitude"))
+        radius     = _si(row.get("radius_meters")   or row.get("Geofence (m)"))
+        status_raw = _ss(row.get("status")          or row.get("Status",   "active")).lower()
+        is_base_raw = str(row.get("is_base", "") or row.get("Is Base", "")).strip().lower()
+        is_base    = is_base_raw in ("true", "1", "yes")
+
+        valid_statuses = {"active", "inactive", "maintenance"}
+        status = status_raw if status_raw in valid_statuses else "active"
+
+        existing = db.query(Site).filter(Site.name.ilike(name)).first()
+
+        if existing:
+            changed = False
+            if address and (existing.address or "") != address:
+                existing.address = address; changed = True
+            if region  and (existing.region  or "") != region:
+                existing.region  = region;  changed = True
+            if lat  is not None and abs((existing.latitude  or 0) - lat)  > 0.000001:
+                existing.latitude  = lat;   changed = True
+            if lon  is not None and abs((existing.longitude or 0) - lon)  > 0.000001:
+                existing.longitude = lon;   changed = True
+            if radius is not None and existing.radius_meters != radius:
+                existing.radius_meters = radius; changed = True
+            if status and existing.status != status:
+                existing.status = status;   changed = True
+            if is_base_raw and existing.is_base != is_base:
+                existing.is_base = is_base; changed = True
+
+            if changed:
+                db.flush()
+                updated += 1
+            else:
+                skipped += 1
+        else:
+            if lat is None or lon is None:
+                skipped += 1
+                continue
+
+            db.add(Site(
+                site_id=str(_uuid.uuid4()),
+                name=name,
+                address=address or None,
+                region=region or None,
+                latitude=lat,
+                longitude=lon,
+                radius_meters=radius or 100,
+                status=status,
+                is_base=is_base,
+            ))
+            db.flush()
+            created += 1
+
+    db.commit()
+    return {
+        "detail": f"Sites import: {created} created, {updated} updated, {skipped} skipped",
+        "created_count": created,
+        "updated_count": updated,
+        "skipped_count": skipped,
+        "total_count": len(rows),
+    }

@@ -505,7 +505,12 @@ def bulk_import_users(
         )
         db.commit()
 
-    return {"detail": f"Imported/Updated {len(after_rows)} users"}
+    return {
+        "detail": f"Imported/Updated {len(after_rows)} users",
+        "updated_count": len(after_rows),
+        "skipped_count": len(rows) - len(after_rows),
+        "total_count": len(rows)
+    }
 
 
 
