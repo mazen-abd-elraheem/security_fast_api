@@ -53,30 +53,42 @@ def import_bulk_roster(
     db: Session = Depends(get_db),
 ):
     """
-    Bulk-create roster assignments from CSV rows.
-    Resolves guard by badge_number, shift by (site_name + shift_label).
-    Skips duplicates (guard already assigned to same shift on same date).
+    Bulk-import roster assignments from CSV rows.
+    - Resolves guard by badge_number, shift by (site_name + shift_label)
+    - Smart upsert: creates if not exists, updates start/end dates + supervisor/leader if exists
+    - Also upserts supervisor route and/or leader route for the date
     """
     from app.models.user import User as UserModel
     from app.models.shift import Shift
     from app.models.site import Site
     from app.models.guard_roster import GuardRoster
+    from app.models.supervisor_route import SupervisorRoute
     import uuid as _uuid
     from datetime import date as _date
 
     def _ss(v):
         return str(v).strip() if v not in (None, "", "null", "None") else ""
 
-    created = skipped = 0
+    def _parse_date(s):
+        if not s: return None
+        try:
+            from datetime import datetime
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    created = updated = skipped = 0
     today = str(_date.today())
 
     for row in rows:
-        badge      = _ss(row.get("badge_number") or row.get("Badge Number", ""))
-        site_name  = _ss(row.get("site_name")    or row.get("Site Name",    ""))
-        shift_lbl  = _ss(row.get("shift_label")  or row.get("Shift Label",  ""))
-        date_str   = _ss(row.get("assigned_date") or row.get("Date", today))
-        if not date_str:
-            date_str = today
+        badge           = _ss(row.get("badge_number")     or row.get("Badge Number",      ""))
+        site_name       = _ss(row.get("site_name")        or row.get("Site Name",          ""))
+        shift_lbl       = _ss(row.get("shift_label")      or row.get("Shift Label",        ""))
+        date_str        = _ss(row.get("assigned_date")    or row.get("Date", today)) or today
+        start_date_str  = _ss(row.get("start_date")       or row.get("Start Date",         ""))
+        end_date_str    = _ss(row.get("end_date")         or row.get("End Date",           ""))
+        sup_badge       = _ss(row.get("supervisor_badge") or row.get("Supervisor Badge",   ""))
+        leader_badge    = _ss(row.get("leader_badge")     or row.get("Leader Badge",       ""))
 
         if not badge or not site_name or not shift_lbl:
             skipped += 1
@@ -88,7 +100,7 @@ def import_bulk_roster(
             skipped += 1
             continue
 
-        # Resolve site → shift
+        # Resolve site + shift
         site = db.query(Site).filter(Site.name.ilike(site_name)).first()
         if not site:
             skipped += 1
@@ -102,34 +114,160 @@ def import_bulk_roster(
             skipped += 1
             continue
 
-        # Check duplicate
-        dup = db.query(GuardRoster).filter(
+        # Resolve optional supervisor + leader
+        supervisor = db.query(UserModel).filter(UserModel.badge_number == sup_badge).first() if sup_badge else None
+        leader     = db.query(UserModel).filter(UserModel.badge_number == leader_badge).first() if leader_badge else None
+
+        start_d = _parse_date(start_date_str)
+        end_d   = _parse_date(end_date_str)
+
+        # Smart upsert: find existing non-canceled assignment
+        existing_entry = db.query(GuardRoster).filter(
             GuardRoster.guard_id == guard.user_id,
             GuardRoster.shift_id == shift.shift_id,
             GuardRoster.assigned_date == date_str,
-            GuardRoster.status != "canceled",
         ).first()
-        if dup:
-            skipped += 1
-            continue
 
-        db.add(GuardRoster(
-            roster_id=str(_uuid.uuid4()),
-            guard_id=guard.user_id,
-            shift_id=shift.shift_id,
-            assigned_date=date_str,
-            status="scheduled",
-        ))
-        db.flush()
-        created += 1
+        if existing_entry:
+            # Update date range + supervisor/leader
+            if start_d:   existing_entry.start_date    = start_d
+            if end_d:     existing_entry.end_date      = end_d
+            if supervisor: existing_entry.supervisor_id = supervisor.user_id
+            if leader:     existing_entry.leader_id    = leader.user_id
+            db.flush()
+            updated += 1
+        else:
+            db.add(GuardRoster(
+                roster_id=str(_uuid.uuid4()),
+                guard_id=guard.user_id,
+                shift_id=shift.shift_id,
+                assigned_date=date_str,
+                start_date=start_d,
+                end_date=end_d,
+                supervisor_id=supervisor.user_id if supervisor else None,
+                leader_id=leader.user_id if leader else None,
+                status="scheduled",
+            ))
+            db.flush()
+            created += 1
+
+        # Upsert supervisor route for this site+date
+        if supervisor:
+            sup_route = db.query(SupervisorRoute).filter(
+                SupervisorRoute.supervisor_id == supervisor.user_id,
+                SupervisorRoute.site_id == site.site_id,
+                SupervisorRoute.assigned_date == date_str,
+            ).first()
+            if not sup_route:
+                db.add(SupervisorRoute(
+                    route_id=str(_uuid.uuid4()),
+                    supervisor_id=supervisor.user_id,
+                    site_id=site.site_id,
+                    shift_id=shift.shift_id,
+                    assigned_date=date_str,
+                    visit_order=1,
+                    status="pending",
+                ))
+                db.flush()
+
+        # Upsert leader route if leader is a supervisor-type user
+        if leader:
+            leader_route = db.query(SupervisorRoute).filter(
+                SupervisorRoute.supervisor_id == leader.user_id,
+                SupervisorRoute.site_id == site.site_id,
+                SupervisorRoute.assigned_date == date_str,
+            ).first()
+            if not leader_route:
+                db.add(SupervisorRoute(
+                    route_id=str(_uuid.uuid4()),
+                    supervisor_id=leader.user_id,
+                    site_id=site.site_id,
+                    shift_id=shift.shift_id,
+                    assigned_date=date_str,
+                    visit_order=1,
+                    status="pending",
+                ))
+                db.flush()
 
     db.commit()
     return {
-        "detail": f"Roster import: {created} created, {skipped} skipped",
+        "detail": f"Roster import: {created} created, {updated} updated, {skipped} skipped",
         "created_count": created,
+        "updated_count": updated,
         "skipped_count": skipped,
         "total_count": len(rows),
     }
+
+
+@router.get("/all", summary="Get all roster entries across all sites")
+def get_all_roster(
+    site_id:   Optional[str]  = Query(None, description="Filter by site"),
+    date_from: Optional[date] = Query(None),
+    date_to:   Optional[date] = Query(None),
+    status:    Optional[str]  = Query(None),
+    skip:      int            = Query(0,   ge=0),
+    limit:     int            = Query(200, ge=1, le=1000),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR)),
+    db: Session = Depends(get_db),
+):
+    """
+    Return ALL guard roster assignments (across all sites) with joined
+    guard, shift, site, supervisor, and leader details.
+    Supports optional filter by site_id / date range / status.
+    """
+    from app.models.guard_roster import GuardRoster
+    from app.models.shift import Shift
+    from app.models.site import Site
+    from app.models.user import User as UserModel
+    from sqlalchemy.orm import aliased
+
+    Supervisor = aliased(UserModel)
+    Leader     = aliased(UserModel)
+
+    q = (
+        db.query(GuardRoster, Shift, Site, UserModel, Supervisor, Leader)
+        .join(Shift,      GuardRoster.shift_id      == Shift.shift_id)
+        .join(Site,       Shift.site_id             == Site.site_id)
+        .join(UserModel,  GuardRoster.guard_id      == UserModel.user_id)
+        .outerjoin(Supervisor, GuardRoster.supervisor_id == Supervisor.user_id)
+        .outerjoin(Leader,     GuardRoster.leader_id     == Leader.user_id)
+    )
+
+    if site_id:   q = q.filter(Site.site_id         == site_id)
+    if date_from: q = q.filter(GuardRoster.assigned_date >= date_from)
+    if date_to:   q = q.filter(GuardRoster.assigned_date <= date_to)
+    if status:    q = q.filter(GuardRoster.status       == status)
+
+    total = q.count()
+    rows  = q.order_by(GuardRoster.assigned_date.desc(), Site.name, UserModel.name).offset(skip).limit(limit).all()
+
+    items = []
+    for roster, shift, site, guard, sup, leader in rows:
+        items.append({
+            "roster_id":       roster.roster_id,
+            "guard_id":        guard.user_id,
+            "guard_name":      guard.name,
+            "guard_badge":     guard.badge_number,
+            "site_id":         site.site_id,
+            "site_name":       site.name,
+            "shift_id":        shift.shift_id,
+            "shift_label":     shift.label,
+            "shift_start":     str(shift.start_time) if shift.start_time else None,
+            "shift_end":       str(shift.end_time)   if shift.end_time   else None,
+            "assigned_date":   str(roster.assigned_date),
+            "start_date":      str(roster.start_date) if roster.start_date else None,
+            "end_date":        str(roster.end_date)   if roster.end_date   else None,
+            "supervisor_id":   sup.user_id    if sup    else None,
+            "supervisor_name": sup.name       if sup    else None,
+            "supervisor_badge":sup.badge_number if sup  else None,
+            "leader_id":       leader.user_id  if leader else None,
+            "leader_name":     leader.name     if leader else None,
+            "leader_badge":    leader.badge_number if leader else None,
+            "status":          roster.status,
+            "created_at":      str(roster.created_at),
+        })
+
+    return {"roster": items, "total": total, "skip": skip, "limit": limit}
 
 
 @router.get("/site/{site_id}", response_model=RosterListResponse, summary="Get roster for site")

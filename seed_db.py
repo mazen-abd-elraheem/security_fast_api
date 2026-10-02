@@ -95,6 +95,22 @@ def _run_seed_migrations():
                     with engine.begin() as conn:
                         conn.execute(sa_text(f"ALTER TABLE daily_attendance_entries ADD COLUMN {col_name} {col_def}"))
                         print(f"  [migration] daily_attendance_entries.{col_name} added")
+
+        # ── guard_roster: add start_date, end_date, supervisor_id, leader_id ──
+        if insp.has_table("guard_roster"):
+            existing = {c["name"] for c in insp.get_columns("guard_roster")}
+            gr_new = {
+                "start_date":    "DATE NULL",
+                "end_date":      "DATE NULL",
+                "supervisor_id": "VARCHAR(36) NULL",
+                "leader_id":     "VARCHAR(36) NULL",
+            }
+            for col_name, col_def in gr_new.items():
+                if col_name not in existing:
+                    with engine.begin() as conn:
+                        conn.execute(sa_text(f"ALTER TABLE guard_roster ADD COLUMN {col_name} {col_def}"))
+                        print(f"  [migration] guard_roster.{col_name} added")
+
     except Exception as e:
         print(f"Seed migration check: {e}")
 

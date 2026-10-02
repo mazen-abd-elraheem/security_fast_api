@@ -39,7 +39,7 @@ def list_sites(
     region: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=50),
+    limit: int = Query(50, ge=1, le=500),
     current_user: User = Depends(require_role(
         UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OPERATIONS_MANAGER, UserRole.LEADER, UserRole.HR,
     )),

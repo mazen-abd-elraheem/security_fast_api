@@ -23,6 +23,14 @@ class GuardRoster(Base):
     # The specific date this assignment is for
     assigned_date = Column(Date, nullable=False, index=True)
 
+    # Optional date-range for recurring assignments
+    start_date = Column(Date, nullable=True)  # e.g. 2026-10-01
+    end_date   = Column(Date, nullable=True)  # e.g. 2026-10-31
+
+    # Supervisor / Leader linked to this roster assignment
+    supervisor_id = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True, index=True)
+    leader_id     = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True, index=True)
+
     # Status: scheduled, active, canceled
     status = Column(String(20), nullable=False, default="scheduled")
 
@@ -30,8 +38,10 @@ class GuardRoster(Base):
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    guard = relationship("User", back_populates="guard_rosters", foreign_keys=[guard_id])
-    shift = relationship("Shift", back_populates="guard_rosters")
+    guard      = relationship("User", back_populates="guard_rosters",       foreign_keys=[guard_id])
+    supervisor = relationship("User", foreign_keys=[supervisor_id])
+    leader     = relationship("User", foreign_keys=[leader_id])
+    shift      = relationship("Shift", back_populates="guard_rosters")
     attendance_logs = relationship("AttendanceLog", back_populates="roster", cascade="all, delete-orphan")
 
     def __repr__(self):
