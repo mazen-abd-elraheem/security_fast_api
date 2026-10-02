@@ -354,10 +354,12 @@ def bulk_import_users(
         insurance_str   = _safe_str(row.get("insurance_status", "none")).lower()
         hire_date       = _parse_hire_date(row.get("hire_date", ""))
 
-        # payroll_amount is the base salary (exported as 'payroll_amount')
-        # Also accept base_salary for backwards compat
-        payroll_raw    = row.get("payroll_amount") or row.get("base_salary") or 0
-        payroll_amount = _safe_float(payroll_raw)
+        # Resolve salary: parse both columns separately and take the largest non-zero value.
+        # "payroll_amount" in the export IS the base salary. base_salary is also exported.
+        # We must _safe_float each individually (can't use `or` on strings — "0.0" is truthy).
+        _pa = _safe_float(row.get("payroll_amount", 0))
+        _bs = _safe_float(row.get("base_salary", 0))
+        payroll_amount = max(_pa, _bs)   # take whichever is set
         base_salary    = payroll_amount
         daily_rate     = (payroll_amount / days_in_month) if payroll_amount > 0 else 0.0
 
@@ -370,27 +372,52 @@ def bulk_import_users(
             role = UserRole.GUARD
 
         if existing_user:
-            # -- UPDATE existing user --
+            # -- SMART UPDATE: only touch fields that actually changed --
             before_dict = {c.name: getattr(existing_user, c.name) for c in existing_user.__table__.columns}
-            before_rows.append(before_dict)
 
-            if name:            existing_user.name = name
-            if email:           existing_user.email = email
-            if classification:  existing_user.classification = classification
-            if bank_account:    existing_user.bank_account = bank_account
-            if transfer_name:   existing_user.transfer_name = transfer_name
-            if transfer_method: existing_user.transfer_method = transfer_method
-            if hire_date:       existing_user.hire_date = hire_date
-            if status_str:      existing_user.status = status_str
-            if insurance_str:   existing_user.insurance_status = insurance_str
-            # Only admin can change role via import
+            changed = False
+
+            def _str_changed(new_val: str, existing_val) -> bool:
+                """Return True if new_val is non-empty and differs from existing."""
+                if not new_val:
+                    return False
+                return str(existing_val or '').strip() != new_val.strip()
+
+            if _str_changed(name, existing_user.name):
+                existing_user.name = name; changed = True
+            if _str_changed(email, existing_user.email):
+                existing_user.email = email; changed = True
+            if _str_changed(classification, existing_user.classification):
+                existing_user.classification = classification; changed = True
+            if _str_changed(bank_account, existing_user.bank_account):
+                existing_user.bank_account = bank_account; changed = True
+            if _str_changed(transfer_name, existing_user.transfer_name):
+                existing_user.transfer_name = transfer_name; changed = True
+            if _str_changed(transfer_method, existing_user.transfer_method):
+                existing_user.transfer_method = transfer_method; changed = True
+            if hire_date and existing_user.hire_date != hire_date:
+                existing_user.hire_date = hire_date; changed = True
+            if _str_changed(status_str, existing_user.status):
+                existing_user.status = status_str; changed = True
+            if _str_changed(insurance_str, existing_user.insurance_status):
+                existing_user.insurance_status = insurance_str; changed = True
             if current_user.role == UserRole.ADMIN:
-                existing_user.role = role.value
-            if payroll_amount > 0:
+                if role.value != (existing_user.role or ''):
+                    existing_user.role = role.value; changed = True
+            if payroll_amount > 0 and abs(payroll_amount - (existing_user.base_salary or 0.0)) > 0.001:
                 existing_user.payroll_amount = payroll_amount
                 existing_user.base_salary    = base_salary
                 existing_user.daily_rate     = daily_rate
+                changed = True
+            elif payroll_amount > 0 and (existing_user.daily_rate or 0.0) < 0.001:
+                # salary unchanged but daily_rate was never computed — fix it
+                existing_user.daily_rate = daily_rate
+                changed = True
 
+            if not changed:
+                continue  # row is identical — skip to avoid unnecessary writes
+
+            before_rows.append(before_dict)
             db.flush()
             after_dict = {c.name: getattr(existing_user, c.name) for c in existing_user.__table__.columns}
             after_rows.append(after_dict)
