@@ -47,6 +47,8 @@ class RosterService:
             guard_id=roster_data.guard_id,
             shift_id=roster_data.shift_id,
             assigned_date=roster_data.assigned_date,
+            start_date=roster_data.start_date,
+            end_date=roster_data.end_date,
         )
         db.add(db_roster)
         db.commit()

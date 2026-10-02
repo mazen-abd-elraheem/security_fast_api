@@ -12,6 +12,8 @@ class RosterCreate(BaseModel):
     guard_id: str
     shift_id: str
     assigned_date: date
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class BulkRosterCreate(BaseModel):

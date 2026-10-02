@@ -215,6 +215,7 @@ def get_all_roster(
     guard, shift, site, supervisor, and leader details.
     Supports optional filter by site_id / date range / status.
     """
+    from sqlalchemy import func
     from app.models.guard_roster import GuardRoster
     from app.models.shift import Shift
     from app.models.site import Site
@@ -224,8 +225,24 @@ def get_all_roster(
     Supervisor = aliased(UserModel)
     Leader     = aliased(UserModel)
 
+    subq = (
+        db.query(
+            GuardRoster.guard_id,
+            GuardRoster.shift_id,
+            func.max(GuardRoster.assigned_date).label('max_date'),
+            func.min(GuardRoster.assigned_date).label('min_date')
+        )
+        .group_by(GuardRoster.guard_id, GuardRoster.shift_id)
+        .subquery()
+    )
+
     q = (
-        db.query(GuardRoster, Shift, Site, UserModel, Supervisor, Leader)
+        db.query(GuardRoster, Shift, Site, UserModel, Supervisor, Leader, subq.c.min_date, subq.c.max_date)
+        .join(subq,
+            (GuardRoster.guard_id == subq.c.guard_id) &
+            (GuardRoster.shift_id == subq.c.shift_id) &
+            (GuardRoster.assigned_date == subq.c.max_date)
+        )
         .join(Shift,      GuardRoster.shift_id      == Shift.shift_id)
         .join(Site,       Shift.site_id             == Site.site_id)
         .join(UserModel,  GuardRoster.guard_id      == UserModel.user_id)
@@ -234,15 +251,15 @@ def get_all_roster(
     )
 
     if site_id:   q = q.filter(Site.site_id         == site_id)
-    if date_from: q = q.filter(GuardRoster.assigned_date >= date_from)
-    if date_to:   q = q.filter(GuardRoster.assigned_date <= date_to)
+    if date_from: q = q.filter(subq.c.max_date >= date_from)
+    if date_to:   q = q.filter(subq.c.min_date <= date_to)
     if status:    q = q.filter(GuardRoster.status       == status)
 
     total = q.count()
     rows  = q.order_by(GuardRoster.assigned_date.desc(), Site.name, UserModel.name).offset(skip).limit(limit).all()
 
     items = []
-    for roster, shift, site, guard, sup, leader in rows:
+    for roster, shift, site, guard, sup, leader, min_d, max_d in rows:
         items.append({
             "roster_id":       roster.roster_id,
             "guard_id":        guard.user_id,
@@ -255,8 +272,8 @@ def get_all_roster(
             "shift_start":     str(shift.start_time) if shift.start_time else None,
             "shift_end":       str(shift.end_time)   if shift.end_time   else None,
             "assigned_date":   str(roster.assigned_date),
-            "start_date":      str(roster.start_date) if roster.start_date else None,
-            "end_date":        str(roster.end_date)   if roster.end_date   else None,
+            "start_date":      str(roster.start_date) if roster.start_date else str(min_d),
+            "end_date":        str(roster.end_date)   if roster.end_date   else str(max_d),
             "supervisor_id":   sup.user_id    if sup    else None,
             "supervisor_name": sup.name       if sup    else None,
             "supervisor_badge":sup.badge_number if sup  else None,
