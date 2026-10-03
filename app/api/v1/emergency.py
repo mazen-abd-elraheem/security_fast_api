@@ -56,7 +56,7 @@ def _send_emergency_alerts(db: Session, incident: Incident, reporter_name: str):
     summary="Trigger Emergency Alert",
 )
 def trigger_emergency(
-    current_user: User = Depends(require_role(UserRole.LEADER)),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR)),
     db: Session = Depends(get_db),
 ):
     """

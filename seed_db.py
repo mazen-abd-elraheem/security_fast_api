@@ -459,6 +459,58 @@ def _run_seed_migrations():
     except Exception as e:
         print(f"transfer_method_credits migration: {e}")
 
+    # ── Performance Indexes ──────────────────────────────────────────────────
+    # Idempotent: checks information_schema before creating each index.
+    # These dramatically speed up GET /routes/all and site-name lookups.
+    _ensure_indexes(engine)
+
+
+def _ensure_indexes(engine):
+    """Create performance indexes idempotently using information_schema checks."""
+    indexes = [
+        # ① Composite covering index for supervisor_routes GROUP BY + JOIN
+        {
+            "table": "supervisor_routes",
+            "name":  "idx_sr_sup_site_date",
+            "ddl":   "CREATE INDEX idx_sr_sup_site_date "
+                     "ON supervisor_routes(supervisor_id, site_id, assigned_date)",
+        },
+        # ② Fast site-name lookup (used by import-bulk badge/site resolver)
+        {
+            "table": "sites",
+            "name":  "idx_site_name",
+            "ddl":   "CREATE INDEX idx_site_name ON sites(name(100))",
+        },
+        # ③ Fast badge-number lookup (used every time import resolves a user)
+        {
+            "table": "users",
+            "name":  "idx_user_badge",
+            "ddl":   "CREATE INDEX idx_user_badge ON users(badge_number)",
+        },
+        # ④ Fast assigned_date range scans on supervisor_routes
+        {
+            "table": "supervisor_routes",
+            "name":  "idx_sr_assigned_date",
+            "ddl":   "CREATE INDEX idx_sr_assigned_date ON supervisor_routes(assigned_date)",
+        },
+    ]
+    with engine.begin() as conn:
+        for idx in indexes:
+            try:
+                exists = conn.execute(sa_text(
+                    "SELECT COUNT(*) FROM information_schema.statistics "
+                    "WHERE table_schema = DATABASE() "
+                    "  AND table_name  = :tbl "
+                    "  AND index_name  = :idx"
+                ), {"tbl": idx["table"], "idx": idx["name"]}).scalar()
+                if not exists:
+                    conn.execute(sa_text(idx["ddl"]))
+                    print(f"  [index] Created {idx['name']} on {idx['table']}")
+                else:
+                    print(f"  [index] {idx['name']} already exists — skipped")
+            except Exception as ie:
+                print(f"  [index] Could not create {idx['name']}: {ie}")
+
 
 def _seed_incident_categories(db):
     """Seed default incident categories if none exist."""

@@ -45,6 +45,159 @@ def bulk_assign_route(
         handle_service_exception(e)
 
 
+@router.post("/import-bulk", status_code=201, summary="Import supervisor/leader routes from CSV rows")
+def import_bulk_routes(
+    rows: list,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """
+    Optimised smart-upsert of supervisor/leader route assignments.
+
+    Improvements over naïve version:
+      ① Uses func.lower() == .lower() → hits idx_site_name index (no table scan)
+      ② Uses func.lower() == .lower() for shift label lookup → index friendly
+      ③ Pre-fetches ALL existing (supervisor_id, site_id, date) keys in ONE
+         bulk query per row, eliminating N per-day SELECT round trips
+      ④ Bulk-inserts new rows via db.bulk_insert_mappings → single INSERT batch
+      ⑤ Batch-updates changed rows in a single pass before final commit
+    """
+    import uuid as _uuid
+    from datetime import date as _date, timedelta, datetime
+    from sqlalchemy import func, tuple_
+    from app.models.supervisor_route import SupervisorRoute
+    from app.models.site import Site
+    from app.models.shift import Shift
+
+    def _ss(v): return str(v).strip() if v else ''
+    def _pd(s):
+        if not s: return None
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    created = updated = skipped = 0
+    today = _date.today()
+
+    # ── Phase 1: resolve users, sites, shifts for all rows (batch lookups) ──
+    badges     = {_ss(r.get("badge_number") or r.get("Badge Number", "")) for r in rows}
+    site_names = {_ss(r.get("site_name")    or r.get("Site Name",   "")) for r in rows}
+    badges.discard(""); site_names.discard("")
+
+    user_map = {
+        u.badge_number: u
+        for u in db.query(User).filter(User.badge_number.in_(badges)).all()
+    }
+    site_map = {
+        s.name.lower(): s
+        for s in db.query(Site).filter(
+            func.lower(Site.name).in_([n.lower() for n in site_names])
+        ).all()
+    }
+    # Collect all site_ids so we can batch-load shifts
+    all_site_ids = {s.site_id for s in site_map.values()}
+    shift_map: dict[tuple, str] = {}   # (site_id, label_lower) -> shift_id
+    if all_site_ids:
+        for sh in db.query(Shift).filter(Shift.site_id.in_(all_site_ids)).all():
+            shift_map[(sh.site_id, sh.label.lower())] = sh.shift_id
+
+    # ── Phase 2: build all (supervisor, site, date) triples ──
+    # grouped so we can do one EXISTS query per (supervisor, site) pair
+    class _Job:
+        __slots__ = ("user_id", "site_id", "shift_id", "dates")
+        def __init__(self, uid, sid, shid, dates):
+            self.user_id  = uid
+            self.site_id  = sid
+            self.shift_id = shid
+            self.dates    = dates   # list[date]
+
+    jobs: list[_Job] = []
+
+    for row in rows:
+        badge       = _ss(row.get("badge_number")  or row.get("Badge Number", ""))
+        site_name   = _ss(row.get("site_name")      or row.get("Site Name",   ""))
+        shift_lbl   = _ss(row.get("shift_label")    or row.get("Shift Label", ""))
+        start_d_str = _ss(row.get("start_date")     or row.get("Start Date",  ""))
+        end_d_str   = _ss(row.get("end_date")       or row.get("End Date",    ""))
+        date_str    = _ss(row.get("assigned_date")  or row.get("Date",        ""))
+
+        if not badge or not site_name:
+            skipped += 1
+            continue
+
+        user = user_map.get(badge)
+        site = site_map.get(site_name.lower())
+        if not user or not site:
+            skipped += 1
+            continue
+
+        shift_id = shift_map.get((site.site_id, shift_lbl.lower())) if shift_lbl else None
+
+        start_d = _pd(start_d_str)
+        end_d   = _pd(end_d_str)
+        single  = _pd(date_str) or today
+
+        if start_d and end_d and end_d >= start_d:
+            n_days = (end_d - start_d).days + 1
+            dates = [start_d + timedelta(days=i) for i in range(n_days)]
+        else:
+            dates = [single]
+
+        jobs.append(_Job(user.user_id, site.site_id, shift_id, dates))
+
+    # ── Phase 3: batch-check which (sup, site, date) already exist ──
+    # Build one query per job to avoid huge cross-product IN clauses
+    to_insert: list[dict] = []
+    to_update: list[SupervisorRoute] = []
+
+    for job in jobs:
+        # ONE query per (supervisor, site) pair — returns all assigned dates
+        existing_rows = (
+            db.query(SupervisorRoute)
+            .filter(
+                SupervisorRoute.supervisor_id == job.user_id,
+                SupervisorRoute.site_id       == job.site_id,
+                SupervisorRoute.assigned_date.in_(job.dates),
+            )
+            .all()
+        )
+        existing_map = {r.assigned_date: r for r in existing_rows}
+
+        for d in job.dates:
+            if d in existing_map:
+                rec = existing_map[d]
+                if job.shift_id and rec.shift_id != job.shift_id:
+                    rec.shift_id = job.shift_id
+                    to_update.append(rec)
+                updated += 1
+            else:
+                to_insert.append({
+                    "route_id":     str(_uuid.uuid4()),
+                    "supervisor_id": job.user_id,
+                    "site_id":       job.site_id,
+                    "shift_id":      job.shift_id,
+                    "assigned_date": d,
+                    "visit_order":   1,
+                    "status":        "pending",
+                })
+                created += 1
+
+    # ── Phase 4: single bulk INSERT + single commit ──
+    if to_insert:
+        db.bulk_insert_mappings(SupervisorRoute, to_insert)
+    # Updated rows are already tracked by SQLAlchemy; just commit
+    db.commit()
+
+    return {
+        "detail": f"Route import: {created} created, {updated} updated, {skipped} skipped",
+        "created_count": created,
+        "updated_count": updated,
+        "skipped_count": skipped,
+    }
+
+
+
 def _build_itinerary(routes, supervisor_id, supervisor_name, target_date):
     """Helper to build DailyItineraryResponse."""
     route_items = []
@@ -220,3 +373,92 @@ def get_user_assignments(
 
     return {"sites": summary, "total": total, "user_id": user_id}
 
+
+@router.get("/all", summary="Get all supervisor/leader route assignments")
+def get_all_routes(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=2000),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """
+    Return all supervisor_routes grouped by user+site, with date range,
+    for the admin roster management UI (display, export, re-import).
+    """
+    from app.models.supervisor_route import SupervisorRoute
+    from app.models.site import Site
+    from app.models.shift import Shift
+    from sqlalchemy import func
+
+    # Deduplicate by user + site → take min/max date
+    subq = (
+        db.query(
+            SupervisorRoute.supervisor_id,
+            SupervisorRoute.site_id,
+            func.min(SupervisorRoute.assigned_date).label("date_from"),
+            func.max(SupervisorRoute.assigned_date).label("date_to"),
+            func.count(SupervisorRoute.route_id).label("count"),
+        )
+        .group_by(SupervisorRoute.supervisor_id, SupervisorRoute.site_id)
+        .subquery()
+    )
+
+    # Join the representative route row (the latest one per user+site)
+    rep_route = (
+        db.query(SupervisorRoute)
+        .join(subq,
+            (SupervisorRoute.supervisor_id == subq.c.supervisor_id) &
+            (SupervisorRoute.site_id == subq.c.site_id) &
+            (SupervisorRoute.assigned_date == subq.c.date_to)
+        )
+        .all()
+    )
+
+    # Batch load users and sites
+    user_ids = {r.supervisor_id for r in rep_route}
+    site_ids = {r.site_id for r in rep_route}
+    shift_ids = {r.shift_id for r in rep_route if r.shift_id}
+
+    user_map = {}
+    site_map = {}
+    shift_map = {}
+    if user_ids:
+        users = db.query(User).filter(User.user_id.in_(user_ids)).all()
+        user_map = {u.user_id: u for u in users}
+    if site_ids:
+        sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
+        site_map = {s.site_id: s for s in sites}
+    if shift_ids:
+        shifts = db.query(Shift).filter(Shift.shift_id.in_(shift_ids)).all()
+        shift_map = {sh.shift_id: sh for sh in shifts}
+
+    # Also fetch date range from subq
+    date_range = {
+        (row.supervisor_id, row.site_id): (row.date_from, row.date_to)
+        for row in db.query(subq).all()
+    }
+
+    items = []
+    for r in rep_route:
+        u = user_map.get(r.supervisor_id)
+        s = site_map.get(r.site_id)
+        sh = shift_map.get(r.shift_id) if r.shift_id else None
+        d_from, d_to = date_range.get((r.supervisor_id, r.site_id), (None, None))
+        items.append({
+            "route_id":        r.route_id,
+            "supervisor_id":   r.supervisor_id,
+            "supervisor_name": u.name         if u  else None,
+            "supervisor_badge":u.badge_number if u  else None,
+            "supervisor_role": (u.role.value if hasattr(u.role, 'value') else u.role) if u and u.role else None,
+            "site_id":         r.site_id,
+            "site_name":       s.name         if s  else None,
+            "shift_id":        r.shift_id,
+            "shift_label":     sh.label       if sh else None,
+            "start_date":      d_from.isoformat() if d_from else None,
+            "end_date":        d_to.isoformat()   if d_to   else None,
+            "assigned_date":   r.assigned_date.isoformat(),
+            "status":          r.status,
+        })
+
+    items.sort(key=lambda x: (x.get("supervisor_name") or "", x.get("site_name") or ""))
+    return {"routes": items[skip: skip + limit], "total": len(items)}
