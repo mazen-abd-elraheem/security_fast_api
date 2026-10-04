@@ -85,10 +85,13 @@ def add_inventory(
 def list_inventory(
     item_type: Optional[str] = Query(None),
     low_stock_only: bool = Query(False),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR)),
+    current_user: User = Depends(require_role(
+        UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR,
+        UserRole.SUPERVISOR, UserRole.LEADER, UserRole.OPERATIONS_MANAGER,
+    )),
     db: Session = Depends(get_db),
 ):
-    """List all inventory items. Admin + Personnel Officer + HR."""
+    """List all inventory items. Admin + Personnel Officer + HR (read-only for Supervisor/Leader/Ops Manager)."""
     query = db.query(InventoryItem)
     if item_type:
         query = query.filter(InventoryItem.item_type == item_type)

@@ -152,6 +152,7 @@ def get_site_guards_for_attendance(
             "employee_id": guard.user_id,
             "employee_name": guard.name,
             "employee_code": guard.employee_code,
+            "badge_number": guard.badge_number,
             "classification": guard.classification,
             "roster_id": roster.roster_id,
             "shift_id": roster.shift_id,
