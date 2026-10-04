@@ -590,6 +590,163 @@ def export_attendance_csv(
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Import attendance summary row from Excel (POST must be before PUT /{entry_id})
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AttendanceImportRow(BaseModel):
+    badge_number: Optional[str] = None
+    name: Optional[str] = None
+    site_name: Optional[str] = None
+    shift_label: Optional[str] = None
+    supervisor: Optional[str] = None
+    classification: Optional[str] = None
+    days_present: Optional[int] = 0
+    absence_unexcused: Optional[int] = 0
+    absence_excused: Optional[int] = 0
+    late_count: Optional[int] = 0
+    rest_days: Optional[int] = 0
+    rest_day_worked: Optional[int] = 0
+    sick_leave: Optional[int] = 0
+    annual_leave: Optional[int] = 0
+    overtime_hours: Optional[float] = 0.0
+    deductions: Optional[float] = 0.0
+
+
+@router.post("/import-row", summary="Import a single attendance summary row from Excel")
+def import_attendance_row(
+    row: AttendanceImportRow,
+    date_from: date = Query(..., description="Start date of the period"),
+    date_to: date = Query(..., description="End date of the period"),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    db: Session = Depends(get_db),
+):
+    """
+    Accepts a summary attendance row exported from the attendance report and
+    creates/updates individual DailyAttendanceEntry records for the user.
+
+    Strategy:
+    - Finds user by badge_number (falls back to name search)
+    - Resolves site from roster or site_name
+    - Deletes existing entries for the user in [date_from, date_to]
+    - Creates fresh entries distributing totals across available dates
+    """
+    from datetime import timedelta
+
+    if not row.badge_number:
+        return {"message": "Skipped — no badge_number", "skipped": True}
+
+    # ── 1. Find user ─────────────────────────────────────────────────────────
+    user = db.query(User).filter(User.badge_number == row.badge_number).first()
+    if not user:
+        user = db.query(User).filter(User.employee_code == row.badge_number).first()
+    if not user:
+        return {"message": f"User not found for badge '{row.badge_number}'", "skipped": True}
+
+    # ── 2. Resolve site ───────────────────────────────────────────────────────
+    site = None
+    if row.site_name:
+        site = db.query(Site).filter(
+            Site.name.ilike(f"%{row.site_name.strip()}%")
+        ).first()
+    if not site:
+        # Fall back to user's roster site
+        roster = (
+            db.query(GuardRoster)
+            .filter(
+                GuardRoster.guard_id == user.user_id,
+                GuardRoster.status != "canceled",
+            )
+            .order_by(GuardRoster.assigned_date.desc())
+            .first()
+        )
+        if roster and roster.shift:
+            site = db.query(Site).filter(Site.site_id == roster.shift.site_id).first()
+
+    if not site:
+        return {"message": f"Site not found for user '{row.badge_number}'", "skipped": True}
+
+    # ── 3. Delete existing entries for user in this period ────────────────────
+    db.query(DailyAttendanceEntry).filter(
+        DailyAttendanceEntry.employee_id == user.user_id,
+        DailyAttendanceEntry.entry_date >= date_from,
+        DailyAttendanceEntry.entry_date <= date_to,
+    ).delete(synchronize_session=False)
+    db.flush()
+
+    # ── 4. Build day-by-day allocation ────────────────────────────────────────
+    # Collect all dates in range, then assign statuses
+    all_dates = []
+    cur = date_from
+    while cur <= date_to:
+        all_dates.append(cur)
+        cur += timedelta(days=1)
+
+    # Build status list matching counts
+    LATE_MINUTES_DEFAULT = 20  # mark late entries with 20 minutes late
+    status_queue: list[tuple[str, float, int]] = []  # (status, overtime_hours, late_minutes)
+
+    # Distribute in a sensible order: present, absent_unexcused, absent_excused,
+    # rest, rest_day_worked, annual_leave, sick_leave
+    # Remainder of dates that don't fit any count → skip (don't create entry)
+    present_count    = min(row.days_present or 0, len(all_dates))
+    absent_unexc     = min(row.absence_unexcused or 0, len(all_dates) - present_count)
+    absent_exc       = min(row.absence_excused or 0, len(all_dates) - present_count - absent_unexc)
+    rest_count       = min(row.rest_days or 0, len(all_dates) - present_count - absent_unexc - absent_exc)
+    rest_worked      = min(row.rest_day_worked or 0, len(all_dates) - present_count - absent_unexc - absent_exc - rest_count)
+    annual_lv        = min(row.annual_leave or 0, len(all_dates) - present_count - absent_unexc - absent_exc - rest_count - rest_worked)
+    sick_lv          = min(row.sick_leave or 0, len(all_dates) - present_count - absent_unexc - absent_exc - rest_count - rest_worked - annual_lv)
+
+    # Spread overtime evenly across present days
+    ot_per_day = round((row.overtime_hours or 0.0) / present_count, 2) if present_count > 0 else 0.0
+    late_count = row.late_count or 0
+
+    for i in range(present_count):
+        lm = LATE_MINUTES_DEFAULT if i < late_count else 0
+        status_queue.append(("present", ot_per_day, lm))
+    for _ in range(absent_unexc):
+        status_queue.append(("absence_unexcused", 0.0, 0))
+    for _ in range(absent_exc):
+        status_queue.append(("absence_excused", 0.0, 0))
+    for _ in range(rest_count):
+        status_queue.append(("rest", 0.0, 0))
+    for _ in range(rest_worked):
+        status_queue.append(("rest_day_worked", 0.0, 0))
+    for _ in range(annual_lv):
+        status_queue.append(("annual_leave", 0.0, 0))
+    for _ in range(sick_lv):
+        status_queue.append(("sick_leave", 0.0, 0))
+
+    # ── 5. Create entries ─────────────────────────────────────────────────────
+    created = 0
+    for i, (status, ot, lm) in enumerate(status_queue):
+        if i >= len(all_dates):
+            break
+        entry_date = all_dates[i]
+        entry = DailyAttendanceEntry(
+            id=str(uuid.uuid4()),
+            employee_id=user.user_id,
+            site_id=site.site_id,
+            entry_date=entry_date,
+            status=status,
+            late_minutes=lm,
+            overtime_hours=ot,
+            overtime_approved=False,
+            entered_by=current_user.user_id,
+            locked=False,
+        )
+        db.add(entry)
+        created += 1
+
+    db.commit()
+    return {
+        "message": f"Imported {created} entries for {user.name}",
+        "user_id": user.user_id,
+        "created": created,
+        "skipped": False,
+    }
+
+
 # ─────────────────────────────────────────────
 # Edit & Delete attendance entries (Admin/Accountant)
 # ─────────────────────────────────────────────
