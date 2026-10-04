@@ -633,21 +633,52 @@ def import_attendance_row(
     """
     from datetime import timedelta
 
-    if not row.badge_number:
-        return {"message": "Skipped — no badge_number", "skipped": True}
+    if not row.badge_number and not row.name:
+        return {"message": "Skipped — no badge_number or name", "skipped": True}
 
     # ── 1. Find user ─────────────────────────────────────────────────────────
-    user = db.query(User).filter(User.badge_number == row.badge_number).first()
+    code = (row.badge_number or "").strip()
+    user = None
+    if code:
+        user = db.query(User).filter(User.badge_number == code).first()
+        if not user:
+            user = db.query(User).filter(User.employee_code == code).first()
+
+    # Fallback: match by normalized name (CSV codes may be stale after badge changes)
+    if not user and row.name:
+        import re as _re
+
+        def _norm_name(s: str) -> str:
+            s = (s or "").strip()
+            s = _re.sub(r"[\u064B-\u0652\u0640]", "", s)        # tashkeel + tatweel
+            s = _re.sub(r"[أإآ]", "ا", s)
+            s = s.replace("ى", "ي").replace("ة", "ه")
+            s = _re.sub(r"\s+", " ", s)
+            return s.lower()
+
+        target = _norm_name(row.name)
+        if target:
+            matches = [
+                u for u in db.query(User).filter(User.status != "deleted").all()
+                if _norm_name(u.name) == target
+            ]
+            if len(matches) == 1:
+                user = matches[0]
+            elif len(matches) > 1:
+                return {
+                    "message": f"Ambiguous name '{row.name}' matches {len(matches)} users",
+                    "skipped": True,
+                }
+
     if not user:
-        user = db.query(User).filter(User.employee_code == row.badge_number).first()
-    if not user:
-        return {"message": f"User not found for badge '{row.badge_number}'", "skipped": True}
+        return {"message": f"User not found for badge '{code}' / name '{row.name}'", "skipped": True}
 
     # ── 2. Resolve site ───────────────────────────────────────────────────────
     site = None
-    if row.site_name:
+    site_name = (row.site_name or "").strip()
+    if site_name and site_name.upper() != "N/A":
         site = db.query(Site).filter(
-            Site.name.ilike(f"%{row.site_name.strip()}%")
+            Site.name.ilike(f"%{site_name}%")
         ).first()
     if not site:
         # Fall back to user's roster site
