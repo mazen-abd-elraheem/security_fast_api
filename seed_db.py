@@ -463,10 +463,49 @@ def _run_seed_migrations():
     except Exception as e:
         print(f"transfer_method_credits migration: {e}")
 
+    # ── custody_disbursements migration ─────────────────────────────────────────
+    try:
+        if insp.has_table("custody_disbursements"):
+            existing = {c["name"] for c in insp.get_columns("custody_disbursements")}
+            cust_cols = {
+                "ref_id": "VARCHAR(36) NULL",
+                "guard_badge": "VARCHAR(50) NULL",
+                "site_id": "VARCHAR(36) NULL",
+                "site_name": "VARCHAR(255) NULL",
+                "amount": "FLOAT NULL",
+                "description": "TEXT NULL",
+                "handed_at": "DATETIME NULL",
+                "supervisor_notes": "TEXT NULL",
+                "guard_confirmed_amount": "FLOAT NULL",
+                "guard_photo_url": "VARCHAR(500) NULL",
+                "guard_notes": "TEXT NULL",
+                "confirmed_at": "DATETIME NULL",
+                "is_active": "BOOLEAN DEFAULT TRUE",
+                "requested_by": "VARCHAR(36) NULL",
+                "requested_by_name": "VARCHAR(255) NULL",
+                "approved_by": "VARCHAR(36) NULL",
+                "approved_by_name": "VARCHAR(255) NULL",
+                "approved_at": "DATETIME NULL",
+                "approval_notes": "TEXT NULL",
+                "transfer_method_id": "VARCHAR(36) NULL",
+                "transfer_method_name": "VARCHAR(100) NULL",
+                "credit_deducted": "FLOAT DEFAULT 0",
+                "issued_at": "DATETIME NULL",
+                "supervisor_received_at": "DATETIME NULL",
+            }
+            for col_name, col_def in cust_cols.items():
+                if col_name not in existing:
+                    with engine.begin() as conn:
+                        conn.execute(sa_text(f"ALTER TABLE custody_disbursements ADD COLUMN {col_name} {col_def}"))
+                        print(f"  [migration] custody_disbursements.{col_name} added")
+    except Exception as e:
+        print(f"custody_disbursements migration: {e}")
+
     # ── Performance Indexes ──────────────────────────────────────────────────
     # Idempotent: checks information_schema before creating each index.
     # These dramatically speed up GET /routes/all and site-name lookups.
     _ensure_indexes(engine)
+
 
 
 def _ensure_indexes(engine):

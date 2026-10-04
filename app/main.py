@@ -496,6 +496,9 @@ app.include_router(annual_leave.router, prefix="/api/v1/annual-leave", tags=["An
 from app.api.v1 import snapshots
 app.include_router(snapshots.router, prefix="/api/v1/snapshots", tags=["Data Snapshots"])
 
+from app.api.v1 import custody
+app.include_router(custody.router, prefix="/api/v1/custody", tags=["Custody Disbursement"])
+
 # ==========================================
 # Static Files (uploaded images) Ã¢â‚¬â€  must be AFTER routers
 # ==========================================

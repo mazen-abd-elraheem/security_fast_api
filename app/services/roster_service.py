@@ -66,17 +66,37 @@ class RosterService:
 
     @staticmethod
     def get_roster_for_site(db: Session, site_id: str, target_date: date) -> list:
-        """Get all guard assignments for a site on a specific date."""
-        return (
+        """Get all guard assignments for a site on a specific date.
+
+        Includes assignments created for that exact date AND assignments whose
+        start_date/end_date range covers the date (e.g. created by CSV import).
+        """
+        from sqlalchemy import or_, and_
+        rows = (
             db.query(GuardRoster)
             .join(Shift, GuardRoster.shift_id == Shift.shift_id)
             .filter(
                 Shift.site_id == site_id,
-                GuardRoster.assigned_date == target_date,
                 GuardRoster.status != "canceled",
+                or_(
+                    GuardRoster.assigned_date == target_date,
+                    and_(
+                        GuardRoster.start_date.isnot(None),
+                        GuardRoster.start_date <= target_date,
+                        or_(GuardRoster.end_date.is_(None), GuardRoster.end_date >= target_date),
+                    ),
+                ),
             )
             .all()
         )
+        # De-duplicate per guard+shift, preferring the exact-date row
+        best = {}
+        for r in rows:
+            key = (r.guard_id, r.shift_id)
+            exact = str(r.assigned_date) == str(target_date)
+            if key not in best or (exact and str(best[key].assigned_date) != str(target_date)):
+                best[key] = r
+        return list(best.values())
 
     @staticmethod
     def get_guard_schedule(
