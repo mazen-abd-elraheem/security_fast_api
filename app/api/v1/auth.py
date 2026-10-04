@@ -334,10 +334,17 @@ def check_activation_status(
     """
     Check whether a registered account has been activated by an admin.
 
-    - Returns `pending` if the account is still awaiting admin approval.
-    - Returns `active` if the admin has activated the account.
+    SECURITY: Always returns HTTP 200 regardless of whether the email exists.
+    This prevents email enumeration (an attacker cannot determine if an
+    email is registered by observing different response codes or bodies).
     """
     try:
-        return UserService.get_activation_status(db, email)
-    except SecureTrackException as e:
-        handle_service_exception(e)
+        result = UserService.get_activation_status(db, email)
+        return result
+    except SecureTrackException:
+        # Anti-enumeration: return a generic pending response instead of 404
+        return {
+            "email": email,
+            "status": "pending",
+            "message": "Your account is pending admin approval. Please wait for activation.",
+        }

@@ -698,12 +698,15 @@ def get_attendance_report(
     users = users_query.all()
     user_dict = {u.user_id: u for u in users}
 
+    # ── Load rosters: do NOT restrict by date range ──────────────────────────
+    # The report date range applies to attendance *entries* only.
+    # Roster assignments describe a user's shift/site/supervisor regardless of
+    # when the report is run. Filtering by date_from/date_to causes N/A for all
+    # users whose rosters were imported for dates outside the queried range.
     rosters = (
         db.query(GuardRoster)
         .options(joinedload(GuardRoster.shift).joinedload(Shift.site))
         .filter(GuardRoster.guard_id.in_(user_dict.keys()))
-        .filter(GuardRoster.assigned_date >= date_from)
-        .filter(GuardRoster.assigned_date <= date_to)
         .filter(GuardRoster.status != "canceled")
         .all()
     )
@@ -712,11 +715,11 @@ def get_attendance_report(
     for roster in rosters:
         user_rosters[roster.guard_id].append(roster)
 
+    # ── Load supervisor routes: do NOT restrict by date range ────────────────
+    # Same reason: route assignments are not always within the report period.
     sup_routes = (
         db.query(SupervisorRoute)
         .filter(SupervisorRoute.supervisor_id.in_(user_dict.keys()))
-        .filter(SupervisorRoute.assigned_date >= date_from)
-        .filter(SupervisorRoute.assigned_date <= date_to)
         .all()
     )
     user_sup_routes = {u_id: [] for u_id in user_dict.keys()}
@@ -846,13 +849,13 @@ def get_attendance_report(
 
         employees.append({
             "serial": serial,
-            "badge_number": user.employee_code or user.badge_number or "",
+            "badge_number": user.badge_number or user.employee_code or "",
             "classification": user.classification if user.classification else ROLE_ARABIC_MAP.get(user.role, user.role or ""),
             "shift_label": shift_label,
             "shift_time": shift_time,
             "supervisor": supervisor_name,
             "site_name": site_name,
-            "hire_date": user.created_at.strftime("%Y-%m-%d") if user.created_at else "",
+            "hire_date": user.hire_date.strftime("%Y-%m-%d") if user.hire_date else (user.created_at.strftime("%Y-%m-%d") if user.created_at else ""),
             "leave_date": leave_date,
             "name": user.name,
             "absence_excused": days_absent_excused,

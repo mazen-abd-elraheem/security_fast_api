@@ -22,6 +22,34 @@ class UserCreate(BaseModel):
     latitude: Optional[float] = Field(None, ge=-90, le=90)
     longitude: Optional[float] = Field(None, ge=-180, le=180)
 
+    # Roles that self-registrants are allowed to request
+    _ALLOWED_SELF_REGISTER_ROLES = {
+        UserRole.GUARD, UserRole.SUPERVISOR, UserRole.OUTDOOR,
+        UserRole.LEADER, UserRole.LADY, UserRole.PERSONNEL_OFFICER,
+        UserRole.OPERATIONS_MANAGER,
+    }
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def restrict_self_register_role(cls, v):
+        """SECURITY: Self-registration must not allow privileged roles.
+        Any attempt to register as admin/hr/ceo/accountant/client is
+        silently downgraded to guard. The admin must elevate the role
+        manually during approval.
+        """
+        # Resolve to UserRole enum for comparison
+        try:
+            role_enum = UserRole(v) if not isinstance(v, UserRole) else v
+        except ValueError:
+            return UserRole.GUARD
+        privileged = {
+            UserRole.ADMIN, UserRole.HR, UserRole.CEO,
+            UserRole.ACCOUNTANT, UserRole.CLIENT,
+        }
+        if role_enum in privileged:
+            return UserRole.GUARD
+        return role_enum
+
     @field_validator("password")
     @classmethod
     def validate_password_strength(cls, v: str) -> str:

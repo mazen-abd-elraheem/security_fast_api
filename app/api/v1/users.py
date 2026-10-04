@@ -253,22 +253,38 @@ def admin_update_user(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.HR)),
     db: Session = Depends(get_db),
 ):
-    """Admin-level user update — can change any field. HR can update restricted roles."""
+    """Admin-level user update — can change any field. HR and Accountant have restrictions."""
+    from fastapi import HTTPException as _HTTPException
+
+    # ── ACCOUNTANT: payroll-only access, cannot change roles or sensitive fields ──
+    if current_user.role == UserRole.ACCOUNTANT:
+        if update_data.role is not None:
+            raise _HTTPException(status_code=403, detail="Accountants are not authorized to change user roles.")
+        # Accountants can only update salary-related fields; block everything else
+        allowed_fields = {'payroll_amount', 'base_salary', 'daily_rate', 'bank_account', 'transfer_method', 'transfer_name'}
+        provided = {k for k, v in update_data.model_dump(exclude_unset=True).items() if v is not None}
+        disallowed = provided - allowed_fields
+        if disallowed:
+            raise _HTTPException(
+                status_code=403,
+                detail=f"Accountants can only update payroll/bank fields. Blocked fields: {', '.join(disallowed)}",
+            )
+
+    # ── HR: restricted roles only ──
     if current_user.role == UserRole.HR and update_data.role:
         allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
         if update_data.role not in allowed:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=403, detail="HR is not authorized to assign this role.")
-            
+            raise _HTTPException(status_code=403, detail="HR is not authorized to assign this role.")
+
     try:
         user = UserService.get_by_id(db, user_id)
-        
+
         if current_user.role == UserRole.HR and user:
             restricted = [UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO]
             if user.role in restricted:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=403, detail="HR is not authorized to update this user.")
-                
+
         old = snapshot(user) if user else {}
         updated = UserService.admin_update_user(db, user_id, update_data)
         log_update(db, current_user, "user", old, updated)
@@ -276,6 +292,7 @@ def admin_update_user(
         return updated
     except SecureTrackException as e:
         handle_service_exception(e)
+
 
 
 @router.post("/import-bulk", summary="Bulk import or update users (Excel)")
