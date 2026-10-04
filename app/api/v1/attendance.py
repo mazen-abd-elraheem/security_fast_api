@@ -77,6 +77,24 @@ def supervisor_attendance_dashboard(
         .filter(SupervisorRoute.assigned_date == target_date)
         .all()
     )
+
+    # ── Fallback: if no route for exact date, use the most recent past assignment ──
+    if not routes:
+        from sqlalchemy import func as _func
+        latest_date = (
+            db.query(_func.max(SupervisorRoute.assigned_date))
+            .filter(SupervisorRoute.supervisor_id == current_user.user_id)
+            .filter(SupervisorRoute.assigned_date <= target_date)
+            .scalar()
+        )
+        if latest_date:
+            routes = (
+                db.query(SupervisorRoute)
+                .filter(SupervisorRoute.supervisor_id == current_user.user_id)
+                .filter(SupervisorRoute.assigned_date == latest_date)
+                .all()
+            )
+
     site_ids = list({r.site_id for r in routes})
     if not site_ids:
         return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
