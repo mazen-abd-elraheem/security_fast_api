@@ -858,14 +858,34 @@ def list_instances(
     site_id: Optional[str] = None,
     assigned_to: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR)),
 ):
-    """List all task instances with filters."""
+    """List all task instances with filters.
+    - Admin: sees all instances across all sites.
+    - Supervisor: scoped to their assigned sites via SupervisorRoute.
+    """
     q = db.query(TaskInstance)
+
+    if current_user.role == UserRole.SUPERVISOR.value:
+        from app.models.supervisor_route import SupervisorRoute
+        routes = db.query(SupervisorRoute).filter(
+            SupervisorRoute.supervisor_id == current_user.user_id
+        ).all()
+        allowed_site_ids = list({r.site_id for r in routes if r.site_id})
+        if not allowed_site_ids:
+            return []
+        if site_id:
+            if site_id not in allowed_site_ids:
+                return []
+            q = q.filter(TaskInstance.site_id == site_id)
+        else:
+            q = q.filter(TaskInstance.site_id.in_(allowed_site_ids))
+    else:
+        if site_id:
+            q = q.filter(TaskInstance.site_id == site_id)
+
     if status_filter:
         q = q.filter(TaskInstance.status == status_filter)
-    if site_id:
-        q = q.filter(TaskInstance.site_id == site_id)
     if assigned_to:
         q = q.filter(TaskInstance.assigned_to == assigned_to)
     instances = q.order_by(TaskInstance.created_at.desc()).all()

@@ -120,6 +120,10 @@ def _run_seed_migrations():
             existing = {c["name"] for c in insp.get_columns("travel_allowance_entries")}
             tae_cols = {
                 "is_active": "BOOLEAN DEFAULT TRUE",
+                "status": "VARCHAR(20) DEFAULT 'pending'",
+                "submitted_by": "VARCHAR(36) NULL",
+                "approved_by": "VARCHAR(36) NULL",
+                "approval_notes": "TEXT NULL",
             }
             for col_name, col_def in tae_cols.items():
                 if col_name not in existing:

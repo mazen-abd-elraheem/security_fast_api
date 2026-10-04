@@ -23,9 +23,14 @@ class TravelAllowanceEntry(Base):
     trip_number = Column(String(50), nullable=False)  # Auto-generated: T-YYYYMMDD-001
     from_site = Column(String(255), nullable=False)   # من — origin site/base
     to_site = Column(String(255), nullable=False)      # الي — destination site/base
-    amount = Column(Float, nullable=False, default=0.0)  # المبلغ — from TravelFee rules, editable
-    notes = Column(Text, nullable=True)                # ملاحظه — set by admin/accountant/CEO
+    amount = Column(Float, nullable=False, default=0.0)  # المبلغ — supervisor enters manually
+    notes = Column(Text, nullable=True)                # ملاحظه
     is_active = Column(Boolean, nullable=False, default=True)
+    # Approval workflow
+    status = Column(String(20), nullable=False, default="pending")  # pending | approved | rejected
+    submitted_by = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    approved_by = Column(String(36), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    approval_notes = Column(Text, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
