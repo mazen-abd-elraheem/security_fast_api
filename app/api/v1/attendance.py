@@ -891,34 +891,43 @@ def export_attendance_report(
     employees = report["employees"]
 
     output = io.StringIO()
-    output.write("\ufeff")
+    output.write("\ufeff")  # BOM for Excel UTF-8
     writer = csv.writer(output)
 
+    # ── Column keys MUST match the import wizard's expectedColumns list exactly ──
+    # Import wizard (admin_attendance_screen.dart) expects these English keys:
+    # badge_number, name, site_name, shift_label, shift_time, supervisor,
+    # classification, days_present, absence_unexcused, absence_excused,
+    # late_count, rest_days, rest_day_worked, sick_leave, annual_leave,
+    # overtime_hours, deductions
     headers = [
-        "الاكواد", "مسلسل", "التصنيف", "توقيت العمل", "المشرف", "مشروع",
-        "تاريخ التعيين", "تاريخ ترك العمل", "الاسم",
-        "غياب باذن", "غياب بدون", "اضافى", "بدل راحه",
-        "تاخير", "خصم", "راحة", "اجازة من السنوي", "اجازة مرضي", "ايام العمل التشغيليه",
+        "badge_number", "name", "site_name", "shift_label", "shift_time",
+        "supervisor", "classification", "days_present", "absence_unexcused",
+        "absence_excused", "late_count", "rest_days", "rest_day_worked",
+        "sick_leave", "annual_leave", "overtime_hours", "deductions",
     ]
     writer.writerow(headers)
 
     for emp in employees:
         writer.writerow([
-            emp["badge_number"], emp["serial"], emp["classification"],
-            emp["shift_label"], emp["supervisor"], emp["site_name"],
-            emp["hire_date"], emp["leave_date"], emp["name"],
-            emp["absence_excused"], emp["absence_unexcused"], emp["overtime_hours"],
-            emp["rest_day_worked"], emp["late_count"], emp["deductions"],
-            emp["rest_days"], emp["annual_leave"], emp["sick_leave"], emp["days_present"],
+            emp["badge_number"], emp["name"], emp["site_name"],
+            emp["shift_label"], emp["shift_time"], emp["supervisor"],
+            emp["classification"], emp["days_present"], emp["absence_unexcused"],
+            emp["absence_excused"], emp["late_count"], emp["rest_days"],
+            emp["rest_day_worked"], emp["sick_leave"], emp["annual_leave"],
+            emp["overtime_hours"], emp["deductions"],
         ])
 
     output.seek(0)
-    filename = f"attendance_report_{date_from.isoformat()}_to_{date_to.isoformat()}.csv"
+    from datetime import datetime as _dt
+    now_str = _dt.now().strftime("%Y%m%d_%H%M")
+    filename = f"attendance_{date_from.isoformat()}_to_{date_to.isoformat()}_{now_str}.csv"
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
 
 
 # ─────────────────────────────────────────────
