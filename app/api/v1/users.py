@@ -89,7 +89,7 @@ def _try_auto_checkin(db: Session, user: User, lat: float, lng: float):
         roster = (
             db.query(GuardRoster)
             .filter(GuardRoster.guard_id == user.user_id)
-            .filter(GuardRoster.assigned_date == today)
+            .filter(GuardRoster.active_on(today))
             .filter(GuardRoster.status != "canceled")
             .first()
         )

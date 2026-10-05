@@ -7,6 +7,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
 from app.core.database import Base
+from sqlalchemy import or_, and_
 
 
 class GuardRoster(Base):
@@ -46,3 +47,15 @@ class GuardRoster(Base):
 
     def __repr__(self):
         return f"<GuardRoster(roster_id={self.roster_id}, guard={self.guard_id}, date={self.assigned_date})>"
+
+    @classmethod
+    def active_on(cls, target_date):
+        """Returns SQLAlchemy condition for checking if roster is active on a specific date."""
+        return or_(
+            cls.assigned_date == target_date,
+            and_(
+                cls.start_date.isnot(None),
+                cls.start_date <= target_date,
+                or_(cls.end_date.is_(None), cls.end_date >= target_date),
+            ),
+        )

@@ -44,7 +44,7 @@ def outdoor_checkin(
         roster = (
             db.query(GuardRoster)
             .filter(GuardRoster.guard_id == current_user.user_id)
-            .filter(GuardRoster.assigned_date == today)
+            .filter(GuardRoster.active_on(today))
             .filter(GuardRoster.status != "canceled")
             .first()
         )
@@ -131,7 +131,7 @@ def outdoor_checkout(
     roster = (
         db.query(GuardRoster)
         .filter(GuardRoster.guard_id == current_user.user_id)
-        .filter(GuardRoster.assigned_date == today)
+        .filter(GuardRoster.active_on(today))
         .filter(GuardRoster.status != "canceled")
         .first()
     )

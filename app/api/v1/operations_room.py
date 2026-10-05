@@ -71,7 +71,7 @@ def _get_site_status(db: Session, site: Site, target_date: date) -> SiteStatus:
 
     rosters = db.query(GuardRoster).filter(
         GuardRoster.shift_id.in_(shift_ids),
-        GuardRoster.assigned_date == target_date,
+        GuardRoster.active_on(target_date),
         GuardRoster.status != "canceled"
     ).all()
     

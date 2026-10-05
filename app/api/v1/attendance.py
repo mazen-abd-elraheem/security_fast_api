@@ -127,13 +127,21 @@ def supervisor_attendance_dashboard(
     all_shift_ids = [s.shift_id for s in shifts]
     rosters = []
     if all_shift_ids:
+        from sqlalchemy import or_, and_
         rosters = (
             db.query(GuardRoster)
             .options(joinedload(GuardRoster.guard))
             .filter(
                 GuardRoster.shift_id.in_(all_shift_ids),
-                GuardRoster.assigned_date == target_date,
                 GuardRoster.status != "canceled",
+                or_(
+                    GuardRoster.active_on(target_date),
+                    and_(
+                        GuardRoster.start_date.isnot(None),
+                        GuardRoster.start_date <= target_date,
+                        or_(GuardRoster.end_date.is_(None), GuardRoster.end_date >= target_date),
+                    ),
+                ),
             )
             .all()
         )
@@ -248,7 +256,7 @@ def guard_checkin(
     roster = (
         db.query(GuardRoster)
         .filter(GuardRoster.guard_id == current_user.user_id)
-        .filter(GuardRoster.assigned_date == today)
+        .filter(GuardRoster.active_on(today))
         .filter(GuardRoster.status != "canceled")
         .first()
     )

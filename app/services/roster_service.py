@@ -148,7 +148,7 @@ class RosterService:
                 Shift.site_id == site_id,
                 GuardRoster.status != "canceled",
                 or_(
-                    GuardRoster.assigned_date == target_date,
+                    GuardRoster.active_on(target_date),
                     and_(
                         GuardRoster.start_date.isnot(None),
                         GuardRoster.start_date <= target_date,
