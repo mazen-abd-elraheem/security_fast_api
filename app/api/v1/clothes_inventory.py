@@ -139,6 +139,28 @@ def reject_request(req_id: int, payload: ActionPayload, db: Session = Depends(de
     db.commit()
     return {"success": True}
 
+@router.post("/requests/{req_id}/send")
+def send_request(req_id: int, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):
+    req = db.query(ClothesRequest).filter(ClothesRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.status != "approved":
+        raise HTTPException(status_code=400, detail="Only approved requests can be sent")
+    req.status = "sent"
+    db.commit()
+    return {"success": True, "status": req.status}
+
+@router.post("/requests/{req_id}/receive")
+def receive_request(req_id: int, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):
+    req = db.query(ClothesRequest).filter(ClothesRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.status != "sent":
+        raise HTTPException(status_code=400, detail="Only sent requests can be taken")
+    req.status = "taken"
+    db.commit()
+    return {"success": True, "status": req.status}
+
 @router.put("/requests/update-cells")
 def update_clothes_requests(payload: UpdatePayload, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):
     for u in payload.updates:

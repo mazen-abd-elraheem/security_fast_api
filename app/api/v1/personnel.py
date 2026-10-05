@@ -179,12 +179,10 @@ def personnel_create_name(
     # Automatically roster them for today
     roster = GuardRoster(
         roster_id=str(uuid.uuid4()),
-        site_id=data.site_id,
         shift_id=data.shift_id,
         guard_id=db_user.user_id,
         assigned_date=date.today(),
-        status="assigned",
-        assigned_by=current_user.user_id,
+        status="scheduled",
     )
     db.add(roster)
     db.commit()
@@ -325,9 +323,8 @@ def reassign_guard(
     roster = GuardRoster(
         roster_id=str(uuid.uuid4()),
         guard_id=guard_id,
-        site_id=data.site_id,
         shift_id=data.shift_id,
-        date=data.date_from or date.today().isoformat(),
+        assigned_date=data.date_from or date.today().isoformat(),
         status="scheduled",
     )
     db.add(roster)
