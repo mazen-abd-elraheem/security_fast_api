@@ -53,150 +53,129 @@ def import_bulk_roster(
     db: Session = Depends(get_db),
 ):
     """
-    Bulk-import roster assignments from CSV rows.
-    - Resolves guard by badge_number, shift by (site_name + shift_label)
-    - Smart upsert: creates if not exists, updates start/end dates + supervisor/leader if exists
-    - Also upserts supervisor route and/or leader route for the date
+    Bulk-import roster assignments from Excel/CSV rows (also used by the
+    Bulk-Assign wizard).
+
+    Every row is applied EXACTLY like a manual one-by-one assignment:
+      - guard resolved by badge (Excel "12.0" → "12"), must be guard/outdoor/lady
+      - site resolved against the EXISTING sites table (Arabic-tolerant match)
+      - shift resolved against that site's EXISTING shifts (inactive → reactivated)
+      - RosterService.upsert_assignment() — same function as POST /roster:
+        overlapping bookings for that guard are canceled, same-shift booking
+        is updated in place, otherwise a new row is created
+      - optional supervisor / leader are linked on the roster row and get a
+        route for every day of the range (same as the supervisor assign dialog)
+    Rows that can't be applied are reported back with a reason (no silent skips).
     """
-    from app.models.user import User as UserModel
-    from app.models.shift import Shift
-    from app.models.site import Site
-    from app.models.guard_roster import GuardRoster
-    from app.models.supervisor_route import SupervisorRoute
     import uuid as _uuid
-    from datetime import date as _date
+    from datetime import date as _date, timedelta
+    from app.models.supervisor_route import SupervisorRoute
+    from app.services.import_helpers import Lookup, first, parse_date, role_of, result
 
-    def _ss(v):
-        return str(v).strip() if v not in (None, "", "null", "None") else ""
-
-    def _parse_date(s):
-        if not s: return None
-        try:
-            from datetime import datetime
-            return datetime.strptime(s, "%Y-%m-%d").date()
-        except Exception:
-            return None
+    badges = set()
+    for r in rows:
+        badges.update({
+            first(r, "badge_number", "Badge Number", "guard_badge"),
+            first(r, "supervisor_badge", "Supervisor Badge"),
+            first(r, "leader_badge", "Leader Badge"),
+        })
+    lk = Lookup(db, badges)
 
     created = updated = skipped = 0
-    today = str(_date.today())
+    errors: list[dict] = []
+    today = _date.today()
+    route_jobs: dict[tuple, set] = {}   # (user_id, site_id, shift_id) -> {dates}
 
-    for row in rows:
-        badge           = _ss(row.get("badge_number")     or row.get("Badge Number",      ""))
-        site_name       = _ss(row.get("site_name")        or row.get("Site Name",          ""))
-        shift_lbl       = _ss(row.get("shift_label")      or row.get("Shift Label",        ""))
-        date_str        = _ss(row.get("assigned_date")    or row.get("Date", today)) or today
-        start_date_str  = _ss(row.get("start_date")       or row.get("Start Date",         ""))
-        end_date_str    = _ss(row.get("end_date")         or row.get("End Date",           ""))
-        sup_badge       = _ss(row.get("supervisor_badge") or row.get("Supervisor Badge",   ""))
-        leader_badge    = _ss(row.get("leader_badge")     or row.get("Leader Badge",       ""))
+    def _skip(idx, reason, badge=""):
+        nonlocal skipped
+        skipped += 1
+        errors.append({"row": idx, "badge": badge, "reason": reason})
+
+    for idx, row in enumerate(rows, start=1):
+        badge     = first(row, "badge_number", "Badge Number", "guard_badge")
+        site_name = first(row, "site_name", "Site Name")
+        shift_lbl = first(row, "shift_label", "Shift Label", "label")
+        sup_badge = first(row, "supervisor_badge", "Supervisor Badge")
+        ldr_badge = first(row, "leader_badge", "Leader Badge")
 
         if not badge or not site_name or not shift_lbl:
-            skipped += 1
-            continue
+            _skip(idx, "Missing badge / site / shift", badge); continue
 
-        # Resolve guard
-        guard = db.query(UserModel).filter(UserModel.badge_number == badge).first()
+        guard = lk.user(badge)
         if not guard:
-            skipped += 1
-            continue
+            _skip(idx, f"No user with badge '{badge}'", badge); continue
+        if role_of(guard) not in RosterService.ASSIGNABLE_ROLES:
+            _skip(idx, f"'{guard.name}' is a {role_of(guard)}, not a guard — use the supervisor tab", badge); continue
 
-        # Resolve site + shift
-        site = db.query(Site).filter(Site.name.ilike(site_name)).first()
+        site = lk.site(site_name)
         if not site:
-            skipped += 1
-            continue
+            _skip(idx, f"Site '{site_name}' does not exist", badge); continue
 
-        shift = db.query(Shift).filter(
-            Shift.site_id == site.site_id,
-            Shift.label.ilike(shift_lbl),
-        ).first()
+        shift = lk.shift(site.site_id, shift_lbl)
         if not shift:
-            skipped += 1
-            continue
+            _skip(idx, f"Shift '{shift_lbl}' does not exist in site '{site.name}'", badge); continue
+        if not shift.is_active:
+            shift.is_active = True   # assigning to it means it is in use again
 
-        # Resolve optional supervisor + leader
-        supervisor = db.query(UserModel).filter(UserModel.badge_number == sup_badge).first() if sup_badge else None
-        leader     = db.query(UserModel).filter(UserModel.badge_number == leader_badge).first() if leader_badge else None
+        # Dates — same defaults as the manual dialog: start = assigned date
+        raw_start = first(row, "start_date", "Start Date")
+        raw_end   = first(row, "end_date", "End Date")
+        raw_asg   = first(row, "assigned_date", "Date")
+        start_d = parse_date(raw_start) or parse_date(raw_asg)
+        end_d   = parse_date(raw_end)
+        if (raw_start and not parse_date(raw_start)) or (raw_end and not end_d) \
+                or (raw_asg and not parse_date(raw_asg) and not start_d):
+            _skip(idx, "Unreadable date (use YYYY-MM-DD)", badge); continue
+        start_d = start_d or today
+        end_d = end_d or start_d
 
-        start_d = _parse_date(start_date_str)
-        end_d   = _parse_date(end_date_str)
+        supervisor = lk.user(sup_badge) if sup_badge else None
+        leader     = lk.user(ldr_badge) if ldr_badge else None
+        if sup_badge and not supervisor:
+            errors.append({"row": idx, "badge": badge, "reason": f"Supervisor badge '{sup_badge}' not found — assigned without supervisor"})
+        if ldr_badge and not leader:
+            errors.append({"row": idx, "badge": badge, "reason": f"Leader badge '{ldr_badge}' not found — assigned without leader"})
 
-        # Smart upsert: find existing non-canceled assignment
-        existing_entry = db.query(GuardRoster).filter(
-            GuardRoster.guard_id == guard.user_id,
-            GuardRoster.shift_id == shift.shift_id,
-            GuardRoster.assigned_date == date_str,
-        ).first()
-
-        if existing_entry:
-            # Update date range + supervisor/leader
-            if start_d:   existing_entry.start_date    = start_d
-            if end_d:     existing_entry.end_date      = end_d
-            if supervisor: existing_entry.supervisor_id = supervisor.user_id
-            if leader:     existing_entry.leader_id    = leader.user_id
-            db.flush()
+        action, _ = RosterService.upsert_assignment(
+            db, guard, shift, start_d, end_d,
+            supervisor_id=supervisor.user_id if supervisor else None,
+            leader_id=leader.user_id if leader else None,
+        )
+        if action == "created":
+            created += 1
+        elif action == "updated":
             updated += 1
         else:
-            db.add(GuardRoster(
-                roster_id=str(_uuid.uuid4()),
-                guard_id=guard.user_id,
-                shift_id=shift.shift_id,
-                assigned_date=date_str,
-                start_date=start_d,
-                end_date=end_d,
-                supervisor_id=supervisor.user_id if supervisor else None,
-                leader_id=leader.user_id if leader else None,
-                status="scheduled",
+            skipped += 1   # already identical in DB
+
+        lo, hi = min(start_d, end_d), max(start_d, end_d)
+        days = {lo + timedelta(days=i) for i in range((hi - lo).days + 1)}
+        for staff in (supervisor, leader):
+            if staff:
+                route_jobs.setdefault((staff.user_id, site.site_id, shift.shift_id), set()).update(days)
+
+    # Supervisor / leader routes — one per day, like the manual "assign supervisor" dialog
+    for (uid, sid, shid), days in route_jobs.items():
+        existing = {
+            r.assigned_date for r in db.query(SupervisorRoute.assigned_date).filter(
+                SupervisorRoute.supervisor_id == uid,
+                SupervisorRoute.site_id == sid,
+                SupervisorRoute.assigned_date.in_(list(days)),
+            ).all()
+        }
+        for d in sorted(days - existing):
+            db.add(SupervisorRoute(
+                route_id=str(_uuid.uuid4()),
+                supervisor_id=uid,
+                site_id=sid,
+                shift_id=shid,
+                assigned_date=d,
+                visit_order=1,
+                status="pending",
             ))
-            db.flush()
-            created += 1
-
-        # Upsert supervisor route for this site+date
-        if supervisor:
-            sup_route = db.query(SupervisorRoute).filter(
-                SupervisorRoute.supervisor_id == supervisor.user_id,
-                SupervisorRoute.site_id == site.site_id,
-                SupervisorRoute.assigned_date == date_str,
-            ).first()
-            if not sup_route:
-                db.add(SupervisorRoute(
-                    route_id=str(_uuid.uuid4()),
-                    supervisor_id=supervisor.user_id,
-                    site_id=site.site_id,
-                    shift_id=shift.shift_id,
-                    assigned_date=date_str,
-                    visit_order=1,
-                    status="pending",
-                ))
-                db.flush()
-
-        # Upsert leader route if leader is a supervisor-type user
-        if leader:
-            leader_route = db.query(SupervisorRoute).filter(
-                SupervisorRoute.supervisor_id == leader.user_id,
-                SupervisorRoute.site_id == site.site_id,
-                SupervisorRoute.assigned_date == date_str,
-            ).first()
-            if not leader_route:
-                db.add(SupervisorRoute(
-                    route_id=str(_uuid.uuid4()),
-                    supervisor_id=leader.user_id,
-                    site_id=site.site_id,
-                    shift_id=shift.shift_id,
-                    assigned_date=date_str,
-                    visit_order=1,
-                    status="pending",
-                ))
-                db.flush()
 
     db.commit()
-    return {
-        "detail": f"Roster import: {created} created, {updated} updated, {skipped} skipped",
-        "created_count": created,
-        "updated_count": updated,
-        "skipped_count": skipped,
-        "total_count": len(rows),
-    }
+    return result(created, updated, skipped, len(rows), errors, "Roster import")
 
 
 @router.get("/all", summary="Get all roster entries across all sites")
@@ -232,6 +211,7 @@ def get_all_roster(
             func.max(GuardRoster.assigned_date).label('max_date'),
             func.min(GuardRoster.assigned_date).label('min_date')
         )
+        .filter(GuardRoster.status != "canceled")
         .group_by(GuardRoster.guard_id, GuardRoster.shift_id)
         .subquery()
     )
@@ -248,6 +228,7 @@ def get_all_roster(
         .join(UserModel,  GuardRoster.guard_id      == UserModel.user_id)
         .outerjoin(Supervisor, GuardRoster.supervisor_id == Supervisor.user_id)
         .outerjoin(Leader,     GuardRoster.leader_id     == Leader.user_id)
+        .filter(GuardRoster.status != "canceled")
     )
 
     if site_id:   q = q.filter(Site.site_id         == site_id)

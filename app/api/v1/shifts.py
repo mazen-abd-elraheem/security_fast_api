@@ -41,57 +41,69 @@ def import_bulk_shifts(
     db: Session = Depends(get_db),
 ):
     """
-    Bulk upsert shifts.
-    Lookup key: site_name + label (case-insensitive).
-    - Existing shift → smart-update only changed fields.
-    - Not found      → create (site must exist by name).
+    Bulk upsert shifts against the EXISTING sites / shifts tables.
+    Lookup key: site name + shift label (Arabic-tolerant, case-insensitive).
+    - Existing shift (even if soft-deleted) → update only the cells that are
+      filled in the sheet and reactivate it. Blank cells never wipe data.
+    - Not found → create it on the existing site (same as "Add shift" dialog).
+    - Site must already exist — rows for unknown sites are reported, not guessed.
     """
     from app.models.shift import Shift
-    from app.models.site import Site
+    from app.services.import_helpers import (
+        Lookup, first, parse_time, parse_days, clean, result,
+    )
     import uuid as _uuid
 
-    def _ss(v):
-        return str(v).strip() if v not in (None, "", "null", "None") else ""
-
-    def _si(v, default=None):
-        try:
-            return int(str(v).strip())
-        except (TypeError, ValueError):
-            return default
-
+    lk = Lookup(db)
     created = updated = skipped = 0
+    errors: list[dict] = []
 
-    for row in rows:
-        site_name  = _ss(row.get("site_name")  or row.get("Site Name",  ""))
-        label      = _ss(row.get("label")       or row.get("Shift Label",""))
-        start_time = _ss(row.get("start_time")  or row.get("Start Time", ""))
-        end_time   = _ss(row.get("end_time")    or row.get("End Time",   ""))
-        days_raw   = _ss(row.get("days_of_week") or row.get("Days", "mon,tue,wed,thu,fri,sat,sun"))
-        headcount  = _si(row.get("required_headcount") or row.get("Headcount"), 1)
+    for idx, row in enumerate(rows, start=1):
+        site_name = first(row, "site_name", "Site Name")
+        label     = first(row, "label", "shift_label", "Shift Label")
+        raw_start = first(row, "start_time", "Start Time", "shift_start")
+        raw_end   = first(row, "end_time", "End Time", "shift_end")
+        days      = parse_days(first(row, "days_of_week", "Days"))
+        raw_head  = clean(row.get("required_headcount") or row.get("Headcount"))
 
         if not site_name or not label:
             skipped += 1
+            errors.append({"row": idx, "reason": "Missing site name or shift label"})
             continue
 
-        # Resolve site
-        site = db.query(Site).filter(Site.name.ilike(site_name)).first()
+        site = lk.site(site_name)
         if not site:
             skipped += 1
+            errors.append({"row": idx, "reason": f"Site '{site_name}' does not exist — create it first"})
             continue
 
-        existing = db.query(Shift).filter(
-            Shift.site_id == site.site_id,
-            Shift.label.ilike(label),
-        ).first()
+        start_t = parse_time(raw_start)
+        end_t   = parse_time(raw_end)
+        if (raw_start and not start_t) or (raw_end and not end_t):
+            skipped += 1
+            errors.append({"row": idx, "reason": f"Unreadable time '{raw_start or raw_end}' (use HH:MM)"})
+            continue
 
+        headcount = None
+        if raw_head:
+            try:
+                headcount = max(1, int(float(raw_head)))
+            except ValueError:
+                skipped += 1
+                errors.append({"row": idx, "reason": f"Headcount '{raw_head}' is not a number"})
+                continue
+
+        existing = lk.shift(site.site_id, label)
         if existing:
             changed = False
-            if start_time and str(existing.start_time or "") != start_time:
-                existing.start_time = start_time; changed = True
-            if end_time and str(existing.end_time or "") != end_time:
-                existing.end_time = end_time; changed = True
-            if days_raw and existing.days_of_week != days_raw:
-                existing.days_of_week = days_raw; changed = True
+            if not existing.is_active:
+                existing.is_active = True; changed = True
+            if start_t and existing.start_time != start_t:
+                existing.start_time = start_t; changed = True
+            if end_t and existing.end_time != end_t:
+                existing.end_time = end_t; changed = True
+            if days and existing.days_of_week != days:
+                existing.days_of_week = days; changed = True
             if headcount is not None and existing.required_headcount != headcount:
                 existing.required_headcount = headcount; changed = True
             if changed:
@@ -99,28 +111,27 @@ def import_bulk_shifts(
             else:
                 skipped += 1
         else:
-            if not start_time or not end_time:
+            if not start_t or not end_t:
                 skipped += 1
+                errors.append({"row": idx, "reason": f"New shift '{label}' needs start and end time"})
                 continue
-            db.add(Shift(
+            sh = Shift(
                 shift_id=str(_uuid.uuid4()),
                 site_id=site.site_id,
                 label=label,
-                start_time=start_time,
-                end_time=end_time,
-                days_of_week=days_raw or "mon,tue,wed,thu,fri,sat,sun",
+                start_time=start_t,
+                end_time=end_t,
+                days_of_week=days or "mon,tue,wed,thu,fri,sat,sun",
                 required_headcount=headcount or 1,
-            ))
-            db.flush(); created += 1
+                is_active=True,
+            )
+            db.add(sh)
+            db.flush()
+            lk.add_shift(sh)   # later rows in the same file can reference it
+            created += 1
 
     db.commit()
-    return {
-        "detail": f"Shifts import: {created} created, {updated} updated, {skipped} skipped",
-        "created_count": created,
-        "updated_count": updated,
-        "skipped_count": skipped,
-        "total_count": len(rows),
-    }
+    return result(created, updated, skipped, len(rows), errors, "Shifts import")
 
 
 @router.get("/{site_id}/shifts", response_model=ShiftListResponse, summary="List shifts for site")

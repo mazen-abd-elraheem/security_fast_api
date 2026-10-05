@@ -18,14 +18,98 @@ from app.core.exceptions import NotFoundException, DuplicateException, BadReques
 class RosterService:
     """Guard scheduling — assign guards to shifts on specific dates."""
 
+    ASSIGNABLE_ROLES = ("guard", "outdoor", "lady")
+
+    @staticmethod
+    def _role(user) -> str:
+        r = getattr(user, "role", "")
+        return (r.value if hasattr(r, "value") else str(r or "")).lower()
+
+    @staticmethod
+    def upsert_assignment(
+        db: Session,
+        guard: User,
+        shift: Shift,
+        start_d: date,
+        end_d: Optional[date] = None,
+        supervisor_id: Optional[str] = None,
+        leader_id: Optional[str] = None,
+    ) -> tuple:
+        """
+        THE single rule-set for putting a guard on a shift.
+        Used by the manual assign dialog AND by Excel / wizard imports so both
+        produce identical rows.
+
+        - The guard's other active bookings that overlap [start_d, end_d] are
+          canceled (the new assignment replaces them — same as the UI warning).
+        - If the guard already has an overlapping booking on the SAME shift it
+          is updated in place instead of duplicated (idempotent re-imports).
+        Does NOT commit; caller commits.
+        Returns (action, roster) where action ∈ {"created", "updated", "unchanged"}.
+        """
+        end_d = end_d or start_d
+        if end_d < start_d:
+            start_d, end_d = end_d, start_d
+
+        active = db.query(GuardRoster).filter(
+            GuardRoster.guard_id == guard.user_id,
+            GuardRoster.status != "canceled",
+        ).all()
+
+        same = None
+        for r in active:
+            r_start = r.start_date or r.assigned_date
+            r_end = r.end_date or r.assigned_date
+            if not (r_start <= end_d and r_end >= start_d):
+                continue  # no overlap → untouched
+            if r.shift_id == shift.shift_id and same is None:
+                same = r
+            else:
+                r.status = "canceled"
+
+        if same is not None:
+            changed = False
+            for attr, val in (
+                ("assigned_date", start_d),
+                ("start_date", start_d),
+                ("end_date", end_d),
+                ("status", "scheduled"),
+            ):
+                if getattr(same, attr) != val:
+                    setattr(same, attr, val)
+                    changed = True
+            if supervisor_id and same.supervisor_id != supervisor_id:
+                same.supervisor_id = supervisor_id
+                changed = True
+            if leader_id and same.leader_id != leader_id:
+                same.leader_id = leader_id
+                changed = True
+            db.flush()
+            return ("updated" if changed else "unchanged", same)
+
+        roster = GuardRoster(
+            roster_id=str(uuid.uuid4()),
+            guard_id=guard.user_id,
+            shift_id=shift.shift_id,
+            assigned_date=start_d,
+            start_date=start_d,
+            end_date=end_d,
+            supervisor_id=supervisor_id,
+            leader_id=leader_id,
+            status="scheduled",
+        )
+        db.add(roster)
+        db.flush()
+        return ("created", roster)
+
     @staticmethod
     def assign_guard(db: Session, roster_data: RosterCreate) -> GuardRoster:
-        """Assign a guard to a shift on a specific date."""
+        """Assign a guard to a shift for a date / date range."""
         # Validate guard exists and is a guard
         guard = db.query(User).filter(User.user_id == roster_data.guard_id).first()
         if not guard:
             raise NotFoundException("Guard", roster_data.guard_id)
-        if guard.role not in ("guard", "outdoor"):
+        if RosterService._role(guard) not in RosterService.ASSIGNABLE_ROLES:
             raise BadRequestException(f"User {guard.name} is not a guard or outdoor user (role: {guard.role})")
 
         # Validate shift exists
@@ -33,24 +117,9 @@ class RosterService:
         if not shift:
             raise NotFoundException("Shift", roster_data.shift_id)
 
-        # Cancel any existing assignment on the same date (allows re-assignment)
-        existing = db.query(GuardRoster).filter(
-            GuardRoster.guard_id == roster_data.guard_id,
-            GuardRoster.assigned_date == roster_data.assigned_date,
-            GuardRoster.status != "canceled",
-        ).all()
-        for old in existing:
-            old.status = "canceled"
-
-        db_roster = GuardRoster(
-            roster_id=str(uuid.uuid4()),
-            guard_id=roster_data.guard_id,
-            shift_id=roster_data.shift_id,
-            assigned_date=roster_data.assigned_date,
-            start_date=roster_data.start_date,
-            end_date=roster_data.end_date,
-        )
-        db.add(db_roster)
+        start_d = roster_data.start_date or roster_data.assigned_date
+        end_d = roster_data.end_date or start_d
+        _, db_roster = RosterService.upsert_assignment(db, guard, shift, start_d, end_d)
         db.commit()
         db.refresh(db_roster)
         return db_roster

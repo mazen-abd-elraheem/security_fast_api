@@ -69,38 +69,14 @@ def import_bulk_routes(
     from app.models.site import Site
     from app.models.shift import Shift
 
-    def _ss(v): return str(v).strip() if v else ''
-    def _pd(s):
-        if not s: return None
-        try:
-            return datetime.strptime(s, "%Y-%m-%d").date()
-        except Exception:
-            return None
+    from app.services.import_helpers import Lookup, first, parse_date, role_of
 
     created = updated = skipped = 0
+    errors: list[dict] = []
     today = _date.today()
 
-    # ── Phase 1: resolve users, sites, shifts for all rows (batch lookups) ──
-    badges     = {_ss(r.get("badge_number") or r.get("Badge Number", "")) for r in rows}
-    site_names = {_ss(r.get("site_name")    or r.get("Site Name",   "")) for r in rows}
-    badges.discard(""); site_names.discard("")
-
-    user_map = {
-        u.badge_number: u
-        for u in db.query(User).filter(User.badge_number.in_(badges)).all()
-    }
-    site_map = {
-        s.name.lower(): s
-        for s in db.query(Site).filter(
-            func.lower(Site.name).in_([n.lower() for n in site_names])
-        ).all()
-    }
-    # Collect all site_ids so we can batch-load shifts
-    all_site_ids = {s.site_id for s in site_map.values()}
-    shift_map: dict[tuple, str] = {}   # (site_id, label_lower) -> shift_id
-    if all_site_ids:
-        for sh in db.query(Shift).filter(Shift.site_id.in_(all_site_ids)).all():
-            shift_map[(sh.site_id, sh.label.lower())] = sh.shift_id
+    # ── Phase 1: resolve users, sites, shifts against the live tables ──
+    lk = Lookup(db, {first(r, "badge_number", "Badge Number", "supervisor_badge") for r in rows})
 
     # ── Phase 2: build all (supervisor, site, date) triples ──
     # grouped so we can do one EXISTS query per (supervisor, site) pair
@@ -114,29 +90,45 @@ def import_bulk_routes(
 
     jobs: list[_Job] = []
 
-    for row in rows:
-        badge       = _ss(row.get("badge_number")  or row.get("Badge Number", ""))
-        site_name   = _ss(row.get("site_name")      or row.get("Site Name",   ""))
-        shift_lbl   = _ss(row.get("shift_label")    or row.get("Shift Label", ""))
-        start_d_str = _ss(row.get("start_date")     or row.get("Start Date",  ""))
-        end_d_str   = _ss(row.get("end_date")       or row.get("End Date",    ""))
-        date_str    = _ss(row.get("assigned_date")  or row.get("Date",        ""))
+    for idx, row in enumerate(rows, start=1):
+        badge       = first(row, "badge_number", "Badge Number", "supervisor_badge")
+        site_name   = first(row, "site_name", "Site Name")
+        shift_lbl   = first(row, "shift_label", "Shift Label")
+        start_d_str = first(row, "start_date", "Start Date")
+        end_d_str   = first(row, "end_date", "End Date")
+        date_str    = first(row, "assigned_date", "Date")
 
         if not badge or not site_name:
             skipped += 1
+            errors.append({"row": idx, "badge": badge, "reason": "Missing badge or site"})
             continue
 
-        user = user_map.get(badge)
-        site = site_map.get(site_name.lower())
-        if not user or not site:
+        user = lk.user(badge)
+        site = lk.site(site_name)
+        if not user:
             skipped += 1
+            errors.append({"row": idx, "badge": badge, "reason": f"No user with badge '{badge}'"})
+            continue
+        if role_of(user) not in ("supervisor", "leader", "admin", "operations_manager"):
+            skipped += 1
+            errors.append({"row": idx, "badge": badge, "reason": f"'{user.name}' is a {role_of(user)} — use the Roster tab for guards"})
+            continue
+        if not site:
+            skipped += 1
+            errors.append({"row": idx, "badge": badge, "reason": f"Site '{site_name}' does not exist"})
             continue
 
-        shift_id = shift_map.get((site.site_id, shift_lbl.lower())) if shift_lbl else None
+        shift_id = None
+        if shift_lbl:
+            sh = lk.shift(site.site_id, shift_lbl)
+            if not sh:
+                errors.append({"row": idx, "badge": badge, "reason": f"Shift '{shift_lbl}' not in '{site.name}' — assigned to site without shift"})
+            else:
+                shift_id = sh.shift_id
 
-        start_d = _pd(start_d_str)
-        end_d   = _pd(end_d_str)
-        single  = _pd(date_str) or today
+        start_d = parse_date(start_d_str)
+        end_d   = parse_date(end_d_str)
+        single  = parse_date(date_str) or start_d or today
 
         if start_d and end_d and end_d >= start_d:
             n_days = (end_d - start_d).days + 1
@@ -194,6 +186,8 @@ def import_bulk_routes(
         "created_count": created,
         "updated_count": updated,
         "skipped_count": skipped,
+        "total_count": len(rows),
+        "errors": errors[:200],
     }
 
 
