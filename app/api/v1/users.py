@@ -185,12 +185,12 @@ def list_users(
     onboarding_status: Optional[str] = Query(None, description="Filter by onboarding status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=2000),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     """List users with optional filtering. Admin only."""
     result = UserService.list_users(db, role=role, region=region, is_active=is_active, onboarding_status=onboarding_status, skip=skip, limit=limit)
-    if current_user.role == UserRole.HR:
+    if current_user.role in (UserRole.HR, UserRole.PERSONNEL_OFFICER):
         restricted = [UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.CEO]
         filtered = [u for u in result["users"] if u.role not in restricted]
         result["users"] = filtered
