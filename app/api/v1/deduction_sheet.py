@@ -343,7 +343,7 @@ class AddDeductionRequest(BaseModel):
 @router.post("/add", summary="Add manual deduction to an employee")
 def add_manual_deduction(
     req: AddDeductionRequest,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR, UserRole.OPERATIONS_MANAGER, UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """
@@ -381,6 +381,12 @@ def add_manual_deduction(
     type_labels = {"days": "خصم أيام", "amount": "خصم مبلغ", "percentage": "خصم نسبة"}
     full_reason = f"{type_labels.get(req.deduction_type, 'خصم')}: {req.reason}"
 
+    status = "active"
+    if current_user.role in [UserRole.SUPERVISOR, UserRole.LEADER]:
+        status = "pending"
+    elif current_user.role == UserRole.OPERATIONS_MANAGER:
+        status = "ops_approved"
+
     action = DisciplinaryAction(
         action_id=str(uuid.uuid4()),
         guard_id=req.employee_id,
@@ -391,7 +397,7 @@ def add_manual_deduction(
         reason=full_reason,
         deduction_days=deduction_days,
         deduction_amount=deduction_amount,
-        status="active",
+        status=status,
         issued_by=current_user.user_id,
         issued_by_name=current_user.name or "",
         linked_to_payroll=False,
@@ -405,4 +411,49 @@ def add_manual_deduction(
         "deduction_days": deduction_days,
         "deduction_amount": deduction_amount,
         "employee_name": employee.name,
+        "status": status,
     }
+
+
+class DeductionReviewRequest(BaseModel):
+    status: str = Field(..., description="ops_approved, active, or revoked")
+
+
+@router.put("/ops-manager/{action_id}/status", summary="Ops Manager reviews deduction")
+def ops_review_deduction(
+    action_id: str,
+    req: DeductionReviewRequest,
+    current_user: User = Depends(require_role(UserRole.OPERATIONS_MANAGER)),
+    db: Session = Depends(get_db),
+):
+    action = db.query(DisciplinaryAction).filter(DisciplinaryAction.action_id == action_id, DisciplinaryAction.action_type == "deduction").first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Deduction not found")
+    if action.status != "pending":
+        raise HTTPException(status_code=400, detail="Deduction is not pending ops manager review")
+    if req.status not in ["ops_approved", "revoked"]:
+        raise HTTPException(status_code=400, detail="Status must be ops_approved or revoked")
+    
+    action.status = req.status
+    db.commit()
+    db.refresh(action)
+    return {"success": True, "action_id": action.action_id, "status": action.status}
+
+
+@router.put("/admin/{action_id}/status", summary="Admin reviews deduction")
+def admin_review_deduction(
+    action_id: str,
+    req: DeductionReviewRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.ACCOUNTANT)),
+    db: Session = Depends(get_db),
+):
+    action = db.query(DisciplinaryAction).filter(DisciplinaryAction.action_id == action_id, DisciplinaryAction.action_type == "deduction").first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Deduction not found")
+    if req.status not in ["active", "revoked"]:
+        raise HTTPException(status_code=400, detail="Status must be active or revoked")
+    
+    action.status = req.status
+    db.commit()
+    db.refresh(action)
+    return {"success": True, "action_id": action.action_id, "status": action.status}

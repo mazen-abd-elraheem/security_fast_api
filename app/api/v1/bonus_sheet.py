@@ -49,7 +49,7 @@ def get_eligible_users(
 def create_bonus(
     payload: BonusCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR, UserRole.OPERATIONS_MANAGER))
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.CEO, UserRole.HR, UserRole.OPERATIONS_MANAGER, UserRole.SUPERVISOR, UserRole.LEADER))
 ):
     guard = db.query(User).filter(User.user_id == payload.guard_id).first()
     if not guard:
@@ -67,7 +67,7 @@ def create_bonus(
         amount=payload.amount,
         photo_url=payload.photo_url,
         notes=payload.notes,
-        status="pending",
+        status="pending" if current_user.role in [UserRole.SUPERVISOR, UserRole.LEADER] else "ops_approved" if current_user.role == UserRole.OPERATIONS_MANAGER else "approved",
         created_at=payload.date if payload.date else func.now()
     )
 
@@ -90,6 +90,8 @@ def get_bonuses(
         status_filter = ["approved"]
     elif tab == "rejected":
         status_filter = ["rejected"]
+    elif tab == "ops_approved":
+        status_filter = ["ops_approved"]
     else:
         status_filter = ["pending"]
 
@@ -118,12 +120,38 @@ def update_bonus_status(
         raise HTTPException(status_code=404, detail="Bonus not found")
 
     if payload.status:
-        if payload.status not in ["pending", "approved", "rejected"]:
+        if payload.status not in ["pending", "ops_approved", "approved", "rejected"]:
             raise HTTPException(status_code=400, detail="Invalid status")
         bonus.status = payload.status
         if payload.status == "approved":
             bonus.approved_at = datetime.now(timezone.utc)
             bonus.approved_by = current_user.user_id
+
+    if payload.amount is not None:
+        bonus.amount = payload.amount
+
+    if payload.notes is not None:
+        bonus.notes = payload.notes
+
+    db.commit()
+    db.refresh(bonus)
+    return bonus
+
+@router.put("/ops-manager/{bonus_id}/status", response_model=BonusOut, summary="Ops Manager updates bonus status")
+def ops_update_bonus_status(
+    bonus_id: str,
+    payload: BonusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.OPERATIONS_MANAGER))
+):
+    bonus = db.query(Bonus).filter(Bonus.bonus_id == bonus_id).first()
+    if not bonus:
+        raise HTTPException(status_code=404, detail="Bonus not found")
+
+    if payload.status:
+        if payload.status not in ["ops_approved", "rejected"]:
+            raise HTTPException(status_code=400, detail="Invalid status. Use: ops_approved, rejected")
+        bonus.status = payload.status
 
     if payload.amount is not None:
         bonus.amount = payload.amount
