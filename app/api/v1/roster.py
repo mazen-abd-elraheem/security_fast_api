@@ -265,50 +265,7 @@ def get_all_roster(
             "created_at":      str(roster.created_at),
         })
 
-    # ── Fill empty supervisor / leader from supervisor_routes ──
-    from app.models.supervisor_route import SupervisorRoute
 
-    # Collect site_ids that need lookup
-    site_ids_needing_sup = {it["site_id"] for it in items if not it["supervisor_id"]}
-    site_ids_needing_ldr = {it["site_id"] for it in items if not it["leader_id"]}
-    all_site_ids = site_ids_needing_sup | site_ids_needing_ldr
-
-    if all_site_ids:
-        # Get latest supervisor_route per site, joined with user to get role
-        route_rows = (
-            db.query(SupervisorRoute, UserModel)
-            .join(UserModel, SupervisorRoute.supervisor_id == UserModel.user_id)
-            .filter(SupervisorRoute.site_id.in_(all_site_ids))
-            .order_by(SupervisorRoute.assigned_date.desc())
-            .all()
-        )
-
-        # Build lookup: site_id -> {supervisor: {...}, leader: {...}}
-        site_staff = {}  # site_id -> {"supervisor": user, "leader": user}
-        for route, user in route_rows:
-            sid = route.site_id
-            if sid not in site_staff:
-                site_staff[sid] = {}
-            role = (user.role or "").lower()
-            if role == "supervisor" and "supervisor" not in site_staff[sid]:
-                site_staff[sid]["supervisor"] = user
-            elif role == "leader" and "leader" not in site_staff[sid]:
-                site_staff[sid]["leader"] = user
-
-        # Fill missing fields
-        for it in items:
-            sid = it["site_id"]
-            staff = site_staff.get(sid, {})
-            if not it["supervisor_id"] and "supervisor" in staff:
-                u = staff["supervisor"]
-                it["supervisor_id"]    = u.user_id
-                it["supervisor_name"]  = u.name
-                it["supervisor_badge"] = u.badge_number
-            if not it["leader_id"] and "leader" in staff:
-                u = staff["leader"]
-                it["leader_id"]    = u.user_id
-                it["leader_name"]  = u.name
-                it["leader_badge"] = u.badge_number
 
     return {"roster": items, "total": total, "skip": skip, "limit": limit}
 
