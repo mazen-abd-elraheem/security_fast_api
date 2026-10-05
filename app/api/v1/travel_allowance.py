@@ -96,7 +96,7 @@ def list_sites(
     db: Session = Depends(get_db),
 ):
     """Returns all active sites with name, lat, lng for GPS nearest-site matching."""
-    sites = db.query(Site).filter(Site.is_active == True).order_by(Site.name).all()
+    sites = db.query(Site).filter(Site.status == "active").order_by(Site.name).all()
     return [
         {
             "site_id": s.site_id,
