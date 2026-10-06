@@ -21,7 +21,7 @@ router = APIRouter()
 @router.post("", response_model=RosterResponse, status_code=201, summary="Assign guard to shift")
 def assign_guard(
     roster_data: RosterCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     """Assign a guard to a shift on a specific date."""
