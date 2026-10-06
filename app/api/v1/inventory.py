@@ -238,14 +238,12 @@ def import_inventory_row(
     size = row.get("size") or row.get("المقاس")
     color = row.get("color") or row.get("اللون")
     
-    qty_str = str(row.get("quantity") or row.get("الكمية") or "0")
-    min_stock_str = str(row.get("min_stock_level") or row.get("أقل كمية في المخزن") or "5")
+    total_str = str(row.get("total_stock") or row.get("الكمية كلها") or "")
+    avail_str = str(row.get("available") or row.get("الموجود") or "")
+    min_stock_str = str(row.get("min_stock_level") or row.get("أقل كمية") or "5")
     
-    try:
-        qty = int(float(qty_str))
-    except (ValueError, TypeError):
-        qty = 0
-        
+    total = int(float(total_str)) if total_str else None
+    avail = int(float(avail_str)) if avail_str else None
     try:
         min_stock = int(float(min_stock_str))
     except (ValueError, TypeError):
@@ -261,8 +259,10 @@ def import_inventory_row(
     existing = query.first()
     
     if existing:
-        existing.quantity_total += qty
-        existing.quantity_available += qty
+        if total is not None:
+            existing.quantity_total = total
+        if avail is not None:
+            existing.quantity_available = avail
         existing.min_stock_level = min_stock
     else:
         import uuid
@@ -271,8 +271,8 @@ def import_inventory_row(
             item_type=item_type,
             size=size,
             color=color,
-            quantity_total=qty,
-            quantity_available=qty,
+            quantity_total=total or 0,
+            quantity_available=avail or 0,
             min_stock_level=min_stock
         )
         db.add(new_item)
