@@ -50,7 +50,8 @@ def update_my_profile(
 def update_my_location(
     location: UserLocationUpdate,
     current_user: User = Depends(require_role(
-        UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR, UserRole.OPERATIONS_MANAGER, UserRole.LEADER, UserRole.ADMIN
+        UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR, UserRole.OPERATIONS_MANAGER, 
+        UserRole.LEADER, UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.HR
     )),
     db: Session = Depends(get_db),
 ):
@@ -198,14 +199,14 @@ def list_users(
     return result
 
 
-@router.post("", response_model=UserResponse, status_code=201, summary="Admin or HR creates a user")
+@router.post("", response_model=UserResponse, status_code=201, summary="Admin, HR or Personnel creates a user")
 def admin_create_user(
     user_data: AdminUserCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
-    """Admin creates any type of user account. HR creates restricted roles."""
-    if current_user.role == UserRole.HR:
+    """Admin creates any type of user account. HR/Personnel creates restricted roles."""
+    if current_user.role in (UserRole.HR, UserRole.PERSONNEL_OFFICER):
         allowed = [UserRole.GUARD, UserRole.OUTDOOR, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.PERSONNEL_OFFICER, UserRole.LADY, UserRole.OPERATIONS_MANAGER]
         if user_data.role not in allowed:
             from fastapi import HTTPException
