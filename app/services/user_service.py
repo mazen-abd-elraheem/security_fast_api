@@ -5,7 +5,7 @@ Handles registration, authentication, and profile management for all roles.
 import uuid
 from typing import Optional, List
 import calendar
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
