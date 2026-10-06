@@ -127,6 +127,7 @@ class DocumentType(str, Enum):
     CRIMINAL_RECORD = "criminal_record"
     NATIONAL_ID_FRONT = "national_id_front"
     NATIONAL_ID_BACK = "national_id_back"
+    INSURANCE_PRINT = "insurance_print"
 
 
 # ══════════════════════════════════════════════

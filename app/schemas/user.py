@@ -89,6 +89,7 @@ class AdminUserCreate(BaseModel):
     role: UserRole
     phone_number: Optional[str] = Field(None, pattern=r'^\+?[0-9]{7,15}$')
     badge_number: Optional[str] = Field(None, max_length=50)
+    national_id: Optional[str] = Field(None, max_length=20)
     region: Optional[str] = Field(None, max_length=100)
     classification: Optional[str] = Field(None, max_length=50)
     bank_account: Optional[str] = Field(None, max_length=100)

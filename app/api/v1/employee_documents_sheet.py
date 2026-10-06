@@ -37,7 +37,8 @@ REQUIRED_DOCS = [
     "military_service",
     "educational_qualification",
     "employment_contract",
-    "criminal_record"
+    "criminal_record",
+    "insurance_print"
 ]
 
 DOC_TRANSLATIONS = {
@@ -46,7 +47,8 @@ DOC_TRANSLATIONS = {
     "military_service": "موقف التجنيد",
     "educational_qualification": "المؤهل الدراسي",
     "employment_contract": "عقد العمل",
-    "criminal_record": "فيش جنائي"
+    "criminal_record": "فيش جنائي",
+    "insurance_print": "البرينت التأميني"
 }
 
 
@@ -164,6 +166,7 @@ def _build_documents_sheet_data(db: Session) -> list[dict]:
             "educational_qualification": doc_status["educational_qualification"],
             "employment_contract": doc_status["employment_contract"],
             "criminal_record": doc_status["criminal_record"],
+            "insurance_print": doc_status["insurance_print"],
             "notes": computed_notes,
         }
         result.append(row)
@@ -284,7 +287,7 @@ def export_csv(
     headers = [
         "مسلسل", "اسم المشرف", "الكود", "الاسم", "الفرع", "رقم الملف",
         "البطاقة (وجه)", "البطاقة (ظهر)", "موقف التجنيد", "المؤهل الدراسي",
-        "عقد العمل", "فيش جنائي", "ملاحظات"
+        "عقد العمل", "فيش جنائي", "البرينت التأميني", "ملاحظات"
     ]
 
     output = io.StringIO()
@@ -306,6 +309,7 @@ def export_csv(
             "مستوفى" if r["educational_qualification"] else "نقص",
             "مستوفى" if r["employment_contract"] else "نقص",
             "مستوفى" if r["criminal_record"] else "نقص",
+            "مستوفى" if r["insurance_print"] else "نقص",
             r["notes"],
         ])
 

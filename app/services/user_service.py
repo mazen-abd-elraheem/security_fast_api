@@ -102,6 +102,7 @@ class UserService:
             password_hash=hash_password(user_in.password),
             role=user_in.role.value,
             badge_number=user_in.badge_number,
+            national_id=user_in.national_id,
             region=user_in.region,
             classification=user_in.classification,
             bank_account=user_in.bank_account,
