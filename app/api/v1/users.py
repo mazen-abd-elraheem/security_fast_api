@@ -306,7 +306,7 @@ def bulk_import_users(
     - Uses badge_number as the unique identity key (same as export columns).
     - Mirrors admin_create_user / admin_update_user logic:
         * payroll_amount (= base salary) -> recalculates base_salary AND daily_rate = payroll / days_in_month
-        * New users get a generated password: SecureTrack@<badge_number>
+        * New users get a generated password: <firstName><secondName><badge_number>
         * hire_date parsed from ISO string; falls back to now() if empty.
     """
     from app.api.v1.snapshots import create_import_snapshot
@@ -482,8 +482,11 @@ def bulk_import_users(
             while db.query(User).filter(User.employee_code == emp_code).first():
                 emp_code = str(random.randint(100000, 999999))
 
-            # Default password: SecureTrack@<badge>  (user should change on first login)
-            default_password = f"SecureTrack@{badge}"
+            # Default password: firstName + secondName + badge  (user should change on first login)
+            name_parts = name.strip().split()
+            first_name = name_parts[0] if len(name_parts) > 0 else "user"
+            second_name = name_parts[1] if len(name_parts) > 1 else ""
+            default_password = f"{first_name}{second_name}{badge}"
 
             new_user = User(
                 user_id=str(uuid.uuid4()),

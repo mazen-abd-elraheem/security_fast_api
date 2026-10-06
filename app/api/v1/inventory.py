@@ -219,5 +219,63 @@ def _to_response(item: InventoryItem) -> dict:
         "is_low_stock": item.quantity_available <= item.min_stock_level,
         "notes": item.notes,
         "created_at": item.created_at.isoformat() if item.created_at else None,
-        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
     }
+
+@router.post("/import-row", summary="Import a single inventory row from Excel")
+def import_inventory_row(
+    row: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+):
+    """
+    Import an inventory row from Flutter ExcelImportUtil.
+    Expected keys: item_type, size, color, quantity, min_stock_level
+    """
+    item_type = row.get("item_type") or row.get("نوع الصنف")
+    if not item_type:
+        raise HTTPException(status_code=400, detail="item_type is required")
+        
+    size = row.get("size") or row.get("المقاس")
+    color = row.get("color") or row.get("اللون")
+    
+    qty_str = str(row.get("quantity") or row.get("الكمية") or "0")
+    min_stock_str = str(row.get("min_stock_level") or row.get("أقل كمية في المخزن") or "5")
+    
+    try:
+        qty = int(float(qty_str))
+    except (ValueError, TypeError):
+        qty = 0
+        
+    try:
+        min_stock = int(float(min_stock_str))
+    except (ValueError, TypeError):
+        min_stock = 5
+
+    # Check if item exists
+    query = db.query(InventoryItem).filter(InventoryItem.item_type == item_type)
+    if size:
+        query = query.filter(InventoryItem.size == size)
+    if color:
+        query = query.filter(InventoryItem.color == color)
+        
+    existing = query.first()
+    
+    if existing:
+        existing.quantity_total += qty
+        existing.quantity_available += qty
+        existing.min_stock_level = min_stock
+    else:
+        import uuid
+        new_item = InventoryItem(
+            item_id=str(uuid.uuid4()),
+            item_type=item_type,
+            size=size,
+            color=color,
+            quantity_total=qty,
+            quantity_available=qty,
+            min_stock_level=min_stock
+        )
+        db.add(new_item)
+        
+    db.commit()
+    return {"status": "success"}

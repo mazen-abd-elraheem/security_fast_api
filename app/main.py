@@ -50,6 +50,7 @@ from app.api.v1 import (
     insurance_record,
     employee_documents_sheet,
     clothes_inventory,
+    separations,
       tasks,
       tasks_client,
       terminations_report,
@@ -478,6 +479,7 @@ app.include_router(cash_advance_sheet.router, prefix="/api/v1/cash-advance-sheet
 app.include_router(deduction_sheet.router, prefix="/api/v1/deduction-sheet", tags=["Deduction Sheet"])
 app.include_router(bonus_sheet.router, prefix="/api/v1/bonus-sheet", tags=["Bonus Sheet"])
 app.include_router(insurance_record.router, prefix="/api/v1/insurance-record", tags=["Insurance Record"])
+app.include_router(separations.router, prefix="/api/v1/separations", tags=["Separations"])
 app.include_router(employee_documents_sheet.router, prefix="/api/v1/employee-documents", tags=["Employee Documents Sheet"])
 app.include_router(clothes_inventory.router, prefix="/api/v1/clothes-inventory", tags=["Clothes Inventory"])
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["Task Inspection"])
