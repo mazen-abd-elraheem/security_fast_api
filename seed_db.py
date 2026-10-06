@@ -114,6 +114,27 @@ def _run_seed_migrations():
     except Exception as e:
         print(f"Seed migration check: {e}")
 
+    # ── sites: ensure tactical and base columns exist ──
+    try:
+        if insp.has_table("sites"):
+            existing = {c["name"] for c in insp.get_columns("sites")}
+            site_cols = {
+                "is_base": "BOOLEAN DEFAULT FALSE",
+                "defcon_level": "INTEGER DEFAULT 4",
+                "clearance_level": "VARCHAR(50) DEFAULT 'L3 Active'",
+                "last_audit_timestamp": "DATETIME NULL",
+                "perimeter_fill_rate_trend": "FLOAT DEFAULT 0.0",
+                "breach_response_readiness_seconds": "INTEGER DEFAULT 102",
+                "unassigned_standby_pool": "INTEGER DEFAULT 0",
+            }
+            for col_name, col_def in site_cols.items():
+                if col_name not in existing:
+                    with engine.begin() as conn:
+                        conn.execute(sa_text(f"ALTER TABLE sites ADD COLUMN {col_name} {col_def}"))
+                        print(f"  [migration] sites.{col_name} added")
+    except Exception as e:
+        print(f"sites migration: {e}")
+
     # ── travel_allowance_entries: ensure table columns are up to date ──
     try:
         if insp.has_table("travel_allowance_entries"):
