@@ -111,6 +111,19 @@ def create_separation(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.PERSONNEL_OFFICER, UserRole.ADMIN, UserRole.HR))
 ):
+    emp = db.query(User).filter(User.user_id == req.user_id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not emp.is_active:
+        raise HTTPException(status_code=400, detail="User is already terminated")
+        
+    existing = db.query(SeparationRequest).filter(
+        SeparationRequest.user_id == req.user_id,
+        SeparationRequest.status.notin_(["completed", "rejected"])
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="User already has a pending separation request")
+
     actual_site = db.query(Site).filter(Site.site_id == req.site_id).first()
     if not actual_site:
         actual_site = db.query(Site).first()
