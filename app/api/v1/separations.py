@@ -4,6 +4,7 @@ from app.core.database import get_db
 from app.api.deps import require_role
 from app.models.user import User
 from app.models.separation_request import SeparationRequest
+from app.models.site import Site
 from app.enums import UserRole
 
 router = APIRouter()
@@ -110,6 +111,23 @@ def create_separation(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.PERSONNEL_OFFICER, UserRole.ADMIN, UserRole.HR))
 ):
+    actual_site = db.query(Site).filter(Site.site_id == req.site_id).first()
+    if not actual_site:
+        actual_site = db.query(Site).first()
+        if not actual_site:
+            actual_site = Site(
+                site_id="hq",
+                name="Headquarters",
+                latitude=0.0,
+                longitude=0.0,
+                radius_meters=100
+            )
+            db.add(actual_site)
+            db.commit()
+            db.refresh(actual_site)
+        req.site_id = actual_site.site_id
+        req.site_name = actual_site.name
+
     sep = SeparationRequest(
         separation_id=str(uuid.uuid4()),
         user_id=req.user_id,
