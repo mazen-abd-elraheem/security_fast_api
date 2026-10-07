@@ -21,6 +21,7 @@ class UserCreate(BaseModel):
     region: Optional[str] = Field(None, max_length=100)
     latitude: Optional[float] = Field(None, ge=-90, le=90)
     longitude: Optional[float] = Field(None, ge=-180, le=180)
+    national_id: Optional[str] = Field(None, max_length=20)
 
     # Roles that self-registrants are allowed to request
     _ALLOWED_SELF_REGISTER_ROLES = {

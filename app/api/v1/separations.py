@@ -78,3 +78,116 @@ def import_terminated_return_row(
         return {"status": "success", "message": f"User {emp.name} reactivated"}
     else:
         raise HTTPException(status_code=404, detail=f"Employee with code {badge} not found")
+
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
+import uuid
+
+class SeparationCreate(BaseModel):
+    user_id: str
+    user_name: str
+    badge_number: Optional[str] = None
+    employee_code: Optional[str] = None
+    site_id: str
+    site_name: str
+    separation_type: str
+    reason: str
+    requested_last_working_day: Optional[datetime] = None
+    actual_last_working_day: Optional[datetime] = None
+    status: Optional[str] = "pending_leader"
+    financial_settlement: Optional[float] = 0.0
+    assets_returned: Optional[bool] = False
+    uniform_returned: Optional[bool] = False
+
+class SeparationAction(BaseModel):
+    action: str
+    notes: Optional[str] = None
+
+@router.post("")
+def create_separation(
+    req: SeparationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.PERSONNEL, UserRole.ADMIN, UserRole.HR))
+):
+    sep = SeparationRequest(
+        separation_id=str(uuid.uuid4()),
+        user_id=req.user_id,
+        user_name=req.user_name,
+        employee_code=req.badge_number or req.employee_code,
+        site_id=req.site_id,
+        site_name=req.site_name,
+        separation_type=req.separation_type,
+        reason=req.reason,
+        requested_last_working_day=req.requested_last_working_day,
+        actual_last_working_day=req.actual_last_working_day,
+        status=req.status,
+        financial_settlement=req.financial_settlement,
+        assets_returned=req.assets_returned,
+        uniform_returned=req.uniform_returned,
+        initiated_by=current_user.user_id,
+        initiated_by_name=current_user.name
+    )
+    if req.status == "completed":
+        emp = db.query(User).filter(User.user_id == req.user_id).first()
+        if emp:
+            emp.status = "terminated"
+            emp.is_active = False
+
+    db.add(sep)
+    db.commit()
+    db.refresh(sep)
+    return sep
+
+@router.get("")
+def get_separations(
+    status_filter: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.OPS_MANAGER, UserRole.PERSONNEL, UserRole.ADMIN, UserRole.HR, UserRole.CEO))
+):
+    query = db.query(SeparationRequest)
+    if status_filter:
+        query = query.filter(SeparationRequest.status == status_filter)
+    if current_user.role in [UserRole.LEADER, UserRole.SUPERVISOR]:
+        if current_user.assigned_sites:
+            query = query.filter(SeparationRequest.site_id.in_(current_user.assigned_sites))
+    return query.order_by(SeparationRequest.created_at.desc()).all()
+
+@router.patch("/{separation_id}/action")
+def action_separation(
+    separation_id: str,
+    action: SeparationAction,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.OPS_MANAGER, UserRole.HR, UserRole.ADMIN, UserRole.PERSONNEL))
+):
+    sep = db.query(SeparationRequest).filter(SeparationRequest.separation_id == separation_id).first()
+    if not sep:
+        raise HTTPException(status_code=404, detail="Separation not found")
+
+    if current_user.role == UserRole.SUPERVISOR:
+        sep.supervisor_id = current_user.user_id
+        sep.supervisor_notes = action.notes
+        sep.supervisor_reviewed_at = datetime.now()
+        sep.status = "pending_ops_mgr" if action.action == "approve" else "rejected"
+        if action.action == "approve":
+            sep.uniform_returned = True
+            sep.uniform_return_confirmed_by = current_user.user_id
+    elif current_user.role == UserRole.OPS_MANAGER:
+        sep.ops_manager_id = current_user.user_id
+        sep.ops_manager_notes = action.notes
+        sep.ops_manager_reviewed_at = datetime.now()
+        sep.status = "pending_hr" if action.action == "approve" else "rejected"
+    elif current_user.role in [UserRole.HR, UserRole.PERSONNEL, UserRole.ADMIN]:
+        sep.hr_id = current_user.user_id
+        sep.hr_notes = action.notes
+        sep.hr_reviewed_at = datetime.now()
+        sep.status = "completed" if action.action == "approve" else "rejected"
+        if action.action == "approve":
+            emp = db.query(User).filter(User.user_id == sep.user_id).first()
+            if emp:
+                emp.status = "terminated"
+                emp.is_active = False
+
+    db.commit()
+    db.refresh(sep)
+    return sep
