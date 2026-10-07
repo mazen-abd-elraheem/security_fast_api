@@ -108,7 +108,7 @@ class SeparationAction(BaseModel):
 def create_separation(
     req: SeparationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.PERSONNEL, UserRole.ADMIN, UserRole.HR))
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.PERSONNEL_OFFICER, UserRole.ADMIN, UserRole.HR))
 ):
     sep = SeparationRequest(
         separation_id=str(uuid.uuid4()),
@@ -143,7 +143,7 @@ def create_separation(
 def get_separations(
     status_filter: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.OPS_MANAGER, UserRole.PERSONNEL, UserRole.ADMIN, UserRole.HR, UserRole.CEO))
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.OPS_MANAGER, UserRole.PERSONNEL_OFFICER, UserRole.ADMIN, UserRole.HR, UserRole.CEO))
 ):
     query = db.query(SeparationRequest)
     if status_filter:
@@ -158,7 +158,7 @@ def action_separation(
     separation_id: str,
     action: SeparationAction,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.OPS_MANAGER, UserRole.HR, UserRole.ADMIN, UserRole.PERSONNEL))
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.OPS_MANAGER, UserRole.HR, UserRole.ADMIN, UserRole.PERSONNEL_OFFICER))
 ):
     sep = db.query(SeparationRequest).filter(SeparationRequest.separation_id == separation_id).first()
     if not sep:
@@ -177,7 +177,7 @@ def action_separation(
         sep.ops_manager_notes = action.notes
         sep.ops_manager_reviewed_at = datetime.now()
         sep.status = "pending_hr" if action.action == "approve" else "rejected"
-    elif current_user.role in [UserRole.HR, UserRole.PERSONNEL, UserRole.ADMIN]:
+    elif current_user.role in [UserRole.HR, UserRole.PERSONNEL_OFFICER, UserRole.ADMIN]:
         sep.hr_id = current_user.user_id
         sep.hr_notes = action.notes
         sep.hr_reviewed_at = datetime.now()
