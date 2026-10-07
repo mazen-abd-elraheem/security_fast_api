@@ -143,7 +143,7 @@ def create_separation(
 def get_separations(
     status_filter: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.OPS_MANAGER, UserRole.PERSONNEL_OFFICER, UserRole.ADMIN, UserRole.HR, UserRole.CEO))
+    current_user: User = Depends(require_role(UserRole.LEADER, UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER, UserRole.PERSONNEL_OFFICER, UserRole.ADMIN, UserRole.HR, UserRole.CEO))
 ):
     query = db.query(SeparationRequest)
     if status_filter:
@@ -158,7 +158,7 @@ def action_separation(
     separation_id: str,
     action: SeparationAction,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.OPS_MANAGER, UserRole.HR, UserRole.ADMIN, UserRole.PERSONNEL_OFFICER))
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER, UserRole.HR, UserRole.ADMIN, UserRole.PERSONNEL_OFFICER))
 ):
     sep = db.query(SeparationRequest).filter(SeparationRequest.separation_id == separation_id).first()
     if not sep:
@@ -172,7 +172,7 @@ def action_separation(
         if action.action == "approve":
             sep.uniform_returned = True
             sep.uniform_return_confirmed_by = current_user.user_id
-    elif current_user.role == UserRole.OPS_MANAGER:
+    elif current_user.role == UserRole.OPERATIONS_MANAGER:
         sep.ops_manager_id = current_user.user_id
         sep.ops_manager_notes = action.notes
         sep.ops_manager_reviewed_at = datetime.now()
