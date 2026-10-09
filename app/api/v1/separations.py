@@ -100,6 +100,7 @@ class SeparationCreate(BaseModel):
     financial_settlement: Optional[float] = 0.0
     assets_returned: Optional[bool] = False
     uniform_returned: Optional[bool] = False
+    left_without_notice: Optional[bool] = False
 
 class SeparationAction(BaseModel):
     action: str
@@ -166,6 +167,32 @@ def create_separation(
             emp.is_active = False
 
     db.add(sep)
+    db.flush()
+
+    if req.left_without_notice:
+        from app.models.disciplinary_action import DisciplinaryAction
+        from app.models.deduction_rule import DeductionRule
+        
+        rule = db.query(DeductionRule).filter(
+            DeductionRule.rule_type == "resignation_notice_penalty",
+            DeductionRule.is_active == True
+        ).first()
+        
+        days = 15 # fallback
+        if rule and rule.is_days_multiplier:
+            days = int(rule.amount)
+            
+        deduction = DisciplinaryAction(
+            action_id=str(uuid.uuid4()),
+            guard_id=req.user_id,
+            site_id=req.site_id,
+            action_type="deduction",
+            deduction_days=days,
+            reason="Left without notice period",
+            status="active"
+        )
+        db.add(deduction)
+
     db.commit()
     db.refresh(sep)
     return sep

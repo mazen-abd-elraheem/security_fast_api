@@ -43,7 +43,7 @@ def _build_response(i, corrective_action: Optional[str] = None) -> IncidentRespo
 def create_incident(
     incident_data: IncidentCreate,
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.GUARD, UserRole.OUTDOOR
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.GUARD, UserRole.OUTDOOR, UserRole.OPERATIONS_MANAGER
     )),
     db: Session = Depends(get_db),
 ):
@@ -73,7 +73,7 @@ def list_incidents(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=50),
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR, UserRole.LEADER
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.GUARD, UserRole.OUTDOOR, UserRole.LEADER, UserRole.OPERATIONS_MANAGER
     )),
     db: Session = Depends(get_db),
 ):
@@ -90,7 +90,7 @@ def list_incidents(
 @router.get("/{incident_id}", response_model=IncidentResponse, summary="Get incident")
 def get_incident(
     incident_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Get incident details."""
@@ -105,7 +105,7 @@ def get_incident(
 def update_incident(
     incident_id: str,
     update_data: IncidentUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Update or resolve an incident."""
@@ -119,7 +119,7 @@ def update_incident(
 @router.get("/site/{site_id}", response_model=IncidentListResponse, summary="Incidents for site")
 def get_incidents_for_site(
     site_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Get all incidents for a specific site."""

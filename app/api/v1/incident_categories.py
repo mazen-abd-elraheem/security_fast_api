@@ -63,7 +63,7 @@ def list_categories(
 )
 def create_category(
     data: IncidentCategoryCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Admin creates a new incident category."""
@@ -99,7 +99,7 @@ def get_category(
 def update_category(
     category_id: str,
     data: IncidentCategoryUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -116,7 +116,7 @@ def update_category(
 )
 def delete_category(
     category_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     try:

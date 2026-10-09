@@ -58,7 +58,7 @@ def _entry_to_dict(e: DailyAttendanceEntry, guard: User | None = None, site: Sit
 @router.get("/supervisor/dashboard", summary="Supervisor attendance dashboard for assigned sites")
 def supervisor_attendance_dashboard(
     target_date: Optional[date] = Query(None),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER, UserRole.HR, UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER, UserRole.HR, UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """
@@ -1184,7 +1184,7 @@ def get_attendance_for_site(
     site_id: str,
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.LEADER, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Get DailyAttendanceEntries for a site within a date range."""

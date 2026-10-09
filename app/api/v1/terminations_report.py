@@ -99,15 +99,26 @@ def get_terminations_sheet(
         uniform_status = "غير محدد"
         received_by = "غير محدد"
         reason = "غير محدد"
+        separation_type = "غير محدد"
         
         if c_record:
-            if c_record.termination_date:
-                term_date = c_record.termination_date.strftime("%Y-%m-%d")
             if c_record.clothes_status:
                 uniform_status = c_record.clothes_status
             if c_record.received_by:
                 received_by = c_record.received_by
-            reason = c_record.reason or "غير محدد"
+            reason = c_record.reason or reason
+
+        if last_sep:
+            if last_sep.actual_last_working_day:
+                term_date = last_sep.actual_last_working_day.strftime("%Y-%m-%d")
+            elif last_sep.created_at:
+                term_date = last_sep.created_at.strftime("%Y-%m-%d")
+            
+            if last_sep.reason:
+                reason = last_sep.reason
+            if last_sep.separation_type:
+                separation_type = last_sep.separation_type
+
         elif u.uniform_status:
             if u.uniform_status == 'none':
                 uniform_status = 'بدون زي'
@@ -185,6 +196,7 @@ def get_terminations_sheet(
             "supervisor": last_supervisor,
             "hire_date": (u.hire_date or u.created_at or datetime.utcnow()).strftime("%Y-%m-%d"),
             "termination_date": term_date,
+            "separation_type": separation_type,
             "reason": reason,
             "uniform_status": uniform_status,
             "received_by": received_by,
