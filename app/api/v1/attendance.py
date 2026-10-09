@@ -71,44 +71,53 @@ def supervisor_attendance_dashboard(
     if target_date is None:
         target_date = date.today()
 
-    routes = (
-        db.query(SupervisorRoute)
-        .filter(SupervisorRoute.supervisor_id == current_user.user_id)
-        .filter(SupervisorRoute.assigned_date == target_date)
-        .all()
-    )
-
-    # ── Fallback: if no route for exact date, use the most recent past assignment ──
-    if not routes:
-        from sqlalchemy import func as _func
-        latest_date = (
-            db.query(_func.max(SupervisorRoute.assigned_date))
+    if current_user.role in [UserRole.ADMIN.value, UserRole.OPERATIONS_MANAGER.value, UserRole.HR.value, UserRole.CEO.value]:
+        sites = db.query(Site).filter(Site.is_active == True).all()
+        site_ids = [s.site_id for s in sites]
+        if not site_ids:
+            return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
+        site_map = {s.site_id: s for s in sites}
+        assigned_shift_ids_by_site: dict[str, set] = {sid: set() for sid in site_ids}
+        has_specific_shifts: dict[str, bool] = {sid: False for sid in site_ids}
+    else:
+        routes = (
+            db.query(SupervisorRoute)
             .filter(SupervisorRoute.supervisor_id == current_user.user_id)
-            .filter(SupervisorRoute.assigned_date <= target_date)
-            .scalar()
+            .filter(SupervisorRoute.assigned_date == target_date)
+            .all()
         )
-        if latest_date:
-            routes = (
-                db.query(SupervisorRoute)
+
+        # ── Fallback: if no route for exact date, use the most recent past assignment ──
+        if not routes:
+            from sqlalchemy import func as _func
+            latest_date = (
+                db.query(_func.max(SupervisorRoute.assigned_date))
                 .filter(SupervisorRoute.supervisor_id == current_user.user_id)
-                .filter(SupervisorRoute.assigned_date == latest_date)
-                .all()
+                .filter(SupervisorRoute.assigned_date <= target_date)
+                .scalar()
             )
+            if latest_date:
+                routes = (
+                    db.query(SupervisorRoute)
+                    .filter(SupervisorRoute.supervisor_id == current_user.user_id)
+                    .filter(SupervisorRoute.assigned_date == latest_date)
+                    .all()
+                )
 
-    site_ids = list({r.site_id for r in routes})
-    if not site_ids:
-        return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
+        site_ids = list({r.site_id for r in routes})
+        if not site_ids:
+            return {"sites": [], "total_guards": 0, "total_present": 0, "date": target_date.isoformat()}
 
-    sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
-    site_map = {s.site_id: s for s in sites}
+        sites = db.query(Site).filter(Site.site_id.in_(site_ids)).all()
+        site_map = {s.site_id: s for s in sites}
 
-    # Determine which shifts this supervisor is assigned to
-    assigned_shift_ids_by_site: dict[str, set] = {sid: set() for sid in site_ids}
-    has_specific_shifts: dict[str, bool] = {sid: False for sid in site_ids}
-    for r in routes:
-        if r.shift_id:
-            assigned_shift_ids_by_site[r.site_id].add(r.shift_id)
-            has_specific_shifts[r.site_id] = True
+        # Determine which shifts this supervisor is assigned to
+        assigned_shift_ids_by_site: dict[str, set] = {sid: set() for sid in site_ids}
+        has_specific_shifts: dict[str, bool] = {sid: False for sid in site_ids}
+        for r in routes:
+            if r.shift_id:
+                assigned_shift_ids_by_site[r.site_id].add(r.shift_id)
+                has_specific_shifts[r.site_id] = True
 
     all_site_shifts = db.query(Shift).filter(Shift.site_id.in_(site_ids), Shift.is_active == True).all()
     shifts = []
