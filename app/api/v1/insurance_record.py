@@ -95,6 +95,13 @@ def _build_insurance_data(db: Session) -> list[dict]:
         if r.site_id not in site_supervisor_map:
             site_supervisor_map[r.site_id] = r.supervisor_id
     
+    # Map guard_id -> insurance_print file_url
+    from app.models.guard_document import GuardDocument
+    insurance_docs = db.query(GuardDocument).filter(
+        GuardDocument.document_type == "insurance_print"
+    ).all()
+    insurance_print_map = {d.guard_id: d.file_url for d in insurance_docs}
+
     results = []
     for guard in guards:
         site_id = guard_site_map.get(guard.user_id)
@@ -127,6 +134,7 @@ def _build_insurance_data(db: Session) -> list[dict]:
             "hire_date": guard.created_at.strftime("%Y-%m-%d") if guard.created_at else "",
             "insurance_status": guard.insurance_status or "بدون",
             "insurance_number": guard.insurance_number or "",
+            "insurance_print_url": insurance_print_map.get(guard.user_id, ""),
             "insurance_year": str(guard.insurance_date.year) if guard.insurance_date else "",
             "insurance_date": guard.insurance_date.strftime("%Y-%m-%d") if guard.insurance_date else "",
             "role": role_ar,
@@ -328,6 +336,7 @@ def export_excel(
             "تاريخ \nالتعيين": r["hire_date"],
             "موقف \nالتأمينات": r["insurance_status"],
             "الرقم \nالتأميني": r["insurance_number"],
+            "البرينت \nالتأميني": "مرفوع" if r.get("insurance_print_url") else "غير مرفوع",
             "عام \nالتأمين": r["insurance_year"],
             "تاريخ \nالتأمين \nعليه": r["insurance_date"],
             "الوظيفة": r["role"],
