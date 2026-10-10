@@ -22,7 +22,7 @@ from typing import Optional, List, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import or_ , and_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
