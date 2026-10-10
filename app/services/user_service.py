@@ -34,15 +34,40 @@ class UserService:
         return db.query(User).filter(User.user_id == user_id).first()
 
     @staticmethod
+    def get_next_badge_number(db: Session) -> str:
+        """Find the highest integer badge_number in the system and return the next sequential number.
+        Starts at 1 if no numeric badges exist, or after the highest imported/created badge number.
+        """
+        all_badges = db.query(User.badge_number).filter(User.badge_number.isnot(None)).all()
+        max_num = 0
+        for (b,) in all_badges:
+            if b:
+                s = str(b).strip()
+                if s.isdigit():
+                    try:
+                        val = int(s)
+                        if val > max_num:
+                            max_num = val
+                    except ValueError:
+                        pass
+        next_num = max_num + 1
+        while db.query(User).filter(User.badge_number == str(next_num)).first():
+            next_num += 1
+        return str(next_num)
+
+    @staticmethod
     def create_user(db: Session, user_in: UserCreate) -> User:
         """Register a new user."""
         if UserService.get_by_email(db, user_in.email):
             raise DuplicateException("Email already registered")
 
-        if user_in.badge_number:
-            existing = db.query(User).filter(User.badge_number == user_in.badge_number).first()
+        badge = str(user_in.badge_number).strip() if user_in.badge_number and str(user_in.badge_number).strip() else None
+        if badge:
+            existing = db.query(User).filter(User.badge_number == badge).first()
             if existing:
-                raise DuplicateException(f"Badge number already in use: {user_in.badge_number}")
+                raise DuplicateException(f"Badge number already in use: {badge}")
+        else:
+            badge = UserService.get_next_badge_number(db)
 
         import random
         emp_code = str(random.randint(100000, 999999))
@@ -58,7 +83,7 @@ class UserService:
             password_hash=hash_password(user_in.password),
             role=user_in.role.value,  # initial role (could be guard)
             requested_role=user_in.role.value,
-            badge_number=user_in.badge_number,
+            badge_number=badge,
             region=user_in.region,
             latitude=user_in.latitude,
             longitude=user_in.longitude,
@@ -77,10 +102,13 @@ class UserService:
         if UserService.get_by_email(db, user_in.email):
             raise DuplicateException("Email already registered")
 
-        if user_in.badge_number:
-            existing = db.query(User).filter(User.badge_number == user_in.badge_number).first()
+        badge = str(user_in.badge_number).strip() if user_in.badge_number and str(user_in.badge_number).strip() else None
+        if badge:
+            existing = db.query(User).filter(User.badge_number == badge).first()
             if existing:
-                raise DuplicateException(f"Badge number already in use: {user_in.badge_number}")
+                raise DuplicateException(f"Badge number already in use: {badge}")
+        else:
+            badge = UserService.get_next_badge_number(db)
 
         import random
         emp_code = str(random.randint(100000, 999999))
@@ -101,7 +129,7 @@ class UserService:
             phone_number=user_in.phone_number,
             password_hash=hash_password(user_in.password),
             role=user_in.role.value,
-            badge_number=user_in.badge_number,
+            badge_number=badge,
             national_id=user_in.national_id,
             region=user_in.region,
             classification=user_in.classification,

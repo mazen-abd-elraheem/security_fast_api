@@ -221,6 +221,15 @@ def admin_create_user(
         handle_service_exception(e)
 
 
+@router.get("/next-badge", summary="Get next sequential badge number")
+def get_next_badge(
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
+    db: Session = Depends(get_db),
+):
+    """Returns the next auto-generated sequential badge number."""
+    return {"next_badge_number": UserService.get_next_badge_number(db)}
+
+
 @router.get("/{user_id}", response_model=UserResponse, summary="Get user by ID")
 def get_user(
     user_id: str,
@@ -351,7 +360,7 @@ def bulk_import_users(
     for row in rows:
         badge = _safe_str(row.get("badge_number", ""))
         if not badge:
-            continue
+            badge = UserService.get_next_badge_number(db)
 
         existing_user = db.query(User).filter(User.badge_number == badge).first()
 

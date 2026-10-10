@@ -456,7 +456,7 @@ def get_daily_summary(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
     site_id: Optional[str] = Query(None, description="Filter by site ID"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     """Get all daily attendance entries grouped by site and date."""
@@ -550,7 +550,7 @@ def export_daily_summary_csv(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
     site_id: Optional[str] = Query(None, description="Filter by site ID"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     """Export daily attendance entries for a date range as CSV."""
@@ -891,7 +891,7 @@ def get_attendance_report(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
     site_id: Optional[str] = Query(None, description="Filter by site ID"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     from app.models.payroll_formula_config import PayrollFormulaConfig
@@ -1107,7 +1107,7 @@ def export_attendance_report(
     date_from: date = Query(..., description="Start date"),
     date_to: date = Query(..., description="End date"),
     site_id: Optional[str] = Query(None, description="Filter by site ID"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.CEO, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     report = get_attendance_report(date_from=date_from, date_to=date_to, site_id=site_id, current_user=current_user, db=db)

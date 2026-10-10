@@ -99,7 +99,7 @@ class LeaveBalanceUpdate(BaseModel):
 @router.get("/employees", summary="List all employees with annual leave balances")
 def list_employee_balances(
     year: int = Query(default=None, description="Year (defaults to current year)"),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     """List all active employees with their annual leave balance for the given year."""
@@ -137,7 +137,7 @@ def list_employee_balances(
 def get_employee_balance(
     employee_id: str,
     year: int = Query(default=None),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.LEADER, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.ACCOUNTANT, UserRole.LEADER, UserRole.SUPERVISOR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     if not year:
@@ -154,7 +154,7 @@ def update_employee_balance(
     employee_id: str,
     payload: LeaveBalanceUpdate,
     year: int = Query(default=None),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     if not year:
@@ -173,7 +173,7 @@ def update_employee_balance(
 @router.post("/initialize", summary="Initialize balances for all active employees for a year (idempotent)")
 def initialize_year_balances(
     year: int = Query(default=None),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     if not year:
