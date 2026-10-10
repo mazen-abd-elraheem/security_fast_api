@@ -139,16 +139,140 @@ def reject_request(req_id: int, payload: ActionPayload, db: Session = Depends(de
     db.commit()
     return {"success": True}
 
+class SendRequestPayload(BaseModel):
+    supervisor_id: Optional[str] = None
+
+def sync_clothes_request_to_custody(req: ClothesRequest, db: Session, current_user=None, supervisor_id: Optional[str] = None):
+    import uuid
+    from datetime import datetime, timezone
+    from sqlalchemy import or_
+    from app.models.custody_disbursement import CustodyDisbursement
+    from app.models.user import User
+    from app.models.site import Site
+    from app.models.supervisor_route import SupervisorRoute
+    from app.models.guard_roster import GuardRoster
+
+    # Check if a disbursement already exists for this request
+    existing = db.query(CustodyDisbursement).filter(
+        CustodyDisbursement.custody_type == "clothes",
+        CustodyDisbursement.ref_id == str(req.id),
+        CustodyDisbursement.is_active == True,
+    ).first()
+
+    guard = None
+    if req.user_id:
+        guard = db.query(User).filter(User.user_id == req.user_id).first()
+    if not guard and req.user_code:
+        guard = db.query(User).filter(
+            or_(User.badge_number == req.user_code, User.employee_code == req.user_code)
+        ).first()
+
+    guard_id = guard.user_id if guard else (req.user_id or str(uuid.uuid4()))
+    guard_name = guard.name if guard else (req.user_name or "حارس")
+    guard_badge = guard.badge_number if guard else req.user_code
+
+    site = None
+    if req.site_name:
+        site = db.query(Site).filter(Site.name == req.site_name).first()
+    if not site and guard:
+        from app.api.v1.custody import _guard_site
+        s_id, s_name = _guard_site(db, guard.user_id)
+        if s_id:
+            site = db.query(Site).filter(Site.site_id == s_id).first()
+    site_id = site.site_id if site else None
+    site_name = site.name if site else req.site_name
+
+    sup = None
+    if supervisor_id:
+        sup = db.query(User).filter(User.user_id == supervisor_id).first()
+    if not sup and site_id:
+        route = db.query(SupervisorRoute).filter(SupervisorRoute.site_id == site_id).first()
+        if route and route.supervisor_id:
+            sup = db.query(User).filter(User.user_id == route.supervisor_id).first()
+    if not sup and guard:
+        roster = db.query(GuardRoster).filter(
+            GuardRoster.guard_id == guard.user_id,
+            GuardRoster.supervisor_id != None
+        ).order_by(GuardRoster.assigned_date.desc()).first()
+        if roster and roster.supervisor_id:
+            sup = db.query(User).filter(User.user_id == roster.supervisor_id).first()
+
+    supervisor_id_val = sup.user_id if sup else None
+    supervisor_name_val = sup.name if sup else None
+
+    # Format description from categories
+    item_descs = []
+    if isinstance(req.categories, dict):
+        for s_id_str, qty in req.categories.items():
+            inv = db.query(InventoryItem).filter(InventoryItem.item_id == s_id_str).first()
+            if inv:
+                lbl = f"{inv.item_type}"
+                if inv.size:
+                    lbl += f" ({inv.size})"
+                if inv.color:
+                    lbl += f" {inv.color}"
+                item_descs.append(f"{lbl} x{qty}")
+            else:
+                item_descs.append(f"صنف {s_id_str} x{qty}")
+    desc = ", ".join(item_descs) if item_descs else (req.reason or "زي رسمي")
+    if req.reason and req.reason not in desc:
+        desc += f" — {req.reason}"
+
+    now = datetime.now(timezone.utc)
+    if existing:
+        if existing.status in ("pending_issue", "pending_hr"):
+            existing.status = "pending_receipt"
+            existing.issued_at = now
+        if supervisor_id_val and not existing.supervisor_id:
+            existing.supervisor_id = supervisor_id_val
+            existing.supervisor_name = supervisor_name_val
+        if site_id and not existing.site_id:
+            existing.site_id = site_id
+            existing.site_name = site_name
+        return existing
+
+    d = CustodyDisbursement(
+        disbursement_id=str(uuid.uuid4()),
+        custody_type="clothes",
+        ref_id=str(req.id),
+        guard_id=guard_id,
+        guard_name=guard_name,
+        guard_badge=guard_badge,
+        site_id=site_id,
+        site_name=site_name,
+        supervisor_id=supervisor_id_val,
+        supervisor_name=supervisor_name_val,
+        amount=0.0,
+        description=desc,
+        status="pending_receipt",
+        requested_by=req.user_id or (current_user.user_id if current_user else None),
+        requested_by_name=current_user.name if current_user else "شؤون العاملين",
+        approved_by=req.hr_manager_id,
+        approved_at=now,
+        issued_at=now,
+        is_active=True,
+    )
+    db.add(d)
+    return d
+
 @router.post("/requests/{req_id}/send")
-def send_request(req_id: int, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):
+def send_request(
+    req_id: int, 
+    payload: Optional[SendRequestPayload] = None, 
+    db: Session = Depends(deps.get_db), 
+    current_user=Depends(deps.get_current_user)
+):
     req = db.query(ClothesRequest).filter(ClothesRequest.id == req_id).first()
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
     if req.status != "approved":
         raise HTTPException(status_code=400, detail="Only approved requests can be sent")
     req.status = "sent"
+    sup_id = payload.supervisor_id if payload else None
+    sync_clothes_request_to_custody(req, db, current_user=current_user, supervisor_id=sup_id)
     db.commit()
     return {"success": True, "status": req.status}
+
 
 @router.post("/requests/{req_id}/receive")
 def receive_request(req_id: int, db: Session = Depends(deps.get_db), current_user=Depends(deps.get_current_user)):

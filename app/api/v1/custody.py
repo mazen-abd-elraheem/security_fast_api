@@ -469,15 +469,35 @@ def issue_to_supervisor(
     return _to_dict(rec)
 
 
+def _sync_sent_clothes(db: Session):
+    try:
+        from app.models.clothes_inventory import ClothesRequest
+        from app.api.v1.clothes_inventory import sync_clothes_request_to_custody
+        sent_reqs = db.query(ClothesRequest).filter(ClothesRequest.status == "sent").all()
+        for sr in sent_reqs:
+            sync_clothes_request_to_custody(sr, db)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 @router.get("/incoming", summary="Supervisor: items issued to me awaiting receipt")
 def incoming_for_supervisor(
     current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
+    _sync_sent_clothes(db)
+    sup_sites = _supervisor_site_ids(db, current_user)
     recs = db.query(CustodyDisbursement).filter(
-        CustodyDisbursement.supervisor_id == current_user.user_id,
         CustodyDisbursement.status == "pending_receipt",
         CustodyDisbursement.is_active == True,
+        or_(
+            CustodyDisbursement.supervisor_id == current_user.user_id,
+            and_(
+                CustodyDisbursement.supervisor_id == None,
+                CustodyDisbursement.site_id.in_(sup_sites) if sup_sites else False
+            )
+        )
     ).order_by(CustodyDisbursement.issued_at.desc()).all()
     return [_to_dict(r) for r in recs]
 
@@ -491,18 +511,26 @@ def supervisor_receive(
     rec = _get_record(db, disbursement_id)
     if rec.status != "pending_receipt":
         raise HTTPException(400, f"Cannot receive in status: {rec.status}")
-    if rec.supervisor_id != current_user.user_id:
+    if rec.supervisor_id and rec.supervisor_id != current_user.user_id:
         raise HTTPException(403, "These items were issued to another supervisor")
 
+    rec.supervisor_id = current_user.user_id
+    rec.supervisor_name = current_user.name
     rec.status = "pending_handoff"
     rec.supervisor_received_at = _now()
     rec.updated_at = _now()
+    if rec.ref_id and rec.ref_id.isdigit():
+        from app.models.clothes_inventory import ClothesRequest
+        cr = db.query(ClothesRequest).filter(ClothesRequest.id == int(rec.ref_id)).first()
+        if cr:
+            cr.received_by = current_user.name
     _notify(db, [rec.requested_by], "Supervisor received items",
             f"{current_user.name} received {rec.custody_type} for {rec.guard_name}",
             rec.disbursement_id)
     db.commit()
     db.refresh(rec)
     return _to_dict(rec)
+
 
 
 # ── Supervisor: pending list, hand to guard, history ─────────────────────────
@@ -599,6 +627,11 @@ def mark_handed(
     rec.supervisor_notes = data.supervisor_notes
     rec.handed_at = _now()
     rec.updated_at = _now()
+    if rec.ref_id and rec.ref_id.isdigit():
+        from app.models.clothes_inventory import ClothesRequest
+        cr = db.query(ClothesRequest).filter(ClothesRequest.id == int(rec.ref_id)).first()
+        if cr:
+            cr.received_by = rec.guard_name
     _notify(db, [rec.guard_id], "Custody handed to you",
             "Open 'My Custody' to confirm what you received.", rec.disbursement_id)
     db.commit()
@@ -665,6 +698,11 @@ async def guard_confirm(
     rec.status = "confirmed"
     rec.confirmed_at = _now()
     rec.updated_at = _now()
+    if rec.ref_id and rec.ref_id.isdigit():
+        from app.models.clothes_inventory import ClothesRequest
+        cr = db.query(ClothesRequest).filter(ClothesRequest.id == int(rec.ref_id)).first()
+        if cr:
+            cr.status = "taken"
 
     _notify(db, [rec.supervisor_id], "Guard confirmed receipt",
             f"{rec.guard_name} confirmed {rec.custody_type}", rec.disbursement_id)
