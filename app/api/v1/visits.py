@@ -133,7 +133,7 @@ def get_visits_for_site(
     site_id: str,
     target_date: Optional[date] = Query(None),
     current_user: User = Depends(require_role(
-        UserRole.ADMIN,
+        UserRole.ADMIN, UserRole.OPERATIONS_MANAGER, UserRole.SUPERVISOR,
     )),
     db: Session = Depends(get_db),
 ):

@@ -20,7 +20,7 @@ router = APIRouter()
 @router.post("", status_code=201, summary="Assign daily route")
 def assign_route(
     route_data: RouteCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Assign a daily route (list of sites) to a supervisor."""
@@ -34,7 +34,7 @@ def assign_route(
 @router.post("/bulk", status_code=201, summary="Bulk assign supervisor to date range")
 def bulk_assign_route(
     bulk_data: BulkRouteCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Assign a supervisor to the same sites across multiple dates in one call."""
@@ -48,7 +48,7 @@ def bulk_assign_route(
 @router.post("/import-bulk", status_code=201, summary="Import supervisor/leader routes from CSV rows")
 def import_bulk_routes(
     rows: list,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """
@@ -238,7 +238,7 @@ def get_my_route(
 def get_supervisor_route(
     supervisor_id: str,
     target_date: date = Query(default=None),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER, UserRole.SUPERVISOR)),
     db: Session = Depends(get_db),
 ):
     """Get a specific supervisor's daily route."""
@@ -253,7 +253,7 @@ def get_supervisor_route(
 @router.get("/date/{target_date}", summary="Get all routes for a date")
 def get_routes_for_date(
     target_date: date,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER, UserRole.SUPERVISOR, UserRole.LEADER)),
     db: Session = Depends(get_db),
 ):
     """Get all supervisor routes for a specific date."""
@@ -298,7 +298,7 @@ def get_routes_for_date(
 def update_route_status(
     route_id: str,
     status: str = Query(..., description="New status: pending, in_progress, completed, skipped"),
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER, UserRole.LEADER, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """Update a route assignment's status."""
@@ -322,7 +322,7 @@ def update_route_status(
 @router.get("/user/{user_id}/assignments", summary="Get assignment summary for a user (conflict check)")
 def get_user_assignments(
     user_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """
@@ -372,7 +372,7 @@ def get_user_assignments(
 def get_all_routes(
     skip: int = Query(0, ge=0),
     limit: int = Query(500, ge=1, le=2000),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """

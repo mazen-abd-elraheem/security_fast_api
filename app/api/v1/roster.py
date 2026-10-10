@@ -21,7 +21,7 @@ router = APIRouter()
 @router.post("", response_model=RosterResponse, status_code=201, summary="Assign guard to shift")
 def assign_guard(
     roster_data: RosterCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.PERSONNEL_OFFICER, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Assign a guard to a shift on a specific date."""
@@ -35,7 +35,7 @@ def assign_guard(
 @router.post("/bulk", status_code=201, summary="Bulk assign guards")
 def bulk_assign(
     bulk_data: BulkRosterCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Assign multiple guards to shifts at once."""
@@ -49,7 +49,7 @@ def bulk_assign(
 @router.post("/import-bulk", status_code=201, summary="Import roster assignments from CSV")
 def import_bulk_roster(
     rows: list[dict],
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """
@@ -186,7 +186,7 @@ def get_all_roster(
     status:    Optional[str]  = Query(None),
     skip:      int            = Query(0,   ge=0),
     limit:     int            = Query(200, ge=1, le=1000),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER, UserRole.HR, UserRole.PERSONNEL_OFFICER)),
     db: Session = Depends(get_db),
 ):
     """
@@ -275,7 +275,7 @@ def get_roster_for_site(
     site_id: str,
     target_date: date = Query(..., description="Date to get roster for"),
     current_user: User = Depends(require_role(
-        UserRole.ADMIN, UserRole.SUPERVISOR,
+        UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER, UserRole.LEADER,
     )),
     db: Session = Depends(get_db),
 ):
@@ -340,7 +340,7 @@ def get_guard_schedule(
 @router.delete("/{roster_id}", status_code=200, summary="Remove assignment")
 def remove_assignment(
     roster_id: str,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """Cancel a roster assignment."""
@@ -356,7 +356,7 @@ def get_guard_conflicts(
     guard_id: str = Query(...),
     date_from: date = Query(...),
     date_to: date = Query(...),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER)),
     db: Session = Depends(get_db),
 ):
     """

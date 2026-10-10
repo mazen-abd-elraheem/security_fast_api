@@ -587,7 +587,7 @@ def list_templates(
     site_id: Optional[str] = None,
     active_only: bool = True,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.LEADER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.LEADER, UserRole.OPERATIONS_MANAGER)),
 ):
     """List task templates with optional site filter."""
     q = db.query(TaskTemplate)
@@ -603,7 +603,7 @@ def list_templates(
 def get_template(
     template_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.LEADER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.LEADER, UserRole.OPERATIONS_MANAGER)),
 ):
     """Get a single template with all sections and items."""
     result = _load_template_full(db, template_id)
@@ -830,7 +830,7 @@ def create_schedule(
 def assign_task(
     body: TaskInstanceAssign,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.OPERATIONS_MANAGER)),
 ):
     """Assign a template to a leader, creating a task instance."""
     template = db.query(TaskTemplate).filter_by(template_id=body.template_id).first()
@@ -858,7 +858,7 @@ def list_instances(
     site_id: Optional[str] = None,
     assigned_to: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.OPERATIONS_MANAGER)),
 ):
     """List all task instances with filters.
     - Admin: sees all instances across all sites.
