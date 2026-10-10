@@ -828,6 +828,29 @@ class AttendanceEntryUpdate(BaseModel):
     override_reason: Optional[str] = None
 
 
+# ─────────────────────────────────────────────
+# Supervisor site guards (for supervisor requests hub)
+# ─────────────────────────────────────────────
+
+@router.get("/supervisor-site-guards", summary="Supervisor guards for site and shift")
+def get_supervisor_site_guards(
+    site_id: str = Query(...),
+    shift_id: Optional[str] = Query(None),
+    date: Optional[str] = Query(None),
+    current_user: User = Depends(require_role(UserRole.SUPERVISOR, UserRole.LEADER, UserRole.ADMIN, UserRole.HR, UserRole.OPERATIONS_MANAGER)),
+    db: Session = Depends(get_db),
+):
+    from app.api.v1.leader_attendance import get_site_guards_for_attendance
+    target_date = date or datetime.now().strftime("%Y-%m-%d")
+    return get_site_guards_for_attendance(
+        site_id=site_id,
+        entry_date=target_date,
+        shift_id=shift_id,
+        current_user=current_user,
+        db=db,
+    )
+
+
 @router.put("/{entry_id}", summary="Edit attendance entry (Admin/Accountant)")
 def update_attendance_entry(
     entry_id: str,
