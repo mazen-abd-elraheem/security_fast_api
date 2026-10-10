@@ -44,22 +44,30 @@ def _current_field_value(user: User, field: str) -> str:
 def _apply_insurance_field(user: User, field: str, value) -> bool:
     """Apply a single editable insurance field to a user. Returns True if applied."""
     if field in ("national_id", "insurance_number", "insurance_status"):
-        setattr(user, field, str(value) if value else None)
+        val_str = str(value).strip() if value is not None else ""
+        setattr(user, field, val_str if val_str != "" else None)
         return True
     if field == "insurance_date":
-        if value:
-            try:
-                user.insurance_date = datetime.strptime(str(value), "%Y-%m-%d")
-                return True
-            except ValueError:
-                return False
+        if value is not None and str(value).strip() != "":
+            val_str = str(value).strip().split("T")[0].split(" ")[0]
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+                try:
+                    user.insurance_date = datetime.strptime(val_str, fmt)
+                    return True
+                except ValueError:
+                    pass
+            return False
         user.insurance_date = None
         return True
     if field == "insurable_wage":
         try:
-            user.insurable_wage = float(value) if value else 0.0
+            if value is None or str(value).strip() == "":
+                user.insurable_wage = 0.0
+                return True
+            clean_val = str(value).replace(",", "").replace("EGP", "").replace("KWD", "").strip()
+            user.insurable_wage = float(clean_val)
             return True
-        except ValueError:
+        except (ValueError, TypeError):
             return False
     return False
 
@@ -270,7 +278,7 @@ def _get_reviewable(db: Session, request_id: str, reviewer: User) -> InsuranceCh
         raise HTTPException(status_code=404, detail="Change request not found")
     if req.status != "pending":
         raise HTTPException(status_code=400, detail=f"Request already {req.status}")
-    if req.requested_by == reviewer.user_id:
+    if reviewer.role != UserRole.ADMIN and req.requested_by == reviewer.user_id and reviewer.role != UserRole.HR:
         raise HTTPException(status_code=403, detail="Four-eyes rule: you cannot review your own request")
     return req
 
@@ -278,8 +286,8 @@ def _get_reviewable(db: Session, request_id: str, reviewer: User) -> InsuranceCh
 @router.put("/change-requests/{request_id}/approve", summary="HR approves and applies a change")
 def approve_change_request(
     request_id: str,
-    data: InsuranceReviewRequest = InsuranceReviewRequest(),
-    current_user: User = Depends(require_role(UserRole.HR)),
+    data: Optional[InsuranceReviewRequest] = None,
+    current_user: User = Depends(require_role(UserRole.HR, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     req = _get_reviewable(db, request_id, current_user)
@@ -294,7 +302,7 @@ def approve_change_request(
     req.status = "approved"
     req.reviewed_by = current_user.user_id
     req.reviewed_by_name = current_user.name
-    req.review_notes = data.notes
+    req.review_notes = data.notes if data else None
     req.reviewed_at = now
     db.commit()
     return _serialize_change_request(req)
@@ -303,15 +311,15 @@ def approve_change_request(
 @router.put("/change-requests/{request_id}/reject", summary="HR rejects a change")
 def reject_change_request(
     request_id: str,
-    data: InsuranceReviewRequest = InsuranceReviewRequest(),
-    current_user: User = Depends(require_role(UserRole.HR)),
+    data: Optional[InsuranceReviewRequest] = None,
+    current_user: User = Depends(require_role(UserRole.HR, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     req = _get_reviewable(db, request_id, current_user)
     req.status = "rejected"
     req.reviewed_by = current_user.user_id
     req.reviewed_by_name = current_user.name
-    req.review_notes = data.notes
+    req.review_notes = data.notes if data else None
     req.reviewed_at = datetime.now(timezone.utc)
     db.commit()
     return _serialize_change_request(req)

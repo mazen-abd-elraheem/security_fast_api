@@ -5,6 +5,7 @@ from app.api.deps import require_role
 from app.models.user import User
 from app.models.separation_request import SeparationRequest
 from app.models.site import Site
+from app.models.guard_roster import GuardRoster
 from app.enums import UserRole
 
 router = APIRouter()
@@ -165,6 +166,10 @@ def create_separation(
         if emp:
             emp.status = "terminated"
             emp.is_active = False
+            db.query(GuardRoster).filter(
+                GuardRoster.guard_id == emp.user_id,
+                GuardRoster.status != "canceled"
+            ).update({"status": "canceled"}, synchronize_session=False)
 
     db.add(sep)
     db.flush()
@@ -245,6 +250,10 @@ def action_separation(
             if emp:
                 emp.status = "terminated"
                 emp.is_active = False
+                db.query(GuardRoster).filter(
+                    GuardRoster.guard_id == emp.user_id,
+                    GuardRoster.status != "canceled"
+                ).update({"status": "canceled"}, synchronize_session=False)
 
     db.commit()
     db.refresh(sep)

@@ -192,12 +192,13 @@ def supervisor_attendance_dashboard(
 
         for roster in roster_by_site[site_id]:
             guard = roster.guard
+            if not guard or not guard.is_active or guard.status == "terminated":
+                continue
             shift = shift_map.get(roster.shift_id)
 
-            if guard and guard.user_id in seen_guard_ids:
+            if guard.user_id in seen_guard_ids:
                 continue
-            if guard:
-                seen_guard_ids.add(guard.user_id)
+            seen_guard_ids.add(guard.user_id)
 
             entry = entries_map.get(guard.user_id) if guard else None
             att_status = entry.status if entry else "not_recorded"

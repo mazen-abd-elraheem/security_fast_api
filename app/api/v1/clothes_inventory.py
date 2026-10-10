@@ -346,6 +346,7 @@ class UpdateTerminationStatusPayload(BaseModel):
     notes: Optional[str] = None
 
 @router.put("/terminations/{term_id}")
+@router.put("/terminations/by-user/{term_id}")
 def update_clothes_termination_status(
     term_id: str, 
     payload: UpdateTerminationStatusPayload, 

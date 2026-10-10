@@ -88,6 +88,8 @@ def get_site_guards_for_attendance(
             Shift.site_id == site_id,
             GuardRoster.active_on(target_date),
             GuardRoster.status != "canceled",
+            User.is_active == True,
+            User.status != "terminated",
         )
     )
     if shift_id:
